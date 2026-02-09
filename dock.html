@@ -3115,7 +3115,8 @@
 
 			var timeoutDelay = 0;
 			if (urlParams.has("showtime")) {
-				timeoutDelay = parseInt(urlParams.get("showtime")) || 20000;
+				timeoutDelay = parseInt(urlParams.get("showtime"));
+				if (isNaN(timeoutDelay)) { timeoutDelay = 20000; }
 			}
 			
 			var waitToReveal = 0;
@@ -3349,6 +3350,12 @@
 			
 			if (urlParams.has("noquestionhightlight")) {
 				highlightSpecial = false;
+			}
+
+			var highlightFirstTimers = true;
+			if (urlParams.has("nofirsttimehighlight")) {
+				highlightFirstTimers = false;
+				document.documentElement.style.setProperty("--firstime-bgcolor", "unset");
 			}
 
 			var highlightDonos = true;
@@ -9590,7 +9597,7 @@
 						node.classList.add("member");
 					}
 					
-					if (data.firsttime) {
+					if (data.firsttime && highlightFirstTimers) {
 						node.classList.add("firsttime");
 					}
 
