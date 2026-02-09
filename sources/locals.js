@@ -145,31 +145,25 @@ function toDataURL(url, callback) {
 		}
 		
 		var chatimg = '';
-		try {
-			chatimg = ele.querySelector(".pmessage__avaimg") || "";
-			if (chatimg){
-				chatimg = "https://cdn.locals.com/images/avatars/" + chatimg.style.cssText.split("https://cdn.locals.com/images/avatars/")[1] || "";
-				chatimg = chatimg.split(".png")[0] + ".png";
-			} else {
-				chatimg = ele.querySelector(".ava-container img[src]") || "";
-				if (chatimg){
-					chatimg = chatimg.src;
-				}
-			}
-		} catch (e){
-			chatimg = "";
-		}
 		
 		if (!chatimg){
 			try {
 				var avatar = ele.querySelector(".chat-message-content-wrapper .w_28px img[src]") || ele.querySelector(".chat-message-content-wrapper img[alt='User'][src]") || ele.querySelector(".chat-message-content-wrapper img[class*='bdr_50%'][src]");
 				if (!avatar){
-					var fallbackAvatar = ele.querySelector(".chat-message-content-wrapper img[src]");
-					if (fallbackAvatar && (!fallbackAvatar.closest || (!fallbackAvatar.closest(".wb_break-word") && !fallbackAvatar.closest(".message-photo")))){
-						avatar = fallbackAvatar;
-					}
-				}
-				if (avatar){
+					try {
+						var fallbackAvatar = ele.querySelector(".chat-message-content-wrapper img[src]");
+						if (fallbackAvatar && (!fallbackAvatar.closest || (!fallbackAvatar.closest(".wb_break-word") && !fallbackAvatar.closest(".message-photo")))){
+							avatar = fallbackAvatar;
+							chatimg = avatar.src;
+						}
+						if (!chatimg){
+							fallbackAvatar = ele.querySelector(".pmessage__avaimg[style]");
+							if (fallbackAvatar){
+								chatimg = fallbackAvatar.style.background.split("url(")[1].split('"')[1];
+							}
+						}
+					} catch(e){}
+				} else {
 					chatimg = avatar.src;
 				}
 			} catch(e){
