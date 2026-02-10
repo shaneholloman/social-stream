@@ -2535,6 +2535,7 @@
 		<div id="topbar"></div>
 		<div id="pinned" class="output"></div>
 		<div id="output" class="output"></div>
+		<div id="backToLive" onclick="returnToLive();" style="display:none; position:fixed; bottom:40px; left:50%; transform:translateX(-50%); z-index:9999; background:rgba(0,120,255,0.9); color:#fff; padding:6px 16px; border-radius:20px; cursor:pointer; font-size:14px; font-family:sans-serif; box-shadow:0 2px 8px rgba(0,0,0,0.3); white-space:nowrap;">Back to live (<span id="missedCount">0</span> new)</div>
 		<div id="menu" class="electronDraggable">
 			<!-- Main buttons -->
 
@@ -2997,6 +2998,20 @@
 			var timeoutTimer = null;
 			var isOBSBrowserSource = false;
 			var customNodeLimit = false;
+			var historyMode = urlParams.has("history");
+			var historyInitialLoadLimit = parseInt(urlParams.get("loadlast"), 10) || 30;
+			var historyBrowsing = false;
+			var isLoadingHistory = false;
+			var reachedOldest = false;
+			var oldestLoadedTimestamp = null;
+			var oldestLoadedDbId = null;
+			var missedLiveCount = 0;
+			var historyMissedLiveBuffer = [];
+			var historyFlushTimer = null;
+			var waitingForRecentHistory = false;
+			var historyReturnSyncPending = false;
+			var historyReturnSyncTimedOut = false;
+			var prependMode = false;
 			var body = document.body;
 			var html = document.documentElement;
 			var mainOutputWindow = getById("output");
@@ -5095,6 +5110,54 @@
 				ro.observe(document.scrollingElement);
 			}
 
+			if (historyMode) {
+				var historyScrollContainer = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+				var historyLiveEdgeThreshold = 120;
+				var historyUsesWindowScroll = historyScrollContainer === document.scrollingElement || historyScrollContainer === document.documentElement || historyScrollContainer === document.body;
+				var isNearHistoryLiveEdge = function() {
+					if (!historyScrollContainer) {
+						return false;
+					}
+					var distanceFromBottom = historyScrollContainer.scrollHeight - (historyScrollContainer.scrollTop + historyScrollContainer.clientHeight);
+					return distanceFromBottom <= historyLiveEdgeThreshold;
+				};
+				var historyTopIntent = function(forceEnter) {
+					if (!historyScrollContainer) {
+						return;
+					}
+					if (historyBrowsing) {
+						if (isNearHistoryLiveEdge()) {
+							returnToLive();
+							return;
+						}
+						if (historyScrollContainer.scrollTop < 100 && !isLoadingHistory && !reachedOldest) {
+							loadOlderMessages();
+						}
+						return;
+					}
+					if (reversed) {
+						return;
+					}
+					if (!horizontal && historyScrollContainer.scrollTop < 50 && (forceEnter || mainOutputWindow.firstElementChild)) {
+						enterHistoryMode();
+					}
+				};
+				var onHistoryScroll = function() {
+					historyTopIntent(false);
+				};
+				var onHistoryWheel = function(event) {
+					if (event.deltaY < 0) {
+						historyTopIntent(true);
+					}
+				};
+				historyScrollContainer.addEventListener("scroll", onHistoryScroll);
+				historyScrollContainer.addEventListener("wheel", onHistoryWheel, { passive: true });
+				if (historyUsesWindowScroll) {
+					window.addEventListener("scroll", onHistoryScroll, { passive: true });
+					window.addEventListener("wheel", onHistoryWheel, { passive: true });
+				}
+			}
+
 			function emoji() {
 				var ele = getById("hide_emoji");
 				if (ele.dataset.state == "0") {
@@ -5891,10 +5954,142 @@
 			}
 			
 			let sentBefore = false;
-			function getRecentHistory() {
+			function getRecentHistory(limit = 30) {
 				if (sentBefore) {return;}
 				sentBefore = true;
-				send2Extension({ action: "getRecentHistory", value: 30 });
+				waitingForRecentHistory = true;
+				send2Extension({ action: "getRecentHistory", value: limit });
+			}
+
+			function bufferMissedLiveMessage(messageData) {
+				if (!messageData || typeof messageData !== "object") {
+					return;
+				}
+				historyMissedLiveBuffer.push(Object.assign({}, messageData));
+				if (historyMissedLiveBuffer.length > 500) {
+					historyMissedLiveBuffer.shift();
+				}
+			}
+
+			function flushMissedLiveBuffer() {
+				if (historyBrowsing || historyReturnSyncPending || !historyMissedLiveBuffer.length) {
+					return;
+				}
+				var buffered = historyMissedLiveBuffer.slice();
+				historyMissedLiveBuffer = [];
+				buffered.forEach(function(msg) {
+					var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+					if (!displayId || !document.querySelector("[data-mid='" + displayId + "']")) {
+						processData({ contents: msg }, { reloaded: true, suppressLiveSideEffects: true, skipHistoryDeferral: true });
+					}
+				});
+				jumptoBottom2();
+			}
+
+			function enterHistoryMode() {
+				if (historyBrowsing) {
+					return;
+				}
+				if (reversed) {
+					return;
+				}
+				historyBrowsing = true;
+				missedLiveCount = 0;
+				reachedOldest = false;
+				getById("backToLive").style.display = "";
+				getById("missedCount").textContent = "0";
+				loadOlderMessages();
+			}
+
+			function loadOlderMessages() {
+				if (reversed || isLoadingHistory || reachedOldest) return;
+				isLoadingHistory = true;
+				var firstNode = mainOutputWindow.firstElementChild;
+				if (firstNode && firstNode.rawContents && firstNode.rawContents.timestamp) {
+					var nodeTimestamp = firstNode.rawContents.timestamp;
+					if (oldestLoadedTimestamp == null || nodeTimestamp < oldestLoadedTimestamp) {
+						oldestLoadedTimestamp = nodeTimestamp;
+						if (firstNode.rawContents.dbid != null) {
+							oldestLoadedDbId = firstNode.rawContents.dbid;
+						}
+					} else if (nodeTimestamp === oldestLoadedTimestamp && firstNode.rawContents.dbid != null) {
+						if (oldestLoadedDbId != null) {
+							oldestLoadedDbId = Math.min(oldestLoadedDbId, firstNode.rawContents.dbid);
+						} else {
+							oldestLoadedDbId = firstNode.rawContents.dbid;
+						}
+					}
+				} else {
+					oldestLoadedTimestamp = oldestLoadedTimestamp || Date.now();
+				}
+				send2Extension({
+					action: "getHistoryBefore",
+					value: { before: oldestLoadedTimestamp, beforeId: oldestLoadedDbId, limit: 50 }
+				});
+			}
+
+			function pruneFromBottom() {
+				var nodes = document.querySelectorAll("#output>div:not(.queued)");
+				var limit = customNodeLimit || 200;
+				var excess = nodes.length - limit;
+				if (excess > 0) {
+					for (var i = nodes.length - 1; i >= nodes.length - excess; i--) {
+						nodes[i].remove();
+					}
+				}
+			}
+
+				function returnToLive(options = {}) {
+					var liveTarget = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+					var distanceFromBottom = 0;
+					var distanceFromTop = 0;
+					if (liveTarget) {
+						distanceFromBottom = liveTarget.scrollHeight - (liveTarget.scrollTop + liveTarget.clientHeight);
+						distanceFromTop = liveTarget.scrollTop;
+					}
+					var shouldAdaptiveReload = false;
+					if (typeof options.reloadRecentHistory === "undefined") {
+						var hardReloadDistance = Math.max(300, (liveTarget ? liveTarget.clientHeight : 0) * 1.5);
+						var atHistoryStart = historyBrowsing && distanceFromTop <= 80;
+						shouldAdaptiveReload = atHistoryStart || distanceFromBottom > hardReloadDistance;
+					}
+				var reloadRecentHistory = options.reloadRecentHistory === true || shouldAdaptiveReload;
+				var clearBeforeReload = options.clearBeforeReload === true || (reloadRecentHistory && options.clearBeforeReload !== false);
+				historyBrowsing = false;
+				reachedOldest = false;
+				isLoadingHistory = false;
+				missedLiveCount = 0;
+				oldestLoadedTimestamp = null;
+				oldestLoadedDbId = null;
+				getById("backToLive").style.display = "none";
+				getById("missedCount").textContent = "0";
+				if (historyFlushTimer) {
+					clearTimeout(historyFlushTimer);
+					historyFlushTimer = null;
+				}
+				historyReturnSyncPending = false;
+				historyReturnSyncTimedOut = false;
+				if (!reloadRecentHistory) {
+					waitingForRecentHistory = false;
+					flushMissedLiveBuffer();
+					jumptoBottom2();
+					return;
+				}
+				if (clearBeforeReload) {
+					mainOutputWindow.innerHTML = "";
+				}
+				sentBefore = false;
+				historyReturnSyncPending = true;
+				getRecentHistory(historyInitialLoadLimit);
+				historyFlushTimer = setTimeout(function() {
+					historyFlushTimer = null;
+					if (waitingForRecentHistory) {
+						waitingForRecentHistory = false;
+						historyReturnSyncPending = false;
+						historyReturnSyncTimedOut = true;
+						flushMissedLiveBuffer();
+					}
+				}, 1500);
 			}
 
 			function timeSince(timestamp) {
@@ -6233,17 +6428,69 @@
 					  }
 					};
 				} else if (data.recentHistory) {
+					waitingForRecentHistory = false;
+					if (historyFlushTimer) {
+						clearTimeout(historyFlushTimer);
+						historyFlushTimer = null;
+					}
+					var prependRecentHistory = historyReturnSyncTimedOut && !historyBrowsing;
+					historyReturnSyncTimedOut = false;
 					//console.log(data);
 					setTimeout(()=>{
-						data.recentHistory.reverse().forEach(async msg=>{
+						var recentMessages = prependRecentHistory ? data.recentHistory : data.recentHistory.slice().reverse();
+						recentMessages.forEach(function(msg) {
 							//console.log({contents:msg});
-							if (!msg.id || !document.querySelector("[data-mid='"+msg.id+"']")){
-								await processData({contents:msg}); 
+							var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+							if (!displayId || !document.querySelector("[data-mid='"+displayId+"']")){
+								var normalizedMsg = (msg && msg.mid && msg.mid !== msg.id) ? Object.assign({}, msg, { id: msg.mid, dbid: msg.id }) : msg;
+								if (prependRecentHistory) {
+									prependMode = true;
+									processData({contents: normalizedMsg}, { skipHistoryDeferral: true });
+									prependMode = false;
+								} else {
+									processData({contents: normalizedMsg}, { skipHistoryDeferral: true });
+								}
 							}
 						});
 						console.log("Loaded from remote DB storage");
+						historyReturnSyncPending = false;
+						flushMissedLiveBuffer();
 						jumptoBottom2();
 					},1000);
+				} else if (data.historyBefore) {
+					if (!historyBrowsing) {
+						isLoadingHistory = false;
+						return;
+					}
+					var hContainer = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+					var prevScrollHeight = hContainer.scrollHeight;
+					var prevScrollTop = hContainer.scrollTop;
+
+					var histMsgs = data.historyBefore;
+					if (histMsgs.length && histMsgs[histMsgs.length - 1] && histMsgs[histMsgs.length - 1].timestamp) {
+						var oldestMsg = histMsgs[histMsgs.length - 1];
+						oldestLoadedTimestamp = oldestMsg.timestamp;
+						if (oldestMsg.id != null) {
+							oldestLoadedDbId = oldestMsg.id;
+						}
+					}
+					histMsgs.forEach(function(msg) {
+						var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+						if (!displayId || !document.querySelector("[data-mid='" + displayId + "']")) {
+							var normalizedMsg = (msg && msg.mid && msg.mid !== msg.id) ? Object.assign({}, msg, { id: msg.mid, dbid: msg.id }) : msg;
+							prependMode = true;
+							processData({contents: normalizedMsg});
+							prependMode = false;
+						}
+					});
+
+					var newScrollHeight = hContainer.scrollHeight;
+					hContainer.scrollTop = newScrollHeight - (prevScrollHeight - prevScrollTop);
+
+					pruneFromBottom();
+
+					isLoadingHistory = false;
+					if (!data.historyBefore.length) { reachedOldest = true; }
 				} else if ("userHistory" in data) {
 					//delete messages, but also block user. remote, so we won't sync,
 					//console.log(data.userHistory);
@@ -7044,9 +7291,16 @@
 							}
 						}
 						
-						if (urlParams.has("loadlast") && e.data.streamID==roomID) {
-							getRecentHistory(parseInt(urlParams.get("loadlast")) || 30);
-						}
+							var streamMatchesRoom = false;
+							if (e.data.streamID && roomID) {
+								var incomingStreamId = e.data.streamID.toString().trim();
+								streamMatchesRoom = roomID.split(",").some(function(roomToken) {
+									return roomToken.trim() === incomingStreamId;
+								});
+							}
+							if ((historyMode || urlParams.has("loadlast")) && streamMatchesRoom) {
+								getRecentHistory(historyInitialLoadLimit);
+							}
 					}
 
 					if ("action" in e.data && e.data.UUID && "value" in e.data && !e.data.value && e.data.action == "push-connection") {
@@ -7221,6 +7475,10 @@
 			//	}
 
 			function jumptoBottom() {
+				if (historyBrowsing) {
+					returnToLive();
+					return;
+				}
 				var ele = getById("jumpto");
 				forceAutoscroll = !forceAutoscroll;
 				if (forceAutoscroll) {
@@ -8054,6 +8312,7 @@
 			}
 
 			function cleanUpOldNodes() {
+				if (historyBrowsing) return;
 				if (horizontal) {
 					horizontalPruneMessages();
 					return;
@@ -8797,12 +9056,30 @@
 			}
 
 			function processData(data, reloaded = false) {
+				var processDataOptions = {};
+				if (reloaded && typeof reloaded === "object") {
+					processDataOptions = reloaded;
+					reloaded = !!processDataOptions.reloaded;
+				} else {
+					reloaded = !!reloaded;
+				}
 				if (data.contents) {
 					data = data.contents;
 
+					var shouldDeferForHistory = (historyBrowsing || historyReturnSyncPending) && !reloaded && !prependMode && !processDataOptions.skipHistoryDeferral;
+					if (shouldDeferForHistory) {
+						if (historyBrowsing) {
+							missedLiveCount++;
+							getById("missedCount").textContent = missedLiveCount;
+						}
+						bufferMissedLiveMessage(data);
+						return;
+					}
+
 					var invisible = false;
 					var makeBlurred = false;
-					
+					var suppressLiveSideEffects = prependMode === true || processDataOptions.suppressLiveSideEffects === true;
+
 					if (debug){
 						console.log(data);
 					}
@@ -8872,7 +9149,7 @@
 						}
 						data.command = true;
 					}
-					if (startstop && data.chatmessage && data.chatname && data.admin && window.obsstudio) {
+					if (!suppressLiveSideEffects && startstop && data.chatmessage && data.chatname && data.admin && window.obsstudio) {
 						if (data.chatmessage == "!start"){
 							try {
 								window.obsstudio["startStreaming"]();
@@ -8960,22 +9237,24 @@
 					}
 				}
 
-					try {
-						if (applyCustomActions) {
-							let response = applyCustomActions(data); // Any custom actions (not synced with github)
-							if (response === false) {
-								// cancel
-								return;
-							} else if (response === null) {
-								// cancel <== official way of cancelling.
-								return;
-							} else if (response) {
-								// replace with modified message
-								data = response;
-							} // else if 'undefined', just ignore the response.
+					if (!suppressLiveSideEffects) {
+						try {
+							if (applyCustomActions) {
+								let response = applyCustomActions(data); // Any custom actions (not synced with github)
+								if (response === false) {
+									// cancel
+									return;
+								} else if (response === null) {
+									// cancel <== official way of cancelling.
+									return;
+								} else if (response) {
+									// replace with modified message
+									data = response;
+								} // else if 'undefined', just ignore the response.
+							}
+						} catch (e) {
+							console.error(e);
 						}
-					} catch (e) {
-						console.error(e);
 					}
 
 					if (filterEvents && data.event && data.chatmessage) {
@@ -9060,7 +9339,7 @@
 						data.chatmessage = "";
 					}
 
-					if (electronSavePath && isStreamSetup) {
+					if (!suppressLiveSideEffects && electronSavePath && isStreamSetup) {
 						// Electron: use IPC to append to file
 						try {
 							const date = new Date().toLocaleString("en-US", {
@@ -9085,7 +9364,7 @@
 						} catch (err) {
 							console.error("Electron write failed:", err);
 						}
-					} else if (writer && isStreamSetup) {
+					} else if (!suppressLiveSideEffects && writer && isStreamSetup) {
 						// Browser: use StreamSaver
 						try {
 							const date = new Date().toLocaleString("en-US", {
@@ -9114,7 +9393,7 @@
 						}
 					}
 
-					if (singlewriter) {
+					if (!suppressLiveSideEffects && singlewriter) {
 						data.timestamp = new Date().getTime();
 						overwriteFile(JSON.stringify(data));
 					}
@@ -9675,6 +9954,8 @@
 
 					if (horizontal) {
 						horizontalAddNodeToTicker(node);
+					} else if (prependMode) {
+						mainOutputWindow.insertBefore(node, mainOutputWindow.firstChild);
 					} else {
 						mainOutputWindow.appendChild(node);
 					}
@@ -9819,52 +10100,54 @@
 					
 					const metaFeatured = data.meta && data.meta.featured;
 
-					if (metaFeatured) {
-						if (autoTimeoutEnabled) {
-							autoShowQueue.push(node);
-							checkAutoShow();
-						} else {
-							selectedMessage(false, node);
-						}
-					} else if (autoyoutubememberchat && (data.type == "youtube") && data.membership){
-						if (autoTimeoutEnabled) {
-							autoShowQueue.push(node);
-							checkAutoShow();
-						} else {
-							selectedMessage(false, node);
-						}
-					} else if (autoshow && !bot) {
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-							// pass auto show, since filtered out
-						} else if (!(autoshowdonos || autoshowmembers || autoshowcontentimages) || (autoshowdonos && data.hasDonation) || (autoshowmembers && data.membership) || (autoshowcontentimages && data.contentimg)) {
-							// dono or not to dono.
+					if (!suppressLiveSideEffects) {
+						if (metaFeatured) {
 							if (autoTimeoutEnabled) {
 								autoShowQueue.push(node);
 								checkAutoShow();
 							} else {
 								selectedMessage(false, node);
 							}
-						}
-					} else if (data.admin && autofeaturepriv){
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-						//
-						} else {
+						} else if (autoyoutubememberchat && (data.type == "youtube") && data.membership){
 							if (autoTimeoutEnabled) {
 								autoShowQueue.push(node);
 								checkAutoShow();
 							} else {
 								selectedMessage(false, node);
 							}
-						}
-					} else if (data.vip && autofeaturevip){
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-						//
-						} else {
-							if (autoTimeoutEnabled) {
-								autoShowQueue.push(node);
-								checkAutoShow();
+						} else if (autoshow && !bot) {
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+								// pass auto show, since filtered out
+							} else if (!(autoshowdonos || autoshowmembers || autoshowcontentimages) || (autoshowdonos && data.hasDonation) || (autoshowmembers && data.membership) || (autoshowcontentimages && data.contentimg)) {
+								// dono or not to dono.
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
+							}
+						} else if (data.admin && autofeaturepriv){
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+							//
 							} else {
-								selectedMessage(false, node);
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
+							}
+						} else if (data.vip && autofeaturevip){
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+							//
+							} else {
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
 							}
 						}
 					}
@@ -9930,79 +10213,83 @@
 						enqueueTypewriter(contentElement, node);
 					}
 					
-					const shouldBeep = beep || (beepFirstTime && data.firsttime);
-					if (shouldBeep) { 
-						if (!(data.command && doNotTTSBeep) && !(nobeepevent && data.event) && !(nobeepmod && mod) && !(nobeephost && host) && !(nobeepbot && bot)){
-							playtone();
+					if (!suppressLiveSideEffects) {
+						const shouldBeep = beep || (beepFirstTime && data.firsttime);
+						if (shouldBeep) { 
+							if (!(data.command && doNotTTSBeep) && !(nobeepevent && data.event) && !(nobeepmod && mod) && !(nobeephost && host) && !(nobeepbot && bot)){
+								playtone();
+							}
 						}
 					}
 					
 					cleanUpOldNodes();
 
-					applyBotActions(data); // Official actions
+					if (!suppressLiveSideEffects) {
+						applyBotActions(data); // Official actions
 
-					if (data.queueme) {
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					} else if (selfQueue && data.chatmessage && (selfQueue.some(item => data.chatmessage.split(" ").includes(item)))) {
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton(); 
-					} else if (autoQueueQuestions && data.question) {
-						// Auto-pin questions when autoQueueQuestions URL parameter is set
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					} else if (autoQueueDonations && (data.hasDonation || data.donation)) {
-						// Auto-pin questions when autoQueueQuestions URL parameter is set
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					}
-					
-					if (autoPinQuestions && data.question) {
-						pinIt(node);
-					}
-					
-					if (autoPinDonations && data.hasDonation) {
-						pinIt(node);
-					}
-					
-					
-					if (data.command && doNotTTSBeep){
-						// skipp TTS
-					} else if (TTS.ttscommand && data.chatmessage && (data.textContent || data.chatmessage).includes(TTS.ttscommand+" ") && (!TTS.ttscommandmembersonly || (TTS.ttscommandmembersonly && data.membership))){
-						if (!node.classList.contains("hide")) {
-							if (waitToReveal) {
-								setTimeout(function() {
-									// Check if node still exists and is connected to DOM
-									if (node && node.isConnected && !node.classList.contains("hide")) {
-										TTS.speechMeta(data);
-									}
-								}, waitToReveal);
-							} else {
-								TTS.speechMeta(data);
-							}
+						if (data.queueme) {
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
+						} else if (selfQueue && data.chatmessage && (selfQueue.some(item => data.chatmessage.split(" ").includes(item)))) {
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton(); 
+						} else if (autoQueueQuestions && data.question) {
+							// Auto-pin questions when autoQueueQuestions URL parameter is set
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
+						} else if (autoQueueDonations && (data.hasDonation || data.donation)) {
+							// Auto-pin questions when autoQueueQuestions URL parameter is set
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
 						}
-					} else if (TTS.speech) {
-						if (!node.classList.contains("hide")) {
-							if (waitToReveal) {
-								setTimeout(function() {
-									// Check if node still exists and is connected to DOM
-									if (node && node.isConnected && !node.classList.contains("hide")) {
-										TTS.speechMeta(data);
-									}
-								}, waitToReveal);
-							} else {
-								TTS.speechMeta(data);
-							}
+						
+						if (autoPinQuestions && data.question) {
+							pinIt(node);
 						}
-					} 
+						
+						if (autoPinDonations && data.hasDonation) {
+							pinIt(node);
+						}
+						
+						
+						if (data.command && doNotTTSBeep){
+							// skipp TTS
+						} else if (TTS.ttscommand && data.chatmessage && (data.textContent || data.chatmessage).includes(TTS.ttscommand+" ") && (!TTS.ttscommandmembersonly || (TTS.ttscommandmembersonly && data.membership))){
+							if (!node.classList.contains("hide")) {
+								if (waitToReveal) {
+									setTimeout(function() {
+										// Check if node still exists and is connected to DOM
+										if (node && node.isConnected && !node.classList.contains("hide")) {
+											TTS.speechMeta(data);
+										}
+									}, waitToReveal);
+								} else {
+									TTS.speechMeta(data);
+								}
+							}
+						} else if (TTS.speech) {
+							if (!node.classList.contains("hide")) {
+								if (waitToReveal) {
+									setTimeout(function() {
+										// Check if node still exists and is connected to DOM
+										if (node && node.isConnected && !node.classList.contains("hide")) {
+											TTS.speechMeta(data);
+										}
+									}, waitToReveal);
+								} else {
+									TTS.speechMeta(data);
+								}
+							}
+						} 
+					}
 					return node;
 				}
 				return false;
