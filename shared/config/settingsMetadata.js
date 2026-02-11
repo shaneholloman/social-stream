@@ -678,6 +678,16 @@ const SETTINGS_METADATA = Object.freeze({
     category: "management",
     description: "When enabled, forward chat !commands to Twitch."
   },
+  "forwardcommands2kick": {
+    type: "boolean",
+    category: "management",
+    description: "When enabled, forward chat !commands to Kick."
+  },
+  "forwardcommands2youtube": {
+    type: "boolean",
+    category: "management",
+    description: "When enabled, forward chat !commands to YouTube."
+  },
   "geminiApiKey": {
     type: "text",
     category: "configure_llm_api",

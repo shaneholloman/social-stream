@@ -12306,36 +12306,55 @@ async function applyBotActions(data, tab = false) {
 		}
 		//console.logdata);
 		
-		if (settings.forwardcommands2twitch && data.type && (data.type !== "twitch") && !data.reflection && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid) {
-			if (!data.bot && data.chatmessage.startsWith("!")) {
-				//messageTimeout = Date.now();
-				var msg = {};
-				
-				msg.tid = data.tid;
-				msg.url = tab.url;
-				
-				msg.destination = "twitch.tv"; // sent to twitch tabs only
+		const forwardCommandDestinations = [];
+		if (settings.forwardcommands2twitch) {
+			forwardCommandDestinations.push("twitch");
+		}
+		if (settings.forwardcommands2kick) {
+			forwardCommandDestinations.push("kick");
+		}
+		if (settings.forwardcommands2youtube) {
+			forwardCommandDestinations.push("youtube");
+		}
+		if (forwardCommandDestinations.length && data.type && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid && !data.bot && data.chatmessage.startsWith("!")) {
+			let sourceType = String(data.type).toLowerCase();
+			if (sourceType === "youtube_streaming") {
+				sourceType = "youtube";
+			}
 
-				msg.response =  data.chatmessage;
+			if (data.reflection && forwardCommandDestinations.includes(sourceType)) {
+				return null;
+			}
+
+			if (!data.reflection) {
+				let commandMessage = data.chatmessage;
 				
 				if (!data.textonly){
 					var textArea = document.createElement('textarea');
-					textArea.innerHTML = msg.response;
-					msg.response = textArea.value;
+					textArea.innerHTML = commandMessage;
+					commandMessage = textArea.value;
 				}
-				msg.response = msg.response.replace(/(<([^>]+)>)/gi, "");
-				msg.response = msg.response.replace(/[#@]/g, "");
-				msg.response = msg.response.replace(/\.(?=\S(?!$))/g, " ");
-				msg.response = msg.response.trim();
+				commandMessage = commandMessage.replace(/(<([^>]+)>)/gi, "");
+				commandMessage = commandMessage.replace(/[#@]/g, "");
+				commandMessage = commandMessage.replace(/\.(?=\S(?!$))/g, " ");
+				commandMessage = commandMessage.trim();
 				
-				if (msg.response){
-					sendMessageToTabs(msg, true, data, true, false, 1000);
+				if (commandMessage){
+					for (const destination of forwardCommandDestinations) {
+						if (destination === sourceType) {
+							continue;
+						}
+
+						const msg = {
+							tid: data.tid,
+							url: tab.url,
+							destination,
+							response: commandMessage
+						};
+
+						sendMessageToTabs(msg, true, data, true, false, 1000);
+					}
 				}
-				
-			} 
-		} else if (settings.forwardcommands2twitch && data.type && (data.type === "twitch") && data.reflection && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid) {
-			if (!data.bot && data.chatmessage.startsWith("!")) {
-				return null;
 			}
 		}
 
