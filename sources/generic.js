@@ -307,7 +307,6 @@
   // Settings and message passing
   var settings = {
     textonlymode: false,
-    captureevents: true,
     hideevents: false
   };
   

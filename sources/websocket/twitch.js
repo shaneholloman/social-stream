@@ -1047,7 +1047,7 @@ async function ensureChatClientInstance() {
 			});
 			return;
 		}
-		if (!settings.captureevents) {
+		if (settings.hideevents) {
 			return;
 		}
 		const notice = convertMembershipPayloadToUserNotice(payload);
@@ -1055,7 +1055,7 @@ async function ensureChatClientInstance() {
 	}
 
 	async function handleNormalizedRaid(payload) {
-		if (!payload || !settings.captureevents) {
+		if (!payload || settings.hideevents) {
 			return;
 		}
 		const tags = {
@@ -2697,8 +2697,8 @@ async function cleanupCurrentConnection() {
 		const event = payload.event;
 		const subscription = payload.subscription;
 		
-		// Skip if captureevents is disabled
-		if (!settings.captureevents) {
+		// Skip if hideevents is enabled
+		if (settings.hideevents) {
 			return;
 		}
 
