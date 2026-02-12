@@ -387,21 +387,47 @@ class MessageStoreDB {
     }
 
     async getMessagesBefore(beforeTimestamp, limit = 50, beforeId = null) {
-        const db = await this.ensureDB();
-        if (beforeTimestamp == null) {
-            beforeTimestamp = Date.now();
+        if (settings?.disableDB) return [];
+
+        let normalizedBeforeTimestamp = Math.trunc(Number(beforeTimestamp));
+        if (!Number.isFinite(normalizedBeforeTimestamp)) {
+            normalizedBeforeTimestamp = Date.now();
         }
+
+        let normalizedLimit = parseInt(limit, 10);
+        if (!Number.isFinite(normalizedLimit) || normalizedLimit <= 0) {
+            normalizedLimit = 50;
+        }
+
+        let normalizedBeforeId = null;
+        if (beforeId !== null && beforeId !== undefined && beforeId !== "") {
+            const parsedBeforeId = parseInt(beforeId, 10);
+            if (Number.isFinite(parsedBeforeId)) {
+                normalizedBeforeId = parsedBeforeId;
+            }
+        }
+
+        const db = await this.ensureDB();
         return new Promise((resolve) => {
             const tx = db.transaction(this.storeName, 'readonly');
             const index = tx.objectStore(this.storeName).index('timestamp');
             const messages = [];
             const now = Date.now();
 
-            index.openCursor(IDBKeyRange.upperBound(beforeTimestamp), 'prev').onsuccess = event => {
+            const cursorRequest = index.openCursor(IDBKeyRange.upperBound(normalizedBeforeTimestamp), 'prev');
+            cursorRequest.onsuccess = event => {
                 const cursor = event.target.result;
-                if (cursor && messages.length < limit) {
+                if (cursor && messages.length < normalizedLimit) {
                     const msg = cursor.value;
-                    if (beforeId != null && msg.timestamp === beforeTimestamp && msg.id >= beforeId) {
+                    const msgTimestamp = Math.trunc(Number(msg.timestamp));
+                    const msgId = parseInt(msg.id, 10);
+                    if (
+                        normalizedBeforeId !== null &&
+                        Number.isFinite(msgTimestamp) &&
+                        msgTimestamp === normalizedBeforeTimestamp &&
+                        Number.isFinite(msgId) &&
+                        msgId >= normalizedBeforeId
+                    ) {
                         cursor.continue();
                         return;
                     }
@@ -413,6 +439,8 @@ class MessageStoreDB {
                     resolve(messages);
                 }
             };
+
+            cursorRequest.onerror = () => resolve([]);
         });
     }
 
