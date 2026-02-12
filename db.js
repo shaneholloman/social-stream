@@ -389,9 +389,14 @@ class MessageStoreDB {
     async getMessagesBefore(beforeTimestamp, limit = 50, beforeId = null) {
         if (settings?.disableDB) return [];
 
-        let normalizedBeforeTimestamp = Math.trunc(Number(beforeTimestamp));
-        if (!Number.isFinite(normalizedBeforeTimestamp)) {
+        let normalizedBeforeTimestamp;
+        if (beforeTimestamp === null || beforeTimestamp === undefined || beforeTimestamp === "") {
             normalizedBeforeTimestamp = Date.now();
+        } else {
+            normalizedBeforeTimestamp = Math.trunc(Number(beforeTimestamp));
+            if (!Number.isFinite(normalizedBeforeTimestamp)) {
+                normalizedBeforeTimestamp = Date.now();
+            }
         }
 
         let normalizedLimit = parseInt(limit, 10);
