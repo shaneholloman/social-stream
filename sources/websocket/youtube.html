@@ -1419,21 +1419,23 @@ function enableBackgroundKeepAlive() {
 						}
 						
 						if (item.snippet.superChatDetails) {
-							// Build badges for super chat author
-							let superChatBadges = [];
-							if (item.authorDetails.isChatOwner) superChatBadges.push({"type": "text", "text": "👑"});
-							if (item.authorDetails.isChatModerator) superChatBadges.push({"type": "text", "text": "🛡️"});
-							if (item.authorDetails.isChatSponsor) superChatBadges.push({"type": "text", "text": "⭐"});
-							
-							processSuperChat({
-								authorName: item.authorDetails.displayName.replace(/^@/, ''),
-								amount: item.snippet.superChatDetails.amountDisplayString,
-								message: item.snippet.superChatDetails.userComment,
-								tier: item.snippet.superChatDetails.tier,
-								profileImageUrl: item.authorDetails.profileImageUrl,
-								authorChannelId: item.authorDetails.channelId,
-								badges: superChatBadges.length > 0 ? superChatBadges : ""
-							});
+							if (!isBacklogMessage) {
+								// Build badges for super chat author
+								let superChatBadges = [];
+								if (item.authorDetails.isChatOwner) superChatBadges.push({"type": "text", "text": "👑"});
+								if (item.authorDetails.isChatModerator) superChatBadges.push({"type": "text", "text": "🛡️"});
+								if (item.authorDetails.isChatSponsor) superChatBadges.push({"type": "text", "text": "⭐"});
+
+								processSuperChat({
+									authorName: item.authorDetails.displayName.replace(/^@/, ''),
+									amount: item.snippet.superChatDetails.amountDisplayString,
+									message: item.snippet.superChatDetails.userComment,
+									tier: item.snippet.superChatDetails.tier,
+									profileImageUrl: item.authorDetails.profileImageUrl,
+									authorChannelId: item.authorDetails.channelId,
+									badges: superChatBadges.length > 0 ? superChatBadges : ""
+								});
+							}
 						}
 						if (item.snippet.membershipDetails) {
 							const membershipEventInfo = deriveMembershipEventContext(item.snippet, item.snippet.membershipDetails);

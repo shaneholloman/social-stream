@@ -386,12 +386,48 @@ class MessageStoreDB {
         setInterval(cleanup, MS_PER_DAY);
     }
 
+    async getMessagesBefore(beforeTimestamp, limit = 50, beforeId = null) {
+        const db = await this.ensureDB();
+        if (beforeTimestamp == null) {
+            beforeTimestamp = Date.now();
+        }
+        return new Promise((resolve) => {
+            const tx = db.transaction(this.storeName, 'readonly');
+            const index = tx.objectStore(this.storeName).index('timestamp');
+            const messages = [];
+            const now = Date.now();
+
+            index.openCursor(IDBKeyRange.upperBound(beforeTimestamp), 'prev').onsuccess = event => {
+                const cursor = event.target.result;
+                if (cursor && messages.length < limit) {
+                    const msg = cursor.value;
+                    if (beforeId != null && msg.timestamp === beforeTimestamp && msg.id >= beforeId) {
+                        cursor.continue();
+                        return;
+                    }
+                    if (!msg.expiresAt || msg.expiresAt > now) {
+                        messages.push(msg);
+                    }
+                    cursor.continue();
+                } else {
+                    resolve(messages);
+                }
+            };
+        });
+    }
+
     async clearCache() {
         this.cache.recent = [];
         this.cache.userMessages.clear();
         this.cache.lastUpdate = 0;
     }
 }
+
+// Compatibility function for getMessagesBeforeDB
+async function getMessagesBeforeDB(beforeTimestamp, limit, beforeId) {
+    return await messageStoreDB.getMessagesBefore(beforeTimestamp, limit, beforeId);
+}
+
 // Compatibility function for getLastMessagesDB
 async function getLastMessagesDB(limit = 10) {
     return await messageStoreDB.getRecentMessages(limit);

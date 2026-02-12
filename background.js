@@ -9580,6 +9580,13 @@ async function processIncomingRequest(request, UUID = false) { // from the dock 
 					sendDataP2P({ recentHistory: res }, UUID);
 				}
 			}
+		} else if (request.action === "getHistoryBefore" && request.value) {
+			if (isExtensionOn) {
+				var res = await getMessagesBeforeDB(request.value.before, request.value.limit || 50, request.value.beforeId);
+				if (isExtensionOn) {
+					sendDataP2P({ historyBefore: res }, UUID);
+				}
+			}
 		} else if (request.action === "toggleVIPUser" && request.value && request.value.chatname && request.value.type) {
 			// Initialize viplist settings if not present
 			if (!settings.viplistusers) {

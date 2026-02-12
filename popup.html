@@ -2109,6 +2109,13 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="loadlast">🗄️ Load last ~30-msgs from the database on load </span>									
                                 </div>
+								<div data-keywords="history browse older messages scroll back archive">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="history" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🕰️ Enable history browsing (scroll up to load older messages)</span>									
+                                </div>
 								
                                 <div data-keywords="auto show feature highlight spotlight select queue">
                                     <label class="switch">
@@ -10987,6 +10994,15 @@ input:checked + .slider:before {
 										</label>
 										<span data-translate="ticker-speed">
 											⏲️ Speed (relative) <input type="number" style="max-width: 8ch;" max="10" min="0.01" value="1" size="3" data-numbersetting6="speed" />x
+										</span>
+									</div>
+									<div>
+										<label class="switch">
+											<input type="checkbox" data-param6="speedmode=time" />
+											<span class="slider round"></span>
+										</label>
+										<span>
+											🕒 FPS-independent speed (recommended for OBS)
 										</span>
 									</div>
 									<br>
