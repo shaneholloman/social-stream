@@ -71,6 +71,10 @@
 				--special-bgcolor-bubble-odd: #08244cd1;
 				--bgcolor-bubble: #000d;
 				--bgcolor-bubble-odd: #111d;
+				--name-bubble-bg: #2a5bd7;
+				--name-bubble-text: var(--font-color-name);
+				--name-bubble-radius: 999px;
+				--name-bubble-padding: 2px 8px;
 
 				--scrollbar-visible: inherit;
 				--padding-rows: 3px;
@@ -136,6 +140,9 @@
 			
 			.blurred {
 				filter: blur(var(--blur-amount));
+			}
+			body.noblur .blurred {
+				filter: none !important;
 			}
 
 			@keyframes float {
@@ -859,6 +866,9 @@
 				text-decoration: line-through;
 				filter: blur(5px);
 			}
+			body.noblur .timed-out {
+				filter: none !important;
+			}
 
 			/* Optionally add badges for roles */
 			.marked-host:before {
@@ -993,6 +1003,23 @@
 			
 			.hl-message.bubble span.hl-donation {
 				margin: auto 0
+			}
+			body.namebubble .hl-message.bubble .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+				margin: auto 6px auto 0;
+			}
+			body.alignright.namebubble .hl-message.bubble .hl-name {
+				margin: auto 0 auto 6px;
+			}
+			body.namebubble .hl-rightside.bubble .hl-righttopline .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+				margin-right: 6px;
 			}
 			
 
@@ -2972,6 +2999,72 @@
 				document.body.style.setProperty("--text-shadow", shadowValue);
 			}
 
+			function clamp(value, min, max) {
+				if (value < min) { return min; }
+				if (value > max) { return max; }
+				return value;
+			}
+
+			function parseColorToRgb(colorValue) {
+				if (!hasValue(colorValue)) {
+					return null;
+				}
+				var color = String(colorValue).trim();
+				var hexMatch = color.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+				if (hexMatch) {
+					var hex = hexMatch[1];
+					if (hex.length === 3 || hex.length === 4) {
+						return {
+							r: parseInt(hex.charAt(0) + hex.charAt(0), 16),
+							g: parseInt(hex.charAt(1) + hex.charAt(1), 16),
+							b: parseInt(hex.charAt(2) + hex.charAt(2), 16)
+						};
+					}
+					return {
+						r: parseInt(hex.slice(0, 2), 16),
+						g: parseInt(hex.slice(2, 4), 16),
+						b: parseInt(hex.slice(4, 6), 16)
+					};
+				}
+
+				var rgbMatch = color.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+				if (rgbMatch) {
+					return {
+						r: clamp(parseFloat(rgbMatch[1]) || 0, 0, 255),
+						g: clamp(parseFloat(rgbMatch[2]) || 0, 0, 255),
+						b: clamp(parseFloat(rgbMatch[3]) || 0, 0, 255)
+					};
+				}
+				return null;
+			}
+
+			function withOpacity(colorValue, opacityValue) {
+				var rgb = parseColorToRgb(colorValue);
+				if (!rgb) {
+					return null;
+				}
+				return "rgba(" + Math.round(rgb.r) + ", " + Math.round(rgb.g) + ", " + Math.round(rgb.b) + ", " + opacityValue + ")";
+			}
+
+			function applyBubbleOpacity(opacityValue) {
+				if (!hasValue(opacityValue)) {
+					return;
+				}
+				var parsedOpacity = parseFloat(opacityValue);
+				if (isNaN(parsedOpacity)) {
+					return;
+				}
+				var clampedOpacity = clamp(parsedOpacity, 0, 1);
+				var rootStyles = getComputedStyle(document.documentElement);
+				["--bgcolor-bubble", "--bgcolor-bubble-odd"].forEach(function (varName) {
+					var currentColor = rootStyles.getPropertyValue(varName).trim();
+					var updatedColor = withOpacity(currentColor, clampedOpacity);
+					if (updatedColor) {
+						document.documentElement.style.setProperty(varName, updatedColor);
+					}
+				});
+			}
+
 			var tainted = false;
 
 			var urlParams = new URLSearchParams(window.location.search);
@@ -3048,6 +3141,24 @@
 			var nameColorParam = urlParams.get("namecolor");
 			if (hasValue(nameColorParam)) {
 				document.documentElement.style.setProperty("--font-color-name", nameColorParam);
+			}
+
+			var bubbleOpacityParam = urlParams.get("bubbleopacity");
+			var nameBubbleColorParam = urlParams.get("namebubblecolor");
+			if (hasValue(nameBubbleColorParam)) {
+				document.documentElement.style.setProperty("--name-bubble-bg", nameBubbleColorParam);
+			}
+			var nameBubbleTextParam = urlParams.get("namebubbletext");
+			if (hasValue(nameBubbleTextParam)) {
+				document.documentElement.style.setProperty("--name-bubble-text", nameBubbleTextParam);
+			}
+			var nameBubbleRadiusParam = toCssLength(urlParams.get("namebubbleradius"), "px");
+			if (hasValue(nameBubbleRadiusParam)) {
+				document.documentElement.style.setProperty("--name-bubble-radius", nameBubbleRadiusParam);
+			}
+			var nameBubblePaddingParam = urlParams.get("namebubblepadding");
+			if (hasValue(nameBubblePaddingParam)) {
+				document.documentElement.style.setProperty("--name-bubble-padding", nameBubblePaddingParam);
 			}
 
 			var fontWeightParam = urlParams.get("fontweight");
@@ -3177,12 +3288,20 @@
 			if (urlParams.has("disabletimeout")) {
 				autoTimeoutEnabled = false;
 			}
-			
+
+			var noBlur = urlParams.has("noblur");
+			if (noBlur) {
+				document.body.classList.add("noblur");
+			}
+
 			var blurred = false;
 			if (urlParams.has("blur") || urlParams.has("blurred")) {
 				blurred = urlParams.get("blur") ||  urlParams.get("blurred") || "5";
 				blurred = parseFloat(blurred)+"px";
-				document.documentElement.style.setProperty("--blur-amount", blurred);				
+				document.documentElement.style.setProperty("--blur-amount", blurred);
+			}
+			if (noBlur) {
+				blurred = false;
 			}
 			
 			var onlyTwitch = false;
@@ -3415,6 +3534,9 @@
 			var bubble = false;
 			if (urlParams.has("bubble")) {
 				bubble = true;
+			}
+			if (urlParams.has("namebubble")) {
+				document.body.classList.add("namebubble");
 			}
 			
 			var showviewercount = false;
@@ -4948,6 +5070,8 @@
 				document.documentElement.style.setProperty("--special-bgcolor-bubble-odd", getComputedStyle(document.documentElement).getPropertyValue("--special-bgcolor-bubble"));
 				document.documentElement.style.setProperty("--bgcolor-bubble-odd", getComputedStyle(document.documentElement).getPropertyValue("--bgcolor-bubble"));
 			}
+
+			applyBubbleOpacity(bubbleOpacityParam);
 
 			if (urlParams.has("nooutline")) {
 				setTextShadow("0 0 #0000");

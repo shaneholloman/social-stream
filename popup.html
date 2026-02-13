@@ -3112,6 +3112,13 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="blur-instead">🌫️ Just blur messages from hidden sources</span>
                                 </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="noblur" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🧼 Never blur hidden or timed-out messages</span>
+                                </div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param1="branded" />
@@ -3590,6 +3597,45 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <span data-translate="turn-message-portion-into-a-rounded-bubble">💭 Turn message portion into a rounded bubble </span>
+                                </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="namebubble" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🏷️ Add a rounded bubble behind the name</span>
+                                </div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="flex:1; margin-right:5px;">
+										<input type="text" id="dock_name_bubble_color" class="textInput instant" autocomplete="off" placeholder="e.g. #2a5bd7" data-textparam1="namebubblecolor" data-palette="dock_name_bubble_color_palette" />
+										<label for="dock_name_bubble_color">&gt; Name bubble color</label>
+									</div>
+									<input type="color" data-color="dock_name_bubble_color" id="dock_name_bubble_color_palette" class="colorPicker" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="flex:1; margin-right:5px;">
+										<input type="text" id="dock_name_bubble_text_color" class="textInput instant" autocomplete="off" placeholder="e.g. #ffffff" data-textparam1="namebubbletext" data-palette="dock_name_bubble_text_color_palette" />
+										<label for="dock_name_bubble_text_color">&gt; Name bubble text color</label>
+									</div>
+									<input type="color" data-color="dock_name_bubble_text_color" id="dock_name_bubble_text_color_palette" class="colorPicker" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div class="textInputContainer" style="width: 95%;">
+									<input type="number" step="1" min="0" id="dock_name_bubble_radius" class="textInput instant" autocomplete="off" placeholder="e.g. 999" data-textparam1="namebubbleradius" />
+									<label for="dock_name_bubble_radius">&gt; Name bubble radius (px)</label>
+								</div>
+								<div class="textInputContainer" style="width: 95%;">
+									<input type="text" id="dock_name_bubble_padding" class="textInput instant" autocomplete="off" placeholder="e.g. 2px 8px" data-textparam1="namebubblepadding" />
+									<label for="dock_name_bubble_padding">&gt; Name bubble padding</label>
+								</div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="bubbleopacity" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>💧 Bubble opacity
+										<input type="number" style="max-width: 7ch;" min="0" max="1" step="0.05" value="1" data-numbersetting="bubbleopacity" />
+										(0-1)
+									</span>
                                 </div>
                                 <div>
                                     <label class="switch">
