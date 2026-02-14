@@ -509,20 +509,28 @@ if (typeof(chrome.runtime)=='undefined'){
 	const pendingCallbacks = new Map();
 	let callbackIdCounter = 0;
 	
-	chrome.runtime.sendMessage = async function(data, callback){ // every single response, is either nothing, or update()
-		if (typeof(callback) == "function") {
-			// Generate unique callback ID
-			const callbackId = ++callbackIdCounter;
-			
-			// Create promise with timeout
-			const promise = new Promise((resolve) => {
-				// Store callback with timeout
-				const timeoutId = setTimeout(() => {
-					pendingCallbacks.delete(callbackId);
-					// If timeout, get sync response as fallback
-					const response = ipcRenderer.sendSync('fromPopup', data);
-					resolve(response);
-				}, 500);
+		chrome.runtime.sendMessage = async function(data, callback){ // every single response, is either nothing, or update()
+			if (typeof(callback) == "function") {
+				// Generate unique callback ID
+				const callbackId = ++callbackIdCounter;
+				const isGetSettingsRequest = !!(data && data.cmd === "getSettings");
+				const timeoutMs = isGetSettingsRequest ? 3000 : 500;
+				
+				// Create promise with timeout
+				const promise = new Promise((resolve) => {
+					// Store callback with timeout
+					const timeoutId = setTimeout(() => {
+						pendingCallbacks.delete(callbackId);
+						if (isGetSettingsRequest) {
+							// For startup hydration, avoid forcing a synchronous fallback from potentially stale cache.
+							// Let periodic retries continue, and allow late async callback responses to update the UI.
+							resolve(undefined);
+							return;
+						}
+						// For other messages, keep sync fallback behavior.
+						const response = ipcRenderer.sendSync('fromPopup', data);
+						resolve(response);
+					}, timeoutMs);
 				
 				pendingCallbacks.set(callbackId, { 
 					callback: resolve, 
@@ -2716,51 +2724,6 @@ function update(response, sync = true) {
             document.getElementById("remote_control_url").href = baseURL + "sampleapi.html?session=" + response.streamID + password;
             // The hideLinks variable is not reset to false globally here, its state is managed by the checkbox and classList.
 
-            if ('settings' in response) {
-                setupTtsProviders(response); // Handle TTS provider setting initialization
-
-                const targetMap = getTargetMap(); // Assuming getTargetMap() is defined
-                const paramNums = Object.values(targetMap);
-
-                for (var key in response.settings) {
-                    try {
-                        if (key === "midiConfig") {
-                            if (response.settings[key]) {
-                                document.getElementById("midiConfig").classList.add("pressed");
-                                document.getElementById("midiConfig").innerText = " Config Loaded";
-                            } else {
-                                document.getElementById("midiConfig").classList.remove("pressed");
-                                document.getElementById("midiConfig").innerText = " Load Config";
-                            }
-                            continue; // Continue to next setting
-                        }
-
-                        if (typeof response.settings[key] == "object") {
-                            // Pass 'response' to handle 'mynameext' correctly within processObjectSetting
-                            processObjectSetting(key, response.settings[key], sync, paramNums, response);
-                        } else {
-                            processLegacySetting(key, response.settings[key], sync);
-                        }
-                    } catch (e) {
-                        console.error(`Error processing setting ${key}:`, e);
-                    }
-                }
-
-                if ("translation" in response.settings) {
-                    translation = response.settings["translation"];
-                    miniTranslate(document.body); // Assuming miniTranslate is defined
-                }
-            }
-
-            createTabsFromSettings(response); // Assuming createTabsFromSettings is defined
-
-            // Check if MIDI is enabled and initialize if needed
-            const midiCheckbox = document.querySelector('input[data-setting="midi"]');
-            if (midiCheckbox && midiCheckbox.checked) {
-                // MIDI was enabled in settings, initialize the dropdown
-                handleMidiToggle(true);
-            }
-
             // Refresh all page links.
             refreshLinks();
 
@@ -2802,6 +2765,51 @@ function update(response, sync = true) {
 
             } catch (e) {
                 console.error("Error cleaning TTS params from links:", e);
+            }
+        }
+
+        if ('settings' in response && (response.streamID || ssapp)) {
+            setupTtsProviders(response); // Handle TTS provider setting initialization
+
+            const targetMap = getTargetMap(); // Assuming getTargetMap() is defined
+            const paramNums = Object.values(targetMap);
+
+            for (var key in response.settings) {
+                try {
+                    if (key === "midiConfig") {
+                        if (response.settings[key]) {
+                            document.getElementById("midiConfig").classList.add("pressed");
+                            document.getElementById("midiConfig").innerText = " Config Loaded";
+                        } else {
+                            document.getElementById("midiConfig").classList.remove("pressed");
+                            document.getElementById("midiConfig").innerText = " Load Config";
+                        }
+                        continue; // Continue to next setting
+                    }
+
+                    if (typeof response.settings[key] == "object") {
+                        // Pass 'response' to handle 'mynameext' correctly within processObjectSetting
+                        processObjectSetting(key, response.settings[key], sync, paramNums, response);
+                    } else {
+                        processLegacySetting(key, response.settings[key], sync);
+                    }
+                } catch (e) {
+                    console.error(`Error processing setting ${key}:`, e);
+                }
+            }
+
+            if ("translation" in response.settings) {
+                translation = response.settings["translation"];
+                miniTranslate(document.body); // Assuming miniTranslate is defined
+            }
+
+            createTabsFromSettings(response); // Assuming createTabsFromSettings is defined
+
+            // Check if MIDI is enabled and initialize if needed
+            const midiCheckbox = document.querySelector('input[data-setting="midi"]');
+            if (midiCheckbox && midiCheckbox.checked) {
+                // MIDI was enabled in settings, initialize the dropdown
+                handleMidiToggle(true);
             }
         }
 
@@ -7237,7 +7245,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		chrome.runtime.sendMessage({cmd: "getSettings"}, (response) => {
 			chrome.runtime.lastError;
 			log("getSettings response",response);
-			if ((response == undefined) || (!response.streamID)){
+			const hasSession = !!(response && response.streamID);
+			const hasSettingsPayload = !!(response && response.settings);
+			const ready = hasSession || (ssapp && hasSettingsPayload);
+			if (!ready){
 				// keep polling
 			} else {
 				clearInterval(initialSetup);
@@ -7250,7 +7261,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 	chrome.runtime.sendMessage({cmd: "getSettings"}, (response) => {
 		chrome.runtime.lastError;
 		log("getSettings response",response);
-		if ((response == undefined) || (!response.streamID)){
+		const hasSession = !!(response && response.streamID);
+		const hasSettingsPayload = !!(response && response.settings);
+		const ready = hasSession || (ssapp && hasSettingsPayload);
+		if (!ready){
 			
 		} else {
 			clearInterval(initialSetup);
