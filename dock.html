@@ -3155,10 +3155,12 @@
 			var bubbleOpacityParam = urlParams.get("bubbleopacity");
 			var nameBubbleColorParam = urlParams.get("namebubblecolor");
 			if (hasValue(nameBubbleColorParam)) {
+				if (/^[0-9a-fA-F]{3,8}$/.test(nameBubbleColorParam)) { nameBubbleColorParam = "#" + nameBubbleColorParam; }
 				document.documentElement.style.setProperty("--name-bubble-bg", nameBubbleColorParam);
 			}
 			var nameBubbleTextParam = urlParams.get("namebubbletext");
 			if (hasValue(nameBubbleTextParam)) {
+				if (/^[0-9a-fA-F]{3,8}$/.test(nameBubbleTextParam)) { nameBubbleTextParam = "#" + nameBubbleTextParam; }
 				document.documentElement.style.setProperty("--name-bubble-text", nameBubbleTextParam);
 			}
 			var nameBubbleRadiusParam = toCssLength(urlParams.get("namebubbleradius"), "px");
