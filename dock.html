@@ -2890,6 +2890,13 @@
 				return value !== null && value !== undefined && value !== "";
 			}
 
+			function normalizeColor(value) {
+				if (!hasValue(value)) { return value; }
+				value = String(value).trim();
+				if (/^[0-9a-fA-F]{3,8}$/.test(value)) { return "#" + value; }
+				return value;
+			}
+
 			function parseNumericValue(value) {
 				if (!hasValue(value)) {
 					return null;
@@ -3142,25 +3149,23 @@
 			var textGlowWidthParam = null;
 			var textGlowColorParam = null;
 
-			var fontColorParam = urlParams.get("fontcolor");
+			var fontColorParam = normalizeColor(urlParams.get("fontcolor"));
 			if (hasValue(fontColorParam)) {
 				document.documentElement.style.setProperty("--font-color", fontColorParam);
 			}
 
-			var nameColorParam = urlParams.get("namecolor");
+			var nameColorParam = normalizeColor(urlParams.get("namecolor"));
 			if (hasValue(nameColorParam)) {
 				document.documentElement.style.setProperty("--font-color-name", nameColorParam);
 			}
 
 			var bubbleOpacityParam = urlParams.get("bubbleopacity");
-			var nameBubbleColorParam = urlParams.get("namebubblecolor");
+			var nameBubbleColorParam = normalizeColor(urlParams.get("namebubblecolor"));
 			if (hasValue(nameBubbleColorParam)) {
-				if (/^[0-9a-fA-F]{3,8}$/.test(nameBubbleColorParam)) { nameBubbleColorParam = "#" + nameBubbleColorParam; }
 				document.documentElement.style.setProperty("--name-bubble-bg", nameBubbleColorParam);
 			}
-			var nameBubbleTextParam = urlParams.get("namebubbletext");
+			var nameBubbleTextParam = normalizeColor(urlParams.get("namebubbletext"));
 			if (hasValue(nameBubbleTextParam)) {
-				if (/^[0-9a-fA-F]{3,8}$/.test(nameBubbleTextParam)) { nameBubbleTextParam = "#" + nameBubbleTextParam; }
 				document.documentElement.style.setProperty("--name-bubble-text", nameBubbleTextParam);
 			}
 			var nameBubbleRadiusParam = toCssLength(urlParams.get("namebubbleradius"), "px");
@@ -3187,7 +3192,7 @@
 			}
 
 			var strokeWidthParam = urlParams.get("strokewidth") || urlParams.get("stroke");
-			var strokeColorParam = urlParams.get("strokecolor") || urlParams.get("strokeColor");
+			var strokeColorParam = normalizeColor(urlParams.get("strokecolor") || urlParams.get("strokeColor"));
 			if (hasValue(strokeWidthParam)) {
 				customStrokeWidthParam = strokeWidthParam;
 			}
@@ -3199,7 +3204,7 @@
 			}
 
 			var outlineWidthParam = urlParams.get("outlinewidth");
-			var outlineColorParam = urlParams.get("outlinecolor");
+			var outlineColorParam = normalizeColor(urlParams.get("outlinecolor"));
 			if (hasValue(outlineWidthParam)) {
 				customOutlineWidthParam = outlineWidthParam;
 			}
@@ -3212,7 +3217,7 @@
 			hasCustomOutline = customOutlineWidthParam !== null || customOutlineColorParam !== null;
 
 			var glowWidthParam = urlParams.get("glowwidth");
-			var glowColorParam = urlParams.get("glowcolor");
+			var glowColorParam = normalizeColor(urlParams.get("glowcolor"));
 			if (hasValue(glowWidthParam)) {
 				textGlowWidthParam = glowWidthParam;
 			}
@@ -3518,12 +3523,11 @@
 			}
 
 			if (urlParams.has("pressedcolor")) {
-				// must be a hex code value, without the #.
-				let pressedColor = urlParams.get("pressedcolor") || false;
+				let pressedColor = normalizeColor(urlParams.get("pressedcolor")) || false;
 				if (!pressedColor) {
 					document.documentElement.style.setProperty("--pressed-color", "unset", "");
 				} else {
-					document.documentElement.style.setProperty("--pressed-color", "#" + pressedColor, "");
+					document.documentElement.style.setProperty("--pressed-color", pressedColor, "");
 				}
 			}
 			
