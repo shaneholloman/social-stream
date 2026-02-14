@@ -1021,6 +1021,15 @@
 				padding: var(--name-bubble-padding);
 				margin-right: 6px;
 			}
+			body.namebubble.twoLines .hl-firstline .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+			}
+			body.namebubble.twoLines.alignright .hl-firstline .hl-name {
+				margin: auto 0 auto 6px;
+			}
 			
 
 			.bot > .hl-message {
@@ -3158,7 +3167,11 @@
 			}
 			var nameBubblePaddingParam = urlParams.get("namebubblepadding");
 			if (hasValue(nameBubblePaddingParam)) {
-				document.documentElement.style.setProperty("--name-bubble-padding", nameBubblePaddingParam);
+				var paddingVal = String(nameBubblePaddingParam).trim();
+				if (/^[\d.]+$/.test(paddingVal)) {
+					paddingVal = paddingVal + "px";
+				}
+				document.documentElement.style.setProperty("--name-bubble-padding", paddingVal);
 			}
 
 			var fontWeightParam = urlParams.get("fontweight");
