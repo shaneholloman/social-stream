@@ -4207,8 +4207,60 @@ function forwardLiveStatus(evt, bridgeMeta) {
         chatmessage: escapeHtml(chatmessage),
         meta: evt
     });
+
+    const viewerCountCandidates = [
+        evt?.viewer_count,
+        evt?.viewers,
+        evt?.viewerCount,
+        evt?.concurrent_viewers,
+        evt?.concurrent,
+        evt?.meta?.viewer_count,
+        evt?.meta?.viewers,
+        evt?.summary?.viewer_count,
+        evt?.summary?.viewers,
+        evt?.channel?.viewer_count,
+        evt?.channel?.viewers_count,
+        evt?.channel?.viewers,
+        evt?.livestream?.viewer_count,
+        evt?.livestream?.viewers,
+        evt?.stream?.viewer_count,
+        evt?.stream?.viewers
+    ];
+    let viewerTotal = null;
+    for (const candidate of viewerCountCandidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+            viewerTotal = Math.max(0, Math.floor(candidate));
+            break;
+        }
+        if (typeof candidate === 'string') {
+            const digits = candidate.replace(/[^0-9]/g, '');
+            if (!digits) {
+                continue;
+            }
+            const parsed = parseInt(digits, 10);
+            if (Number.isFinite(parsed)) {
+                viewerTotal = parsed;
+                break;
+            }
+        }
+    }
+    if (!isLive) {
+        viewerTotal = 0;
+    }
+    if (viewerTotal != null) {
+        pushMessage({
+            type: 'kick',
+            event: 'viewer_update',
+            meta: viewerTotal
+        });
+    }
+
     const prefix = bridgeMeta?.verified === false ? '[LIVE ⚠]' : '[LIVE]';
-    log(`${prefix} ${isLive ? 'Online' : 'Offline'}`);
+    if (viewerTotal != null) {
+        log(`${prefix} ${isLive ? 'Online' : 'Offline'} • ${viewerTotal} viewers`);
+    } else {
+        log(`${prefix} ${isLive ? 'Online' : 'Offline'}`);
+    }
 }
 
 function updateChatSendingState(flag) {

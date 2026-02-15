@@ -775,6 +775,11 @@
                                 <td><code>livestream.status.updated</code>.</td>
                                 <td><code>meta</code> contains the raw status body from Kick (is_live, title, etc.).</td>
                             </tr>
+                            <tr>
+                                <td class="status-event"><code>viewer_update</code></td>
+                                <td><code>livestream.status.updated</code> when Kick includes concurrent viewer totals.</td>
+                                <td><code>meta</code> integer viewer count; emits <code>0</code> on offline status to clear stale counters.</td>
+                            </tr>
                         </tbody>
                     </table>
                     <p class="field-highlights">Profile lookups leverage <code>profileCache</code>; <code>mapBadges</code> merges Kick's badge assets with cached SVG when available. When Kick reports donations in "kicks", the bridge converts them into <code>meta.amount</code> with <code>currency</code> fallback to "KICK".</p>

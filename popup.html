@@ -1945,6 +1945,17 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="show-viewer-count">🔢 Show viewer count per source; top-right</span>
                                 </div>
+								<div title="Set the top-right viewer count bar background color. Supports hex, rgba, and named colors." data-keywords="viewer bar topbar background color theme dock style">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="viewerbarbg" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🎨 Custom viewer bar background color</span>
+                                </div>
+								<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+									<input type="text" id="dock_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam1="viewerbarbg" />
+									<label for="dock_viewerbarbg">&gt; Viewer bar background color</label>
+								</div>
 
                                 <div title="Another Social Stream page MUST be added to OBS with page permissions set to 'Read access to user information' or higher." data-keywords="obs remote scene indicator status corner preview permissions">
                                     <label class="switch">
@@ -8195,6 +8206,17 @@ input:checked + .slider:before {
 									</label>
 									<span>👀 Show viewer count bar in the top-right</span>
 								</div>
+								<div title="Set the top-right viewer count bar background color. Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param17="viewerbarbg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom viewer bar background color</span>
+								</div>
+								<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+									<input type="text" id="events_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam17="viewerbarbg" />
+									<label for="events_viewerbarbg">&gt; Viewer bar background color</label>
+								</div>
 
 								<div>
 									<label class="switch">
@@ -8460,6 +8482,17 @@ input:checked + .slider:before {
 										<option value="minimal">Minimal</option>
 										<option value="topbar">Dock Style</option>
 									</select>
+								</div>
+								<div title="Set the top-right viewer count bar background color in topbar/dock style. Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param4="viewerbarbg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom viewer bar background color</span>
+								</div>
+								<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+									<input type="text" id="hype_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam4="viewerbarbg" />
+									<label for="hype_viewerbarbg">&gt; Viewer bar background color</label>
 								</div>
                                 <div>
                                     <label class="switch">
