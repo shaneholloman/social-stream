@@ -628,6 +628,15 @@ export const URL_PARAMETER_GROUPS = Object.freeze([
             ],
             "values": "string",
             "description": "Sets specific exit animation (see animate.css)"
+          },
+          {
+            "key": "animationspeed",
+            "displayName": "animationspeed",
+            "aliases": [
+              "animationspeed"
+            ],
+            "values": "string",
+            "description": "Sets animation duration in seconds (default: 1). Lower values = faster animations"
           }
         ]
       },

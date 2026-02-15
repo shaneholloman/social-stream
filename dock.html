@@ -2143,7 +2143,7 @@
 			}
 
 			.fadeout {
-				animation: fadeout 2s both;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2) both;
 				-webkit-transition: opacity 1.5s ease-in-out;
 				transition: opacity 1.5s ease-in-out;
 				opacity: 0;
@@ -2162,7 +2162,7 @@
 			}
 
 			.fadein {
-				animation: fadein 1s both;
+				animation: fadein var(--animation-speed, 1s) both;
 				-webkit-transition: opacity 0.5s ease-in-out;
 				transition: opacity 0.5s ease-in-out;
 				opacity: 1;
@@ -2189,7 +2189,7 @@
 			}
 
 			.swiperight {
-				animation: swiperight 1s;
+				animation: swiperight var(--animation-speed, 1s);
 			}
 			@keyframes swiperight {
 				0% {
@@ -2201,7 +2201,7 @@
 			}
 
 			.swipeleft {
-				animation: swipeleft 1s;
+				animation: swipeleft var(--animation-speed, 1s);
 			}
 			@keyframes swipeleft {
 				0% {
@@ -2213,7 +2213,7 @@
 			}
 
 			.swipeup {
-				animation: swipeup 1s;
+				animation: swipeup var(--animation-speed, 1s);
 			}
 			@keyframes swipeup {
 				0% {
@@ -2225,42 +2225,42 @@
 			}
 
 			.fadeout.swipeup {
-				animation: fadeout 2s, swipeup 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 			.fadein.swipeup {
-				animation: fadein 2s, swipeup 1s;
+				animation: fadein calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 
 			.fadeout.fadein {
-				animation: fadeout 2s, fadein 2s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), fadein calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.swipeleft.fadein {
-				animation: swipeleft 1s, fadein 1s;
+				animation: swipeleft var(--animation-speed, 1s), fadein var(--animation-speed, 1s);
 			}
 			.swipeleft.fadeout {
-				animation: fadeout 2s, swipeleft 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeleft var(--animation-speed, 1s);
 			}
 
 			.swiperight.fadein {
-				animation: swiperight 1s, fadein 1s;
+				animation: swiperight var(--animation-speed, 1s), fadein var(--animation-speed, 1s);
 			}
 			.swiperight.fadeout {
-				animation: swiperight 1s, fadeout 2s;
+				animation: swiperight var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.swipeup.fadeout {
-				animation: fadeout 2s, swipeup 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 
 			.swipeleft.fadein.fadeout {
-				animation: swipeleft 1s, fadein 1s, fadeout 2s;
+				animation: swipeleft var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 			.swipeup.fadein.fadeout {
-				animation: swipeup 1s, fadein 1s, fadeout 2s;
+				animation: swipeup var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 			.swiperight.fadein.fadeout {
-				animation: swiperight 1s, fadein 1s, fadeout 2s;
+				animation: swiperight var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.electronDraggable {
@@ -3985,6 +3985,18 @@
 
 			if (urlParams.has("swipeup")) {
 				transitionType.push("swipeup");
+			}
+
+			var animationSpeedMs = 1000;
+			var fadeoutTimeoutMs = 1500;
+			if (urlParams.has("animationspeed")) {
+				var speed = parseFloat(urlParams.get("animationspeed"));
+				if (!isNaN(speed) && speed > 0) {
+					animationSpeedMs = speed * 1000;
+					fadeoutTimeoutMs = speed * 1500;
+					document.documentElement.style.setProperty('--animation-speed', speed + 's');
+					document.documentElement.style.setProperty('--animate-duration', speed + 's');
+				}
 			}
 
 			var reversed = false;
@@ -8538,12 +8550,12 @@
 				if (animateout) {
 					animateCSS(node, animateout); // animate then delete
 				} else if (fadeout && horizontal) {
-					node.classList.add("fadeout"); 
+					node.classList.add("fadeout");
 					setTimeout(
 						function (node) {
 							nodeRemove(node);
 						},
-						1500,
+						fadeoutTimeoutMs,
 						node
 					);
 				} else if (horizontal) {
@@ -8554,7 +8566,7 @@
 						function (node) {
 							nodeRemove(node);
 						},
-						1500,
+						fadeoutTimeoutMs,
 						node
 					);
 				} else if (scrolltype === "smooth") {

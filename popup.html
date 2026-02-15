@@ -3786,6 +3786,18 @@ input:checked + .slider:before {
                                     <span data-translate="smooth-message-buffering">🚦 Smooth message buffering (prevents message floods) </span>
                                 </div>
 
+                                <div data-keywords="animation speed duration fast slow swipe fade timing">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="animationspeed" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>
+                                        ⚡ Animation speed
+                                        <input type="range" id="dock-animationspeed-range" min="0.1" max="3" step="0.1" value="1" style="width: 150px;" data-numbersetting="animationspeed" data-range-display="dock-animationspeed-display" data-range-suffix="s" />
+                                        <span class="range-value" id="dock-animationspeed-display">1.0s</span>
+                                    </span>
+                                </div>
+
                                 <h3 data-translate="advanced-animation">Advanced animation options can be set below.</h3>
                                 <i>
                                     <p>
