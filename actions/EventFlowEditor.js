@@ -803,23 +803,83 @@ class EventFlowEditor {
         `;
     }
 
-    openGuide(guideKey) {
-        const guideMap = {
-            'event-flow': 'actions/event-flow-guide.html',
-            'state-nodes': 'actions/state-nodes-guide.html',
-            'event-flow-about': 'actions/event-flow-guide.html#what-is-event-flow'
-        };
-        let target = guideMap[guideKey];
-        if (!target) return;
-        if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getURL === 'function') {
-            target = chrome.runtime.getURL(target);
+    isExtensionRuntimeAvailable() {
+        const runtime = typeof chrome !== 'undefined' ? chrome.runtime : null;
+        if (!runtime || typeof runtime.getURL !== 'function') {
+            return false;
         }
+
+        // Electron/SSApp may provide partial chrome shims; treat those as local-file contexts.
+        if (
+            this.isSSApp ||
+            window.ssapp === true ||
+            window.ninjafy ||
+            window.electronApi ||
+            (typeof process !== 'undefined' && process.versions && process.versions.electron)
+        ) {
+            return false;
+        }
+
+        return typeof runtime.id === 'string' && runtime.id.length > 0;
+    }
+
+    isActionsPageContext() {
+        const path = (window.location && window.location.pathname) || '';
+        return path.includes('/actions/') || path.endsWith('/actions');
+    }
+
+    resolveGuideTarget(guideKey) {
+        const guideMap = {
+            'event-flow': {
+                extensionPath: 'actions/event-flow-guide.html',
+                rootPath: 'actions/event-flow-guide.html',
+                actionsPath: 'event-flow-guide.html'
+            },
+            'state-nodes': {
+                extensionPath: 'actions/state-nodes-guide.html',
+                rootPath: 'actions/state-nodes-guide.html',
+                actionsPath: 'state-nodes-guide.html'
+            },
+            'event-flow-about': {
+                extensionPath: 'actions/event-flow-guide.html',
+                rootPath: 'actions/event-flow-guide.html',
+                actionsPath: 'event-flow-guide.html',
+                hash: '#what-is-event-flow'
+            },
+            'event-reference': {
+                extensionPath: 'docs/event-reference.html',
+                rootPath: 'docs/event-reference.html',
+                actionsPath: '../docs/event-reference.html'
+            },
+            'event-reference-cross-platform': {
+                extensionPath: 'docs/event-reference.html',
+                rootPath: 'docs/event-reference.html',
+                actionsPath: '../docs/event-reference.html',
+                hash: '#cross-platform'
+            }
+        };
+
+        const guide = guideMap[guideKey];
+        if (!guide) return '';
+
+        if (this.isExtensionRuntimeAvailable()) {
+            const extensionUrl = chrome.runtime.getURL(guide.extensionPath);
+            return `${extensionUrl}${guide.hash || ''}`;
+        }
+
+        const localPath = this.isActionsPageContext() ? guide.actionsPath : guide.rootPath;
         try {
-			if (window.location.href.includes("/actions/")){
-				window.open(target.replace("actions/",""), '_blank');
-			} else {
-				window.open(target, '_blank');
-			}
+            return new URL(localPath, window.location.href).href + (guide.hash || '');
+        } catch (error) {
+            return `${localPath}${guide.hash || ''}`;
+        }
+    }
+
+    openGuide(guideKey) {
+        const target = this.resolveGuideTarget(guideKey);
+        if (!target) return;
+        try {
+            window.open(target, '_blank');
         } catch (error) {
             console.error('Failed to open guide', error);
         }
@@ -2675,6 +2735,8 @@ class EventFlowEditor {
 
 	showNodeProperties(node) {
 		const propertiesContent = document.getElementById('node-properties-content');
+		const eventReferenceUrl = this.escapeHtml(this.resolveGuideTarget('event-reference') || '#');
+		const eventReferenceCrossPlatformUrl = this.escapeHtml(this.resolveGuideTarget('event-reference-cross-platform') || '#');
 		let html = `<h4>${this.escapeHtml(this.getNodeTitle(node))} Properties</h4>
 					<input type="hidden" id="node-id-prop" value="${this.escapeHtml(node.id)}">`;
 
@@ -2917,7 +2979,7 @@ class EventFlowEditor {
 					<div style="background: #bbdefb; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 						⚠️ <strong>Twitch/YouTube/Kick require WebSocket mode</strong> in extension settings for follower events.
 					</div>
-					<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #1976d2;">📖 Event Reference Documentation</a>
+							<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #1976d2;">📖 Event Reference Documentation</a>
 				</div>`;
 				break;
 
@@ -2934,7 +2996,7 @@ class EventFlowEditor {
 					<div style="background: #c8e6c9; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 						⚠️ <strong>Twitch/YouTube/Kick require WebSocket mode</strong> for subscription events.
 					</div>
-					<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #2e7d32;">📖 Event Reference Documentation</a>
+							<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #2e7d32;">📖 Event Reference Documentation</a>
 				</div>`;
 				break;
 
@@ -2949,7 +3011,7 @@ class EventFlowEditor {
 					<div style="background: #ffe0b2; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 						⚠️ <strong>Requires WebSocket mode</strong> for Twitch/YouTube.
 					</div>
-					<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #e65100;">📖 Event Reference Documentation</a>
+							<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #e65100;">📖 Event Reference Documentation</a>
 				</div>`;
 				break;
 
@@ -2965,7 +3027,7 @@ class EventFlowEditor {
 					<div style="background: #f8bbd0; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 						⚠️ <strong>Requires WebSocket mode</strong> for Twitch/YouTube.
 					</div>
-					<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #c2185b;">📖 Event Reference Documentation</a>
+							<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #c2185b;">📖 Event Reference Documentation</a>
 				</div>`;
 				break;
 
@@ -2990,7 +3052,7 @@ class EventFlowEditor {
 						<div style="background: #ffecb3; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 							⚠️ <strong>YouTube/Twitch/Kick require WebSocket mode</strong> for monetary events.
 						</div>
-						<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #f57f17;">📖 Event Reference Documentation</a>
+								<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #f57f17;">📖 Event Reference Documentation</a>
 					</div>`;
 				break;
 
@@ -3011,7 +3073,7 @@ class EventFlowEditor {
 						<div style="background: #d1c4e9; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 							⚠️ <strong>Twitch WebSocket mode required.</strong> Raids are Twitch-specific.
 						</div>
-						<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #512da8;">📖 Event Reference Documentation</a>
+								<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #512da8;">📖 Event Reference Documentation</a>
 					</div>`;
 				break;
 
@@ -3032,7 +3094,7 @@ class EventFlowEditor {
 						<div style="background: #b3e5fc; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 							⚠️ <strong>Twitch WebSocket mode required.</strong> Cheers/Bits are Twitch-specific.
 						</div>
-						<a href="docs/event-reference.html#cross-platform" target="_blank" style="color: #0288d1;">📖 Event Reference Documentation</a>
+								<a href="${eventReferenceCrossPlatformUrl}" data-guide-link="event-reference-cross-platform" style="color: #0288d1;">📖 Event Reference Documentation</a>
 					</div>`;
 				break;
 
@@ -3063,7 +3125,7 @@ class EventFlowEditor {
 						<div style="background: #cfd8dc; padding: 6px 8px; border-radius: 3px; margin-bottom: 8px;">
 							⚠️ Most Twitch/YouTube/Kick events require <strong>WebSocket mode</strong> enabled in extension settings.
 						</div>
-						<a href="docs/event-reference.html" target="_blank" style="color: #455a64;">📖 Full Event Reference</a>
+								<a href="${eventReferenceUrl}" data-guide-link="event-reference" style="color: #455a64;">📖 Full Event Reference</a>
 					</div>`;
 				break;
 
@@ -3092,7 +3154,7 @@ class EventFlowEditor {
 							⚠️ <strong>Twitch/YouTube/Kick require WebSocket mode</strong> for most stream events.<br>
 							💡 <strong>TikTok</strong> provides many events via DOM detection without extra config.
 						</div>
-						<a href="docs/event-reference.html" target="_blank" style="color: #7b1fa2;">📖 Full Event Reference</a>
+								<a href="${eventReferenceUrl}" data-guide-link="event-reference" style="color: #7b1fa2;">📖 Full Event Reference</a>
 					</div>`;
 				break;
 
