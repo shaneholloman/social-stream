@@ -8455,7 +8455,7 @@ function processHype(data) { // data here should be a chat message
     }
 
     // Handle viewer count updates separately
-    if (data.event === 'viewer_update' && data.meta) {
+    if (data.event === 'viewer_update' && ("meta" in data)) {
         updateViewerCount(data); // This updates viewers and sends combined data via its own path
         return; // Return here so it doesn't process as a chatter
     }

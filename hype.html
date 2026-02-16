@@ -460,6 +460,11 @@ span.zero-width-parent img.zero-width-emote {
   font-size: 50%;
   padding: 3px;
 }
+.style-minimal.has-custom-viewerbarbg #hype {
+  background-color: var(--topbar-background, #0009);
+  border-radius: calc(10px * var(--scale));
+  padding: calc(2px * var(--scale)) calc(4px * var(--scale));
+}
 .style-modern #hype {
   gap: 2px;
   display: inline-flex;
@@ -589,6 +594,9 @@ function normalizeColorParam(value) {
 var viewerBarBg = normalizeColorParam(urlParams.get("viewerbarbg") || urlParams.get("viewerbarbackground") || urlParams.get("topbarbg"));
 if (viewerBarBg) {
     document.documentElement.style.setProperty("--topbar-background", viewerBarBg);
+    if (parentHolder) {
+        parentHolder.classList.add("has-custom-viewerbarbg");
+    }
 }
 try {
     if ((window.ninjafy || window.electronApi)) {
@@ -952,6 +960,83 @@ var hasViewerCount = {};
 var activeChatters = {};
 var aggregatedViewers = {};
 
+function renderAggregatedViewerSnapshot() {
+    if (!showViewers || !aggregatedViewers || typeof aggregatedViewers !== "object") {
+        return;
+    }
+    const hypeEl = document.getElementById("hype");
+    const parentEl = document.getElementById("parentHolder");
+    if (!hypeEl || !parentEl) {
+        return;
+    }
+
+    const normalizedViewers = {};
+    Object.keys(aggregatedViewers).forEach(function(platform) {
+        const type = getSourceImage(platform);
+        const numeric = parseInt(aggregatedViewers[platform], 10);
+        if (!normalizedViewers[type]) {
+            normalizedViewers[type] = 0;
+        }
+        if (!isNaN(numeric)) {
+            normalizedViewers[type] += numeric;
+        }
+    });
+
+    const types = Object.keys(normalizedViewers).sort();
+    if (!types.length) {
+        return;
+    }
+    const visibleTypes = new Set(types);
+
+    types.forEach(function(type) {
+        let holder = hypeEl.querySelector(".sourceStatHolder[data-type='" + type + "']");
+        if (!holder) {
+            holder = document.createElement("div");
+            holder.className = "sourceStatHolder";
+            holder.dataset.type = type;
+
+            const img = document.createElement("img");
+            img.className = "sourceicons";
+            img.src = "./sources/images/" + type + ".png";
+            img.decoding = "async";
+            img.loading = "eager";
+            holder.appendChild(img);
+        }
+
+        if (showViewers && !holder.querySelector("span[data-viewers][data-type='" + type + "']")) {
+            const v = document.createElement("span");
+            v.dataset.viewers = "true";
+            v.dataset.type = type;
+            holder.appendChild(v);
+        }
+
+        if (showChatters && !holder.querySelector("span[data-chatters][data-type='" + type + "']")) {
+            const c = document.createElement("span");
+            c.dataset.chatters = "true";
+            c.dataset.type = type;
+            c.textContent = "0";
+            holder.appendChild(c);
+        }
+
+        const viewerSpan = holder.querySelector("span[data-viewers][data-type='" + type + "']");
+        if (viewerSpan) {
+            viewerSpan.textContent = String(normalizedViewers[type] || 0);
+        }
+
+        hypeEl.appendChild(holder);
+    });
+
+    if (!showChatters) {
+        hypeEl.querySelectorAll(".sourceStatHolder").forEach(function(node) {
+            if (!visibleTypes.has(node.dataset.type)) {
+                node.remove();
+            }
+        });
+    }
+
+    parentEl.classList.remove("hidden");
+}
+
 function handleClearAction(clearAction) {
     if (!clearAction || !clearAction.action) return;
     if (clearAction.action === "refreshSources") {
@@ -1301,6 +1386,7 @@ eventer(messageEvent, function(e) {
                         });
                     }
                 }
+                renderAggregatedViewerSnapshot();
 
                 // Do not short-circuit; allow subsequent hype updates to render.
                 return;

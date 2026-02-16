@@ -3715,6 +3715,15 @@ function handleTextParam(ele, targetId, paramType, sync) {
     // Check if there's a corresponding checkbox
     const checkboxSelector = `input[data-param${paramNum}='${paramValue}']`;
     const checkbox = document.querySelector(checkboxSelector);
+
+    // For viewer bar background values, auto-toggle the setting so users don't need two steps.
+    if (sync && paramValue === 'viewerbarbg' && checkbox) {
+        const hasTextValue = Boolean((ele.value || '').trim());
+        if (checkbox.checked !== hasTextValue) {
+            checkbox.checked = hasTextValue;
+            updateSettings(checkbox, sync);
+        }
+    }
     
     // Only modify URL if there's no checkbox, or if checkbox exists and is checked
     if (!checkbox || checkbox.checked) {
