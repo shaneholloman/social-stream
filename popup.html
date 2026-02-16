@@ -8372,6 +8372,20 @@ input:checked + .slider:before {
                                         <span class="range-value" id="emotes-scale-display">1.00x</span>
                                     </span>
                                 </div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param3="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="emotes_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam3="pagebg" data-palette="emotes_pagebg_palette" />
+										<label for="emotes_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="emotes_pagebg" id="emotes_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param3="membersonly" />
@@ -8514,6 +8528,20 @@ input:checked + .slider:before {
 										<label for="hype_viewerbarbg">&gt; Viewer bar background color</label>
 									</div>
 									<input type="color" data-color="hype_viewerbarbg" id="hype_viewerbarbg_palette" class="colorPicker" title="Pick a viewer bar background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param4="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="hype_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam4="pagebg" data-palette="hype_pagebg_palette" />
+										<label for="hype_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="hype_pagebg" id="hype_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
 								</div>
                                 <div>
                                     <label class="switch">
@@ -8865,6 +8893,20 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="force-transparent-background">⭕ Force transparent background </span>
                                 </div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param5="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="waitlist_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam5="pagebg" data-palette="waitlist_pagebg_palette" />
+										<label for="waitlist_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="waitlist_pagebg" id="waitlist_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param5="opacity" />
@@ -9912,14 +9954,28 @@ input:checked + .slider:before {
 										<button id="creditsPreviewBtn" class="overlayButton" style="flex: 1;">Preview</button>
 									</div>
 									<br>
-									<div title="Hides page backgrounds; keeps star field on Star Wars style">
-										<label class="switch">
-											<input type="checkbox" data-param13="nobg" />
-											<span class="slider round"></span>
-										</label>
-										<span>🧼 Transparent background (hide overlay background)</span>
-									</div>
-									<br>
+										<div title="Hides page backgrounds; keeps star field on Star Wars style">
+											<label class="switch">
+												<input type="checkbox" data-param13="nobg" />
+												<span class="slider round"></span>
+											</label>
+											<span>🧼 Transparent background (hide overlay background)</span>
+										</div>
+										<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+											<label class="switch">
+												<input type="checkbox" data-param13="pagebg" />
+												<span class="slider round"></span>
+											</label>
+											<span>🎨 Custom page background color</span>
+										</div>
+										<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+											<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+												<input type="text" id="credits_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam13="pagebg" data-palette="credits_pagebg_palette" />
+												<label for="credits_pagebg">&gt; Page background color</label>
+											</div>
+											<input type="color" data-color="credits_pagebg" id="credits_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+										</div>
+										<br>
 									<span data-translate="font-family">
 										Font Family
 									</span>

@@ -3655,7 +3655,7 @@ function handleElementParam(ele, targetId, paramType, sync, value = null) {
     return true;
 }
 function handleExclusiveCases(ele, paramType, paramValue, sync) {
-    const exclusiveTypes = ['param1', 'param4', 'param5'];
+    const exclusiveTypes = ['param1', 'param4', 'param5', 'param13'];
     if (!exclusiveTypes.includes(paramType)) return;
 
     // Handle exclusive settings like darkmode/lightmode
@@ -3668,11 +3668,19 @@ function handleExclusiveCases(ele, paramType, paramValue, sync) {
         },
         param4: {
             'alignright': 'align=center',
-            'align=center': 'alignright'
+            'align=center': 'alignright',
+            'transparent': 'pagebg',
+            'pagebg': 'transparent'
         },
         param5: {
             'alignright': 'aligncenter',
-            'aligncenter': 'alignright'
+            'aligncenter': 'alignright',
+            'transparent': 'pagebg',
+            'pagebg': 'transparent'
+        },
+        param13: {
+            'nobg': 'pagebg',
+            'pagebg': 'nobg'
         }
     };
 
@@ -3716,8 +3724,8 @@ function handleTextParam(ele, targetId, paramType, sync) {
     const checkboxSelector = `input[data-param${paramNum}='${paramValue}']`;
     const checkbox = document.querySelector(checkboxSelector);
 
-    // For viewer bar background values, auto-toggle the setting so users don't need two steps.
-    if (sync && paramValue === 'viewerbarbg' && checkbox) {
+    // For color text params with paired checkboxes, auto-toggle so users don't need two steps.
+    if (sync && checkbox && (paramValue === 'viewerbarbg' || paramValue === 'pagebg' || paramValue === 'bgcolor')) {
         const hasTextValue = Boolean((ele.value || '').trim());
         if (checkbox.checked !== hasTextValue) {
             checkbox.checked = hasTextValue;

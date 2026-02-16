@@ -598,6 +598,7 @@ if (viewerBarBg) {
         parentHolder.classList.add("has-custom-viewerbarbg");
     }
 }
+var pageBgParam = normalizeColorParam(urlParams.get("pagebg") || urlParams.get("pagebackground") || urlParams.get("dockbg"));
 try {
     if ((window.ninjafy || window.electronApi)) {
         document.body.style.width = "95%";
@@ -811,6 +812,9 @@ if (urlParams.has("darkmode")) {
 }
 if (urlParams.has("transparent")) {
     document.documentElement.style.setProperty("--background-color", "#0000", "important");
+}
+if (pageBgParam) {
+    document.documentElement.style.setProperty("--background-color", pageBgParam, "important");
 }
 if (urlParams.has("nooutline")) {
     document.documentElement.style.setProperty("--outline", "0px");
