@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Co-host /w Vision & Voice - Social Stream Ninja</title>
-    <meta name="description" content="Experience real-time AI video conversations with Google's Gemini Vision AI. This interactive demo showcases live video analysis and natural language processing capabilities.">
-    <meta name="keywords" content="Gemini AI, video chat, AI assistant, Google AI, computer vision, real-time AI">
+    <meta name="description" content="Experience real-time multimodal AI co-host conversations with live audio, video, and chat across modern AI providers.">
+    <meta name="keywords" content="multimodal AI, realtime AI, AI co-host, Gemini Live, OpenAI Realtime, xAI Realtime">
     <meta name="robots" content="index, follow">
-    <meta property="og:title" content="Gemini Vision Chat">
-    <meta property="og:description" content="Live video conversations with Google's Gemini Vision AI">
+    <meta property="og:title" content="Social Stream Ninja AI Co-host">
+    <meta property="og:description" content="Live multimodal AI conversations with Gemini, OpenAI, and xAI">
     <meta property="og:type" content="website">
     <meta name="author" content="Steve Seguin">
     <link rel="me" href="https://github.com/steveseguin">
@@ -117,7 +117,7 @@ select:disabled, button:disabled {
     background: #251f1f;
 }
 
-#chatgpt-device-notice {
+#realtime-device-notice {
     background-color: rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     padding: 6px 10px;
@@ -156,6 +156,62 @@ select:disabled::after {
     display: flex;
     flex-direction: row;
     gap: 8px;
+}
+.model-override {
+    width: 100%;
+}
+.diagnostics-panel {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #404040;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #232323;
+    font-size: 12px;
+}
+.diagnostics-header {
+    color: #d0d0d0;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.diagnostics-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 10px;
+}
+.diagnostics-line {
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+}
+.diagnostics-actions {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.diagnostics-copy-button {
+    border: 1px solid #4a4a4a;
+    background: #2f2f2f;
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.diagnostics-copy-button:hover {
+    background: #3a3a3a;
+}
+.diagnostics-copy-status {
+    color: #9aa0a6;
+    font-size: 11px;
+}
+.diag-label {
+    color: #8f8f8f;
+}
+.diag-value {
+    color: #d9d9d9;
+    overflow-wrap: anywhere;
 }
 .api-key-info {
     font-size: 13px;
@@ -775,7 +831,25 @@ button:disabled {
 				<div class="api-key-info" id="apikeyinfo">
 					Get your free Gemini API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
 				</div>
-			</div>        </div>
+			</div>
+			<input type="text" id="modelOverride" placeholder="Optional model override" class="model-override">
+			<div id="connectionDiagnostics" class="diagnostics-panel">
+				<div class="diagnostics-header">Connection Diagnostics</div>
+				<div class="diagnostics-grid">
+					<div class="diagnostics-line"><span class="diag-label">Provider:</span><span id="diagProvider" class="diag-value">-</span></div>
+					<div class="diagnostics-line"><span class="diag-label">State:</span><span id="diagState" class="diag-value">idle</span></div>
+					<div class="diagnostics-line"><span class="diag-label">Model:</span><span id="diagModel" class="diag-value">-</span></div>
+					<div class="diagnostics-line"><span class="diag-label">Connected:</span><span id="diagConnected" class="diag-value">no</span></div>
+					<div class="diagnostics-line"><span class="diag-label">Last Event:</span><span id="diagEvent" class="diag-value">-</span></div>
+					<div class="diagnostics-line"><span class="diag-label">Updated:</span><span id="diagUpdated" class="diag-value">-</span></div>
+				</div>
+				<div class="diagnostics-line" style="margin-top:6px;"><span class="diag-label">Last Error:</span><span id="diagError" class="diag-value">-</span></div>
+				<div class="diagnostics-actions">
+					<button type="button" id="diagCopyButton" class="diagnostics-copy-button">Copy Diagnostics</button>
+					<span id="diagCopyStatus" class="diagnostics-copy-status" aria-live="polite"></span>
+				</div>
+			</div>
+		</div>
         <div id="error"></div>
         <video class="preview" id="preview" autoplay muted></video>
     </div>
@@ -788,7 +862,7 @@ button:disabled {
             </div>
         </div>
     </div>
-	<a href="https://github.com/steveseguin/gemini-chatbot" class="github-link" target="_blank" rel="noopener noreferrer" title="Fork on GitHub (MIT License)">
+	<a href="https://github.com/steveseguin/social_stream" class="github-link" target="_blank" rel="noopener noreferrer" title="View Source on GitHub">
 		<svg width="24" height="24" viewBox="0 0 24 24" fill="#e0e0e0">
 			<path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
 		</svg>
@@ -922,10 +996,190 @@ class PuppetAvatar {
         this.container.innerHTML = '';
     }
 }
-class ChatGPTPublisher {
-    constructor(stream, apiKey) {
+const GEMINI_DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025";
+const MAX_DIAGNOSTIC_HISTORY = 80;
+const diagnosticsState = {
+    provider: '-',
+    state: 'idle',
+    model: '-',
+    connected: 'no',
+    lastEvent: 'init',
+    lastError: '-',
+    updated: Date.now()
+};
+const diagnosticsHistory = [];
+let lastDiagnosticsSignature = '';
+let diagnosticsCopyStatusTimer = null;
+function formatDiagnosticsTime(timestamp) {
+    if (!timestamp) return '-';
+    try {
+        return new Date(timestamp).toLocaleTimeString();
+    } catch (e) {
+        return '-';
+    }
+}
+function renderDiagnostics() {
+    const providerEl = document.getElementById('diagProvider');
+    if (!providerEl) return;
+    document.getElementById('diagProvider').textContent = diagnosticsState.provider || '-';
+    document.getElementById('diagState').textContent = diagnosticsState.state || 'idle';
+    document.getElementById('diagModel').textContent = diagnosticsState.model || '-';
+    document.getElementById('diagConnected').textContent = diagnosticsState.connected || 'no';
+    document.getElementById('diagEvent').textContent = diagnosticsState.lastEvent || '-';
+    document.getElementById('diagError').textContent = diagnosticsState.lastError || '-';
+    document.getElementById('diagUpdated').textContent = formatDiagnosticsTime(diagnosticsState.updated);
+}
+function pushDiagnosticsHistory() {
+    diagnosticsHistory.push({
+        timestamp: diagnosticsState.updated,
+        isoTime: new Date(diagnosticsState.updated).toISOString(),
+        provider: diagnosticsState.provider,
+        state: diagnosticsState.state,
+        model: diagnosticsState.model,
+        connected: diagnosticsState.connected,
+        event: diagnosticsState.lastEvent,
+        error: diagnosticsState.lastError
+    });
+    if (diagnosticsHistory.length > MAX_DIAGNOSTIC_HISTORY) {
+        diagnosticsHistory.splice(0, diagnosticsHistory.length - MAX_DIAGNOSTIC_HISTORY);
+    }
+}
+function updateDiagnostics(patch = {}) {
+    Object.assign(diagnosticsState, patch);
+    diagnosticsState.updated = Date.now();
+    const signature = [
+        diagnosticsState.provider,
+        diagnosticsState.state,
+        diagnosticsState.model,
+        diagnosticsState.connected,
+        diagnosticsState.lastEvent,
+        diagnosticsState.lastError
+    ].join('|');
+    if (signature !== lastDiagnosticsSignature) {
+        pushDiagnosticsHistory();
+        lastDiagnosticsSignature = signature;
+    }
+    renderDiagnostics();
+}
+function getDiagnosticsSnapshot() {
+    const selectedProviderName = (typeof providerSelect !== 'undefined' && providerSelect?.value)
+        ? providerSelect.value
+        : (localStorage.getItem('selectedProvider') || 'unknown');
+    const modelOverrideValue = (typeof modelOverrideInput !== 'undefined' && modelOverrideInput)
+        ? modelOverrideInput.value.trim()
+        : (localStorage.getItem(`modelOverride_${selectedProviderName}`) || '').trim();
+    return {
+        generatedAt: new Date().toISOString(),
+        page: window.location.href,
+        userAgent: navigator.userAgent,
+        selectedProvider: selectedProviderName,
+        modelOverride: modelOverrideValue || null,
+        current: {
+            ...diagnosticsState,
+            updatedIso: new Date(diagnosticsState.updated).toISOString()
+        },
+        history: diagnosticsHistory.slice()
+    };
+}
+function setDiagnosticsCopyStatus(message, isError = false) {
+    const statusEl = document.getElementById('diagCopyStatus');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = isError ? '#ff9ea1' : '#9aa0a6';
+    if (diagnosticsCopyStatusTimer) {
+        clearTimeout(diagnosticsCopyStatusTimer);
+        diagnosticsCopyStatusTimer = null;
+    }
+    diagnosticsCopyStatusTimer = setTimeout(() => {
+        statusEl.textContent = '';
+    }, 2500);
+}
+function fallbackCopyText(text) {
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.style.position = 'fixed';
+    temp.style.left = '-9999px';
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
+    let copied = false;
+    try {
+        copied = document.execCommand('copy');
+    } catch (e) {
+        copied = false;
+    }
+    document.body.removeChild(temp);
+    return copied;
+}
+async function copyDiagnosticsToClipboard() {
+    const payload = JSON.stringify(getDiagnosticsSnapshot(), null, 2);
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(payload);
+            setDiagnosticsCopyStatus('Copied');
+            return;
+        }
+        if (fallbackCopyText(payload)) {
+            setDiagnosticsCopyStatus('Copied');
+            return;
+        }
+        setDiagnosticsCopyStatus('Copy failed', true);
+    } catch (error) {
+        if (fallbackCopyText(payload)) {
+            setDiagnosticsCopyStatus('Copied');
+            return;
+        }
+        setDiagnosticsCopyStatus('Copy failed', true);
+    }
+}
+renderDiagnostics();
+pushDiagnosticsHistory();
+lastDiagnosticsSignature = [
+    diagnosticsState.provider,
+    diagnosticsState.state,
+    diagnosticsState.model,
+    diagnosticsState.connected,
+    diagnosticsState.lastEvent,
+    diagnosticsState.lastError
+].join('|');
+const diagnosticsCopyButton = document.getElementById('diagCopyButton');
+if (diagnosticsCopyButton) {
+    diagnosticsCopyButton.addEventListener('click', copyDiagnosticsToClipboard);
+}
+const REALTIME_PROVIDER_CONFIG = {
+    chatgpt: {
+        label: 'OpenAI Realtime',
+        defaultModel: 'gpt-realtime',
+        buildWsUrl: (model) => `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model || 'gpt-realtime')}`,
+        apiKeyPlaceholder: 'Enter OpenAI API Key',
+        apiKeyInfoHtml: 'Get your OpenAI API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>',
+        deviceNotice: 'OpenAI Realtime uses your system default microphone for speech recognition',
+        protocols: (apiKey) => [
+            "realtime",
+            "openai-insecure-api-key." + apiKey,
+            "openai-beta.realtime-v1"
+        ]
+    },
+    xai: {
+        label: 'xAI Realtime',
+        defaultModel: '',
+        buildWsUrl: () => 'wss://api.x.ai/v1/realtime',
+        apiKeyPlaceholder: 'Enter xAI Realtime Client Secret',
+        apiKeyInfoHtml: 'Create an xAI realtime session token in your backend and paste the ephemeral client secret here. <a href="https://docs.x.ai/docs/guides/realtime" target="_blank" rel="noopener">xAI Realtime docs</a>',
+        deviceNotice: 'xAI Realtime uses your system default microphone for speech recognition',
+        protocols: (apiKey) => [
+            "realtime",
+            "xai-client-secret." + apiKey
+        ]
+    }
+};
+class RealtimePublisher {
+    constructor(stream, apiKey, provider = 'chatgpt', modelOverride = '') {
         this.stream = stream;
         this.apiKey = apiKey;
+        this.provider = provider;
+        this.config = REALTIME_PROVIDER_CONFIG[this.provider] || REALTIME_PROVIDER_CONFIG.chatgpt;
+        this.model = modelOverride || this.config.defaultModel || '';
         this.ws = null;
         this.audioContext = null;
         this.stopped = false;
@@ -936,160 +1190,278 @@ class ChatGPTPublisher {
         this.recognitionTimeout = null;
         this.interimTranscript = '';
         this.finalTranscript = '';
-        this.activeConversation = false;
         this.responseActive = false;
+        this.currentResponseText = '';
+        this.responseTimeout = null;
+        this.pendingGreeting = true;
+        this.lastActivityTime = Date.now();
+        updateDiagnostics({
+            provider: this.config.label,
+            model: this.model || 'server default',
+            state: 'initialized',
+            connected: 'no',
+            lastEvent: 'publisher.created',
+            lastError: '-'
+        });
     }
     setupVideoProcessing() {
-        console.log('Video processing not needed for ChatGPT, skipping');
+        console.log('Video processing not needed for realtime text/audio providers, skipping');
         return Promise.resolve();
     }
-	async handleMessage(event) {
-		try {
-			let response;
-			let rawText = '';
-			
-			// First handle the different types of message data
-			if (event.data instanceof Blob) {
-				rawText = await event.data.text();
-			} else if (typeof event.data === 'string') {
-				rawText = event.data;
-			} else {
-				console.warn('Unhandled message format:', event.data);
-				// Still update the activity timestamps even for unknown formats
-				this.lastHeartbeatResponse = Date.now();
-				this.lastActivityTime = Date.now();
-				return;
-			}
-			
-			// Always update activity timestamps, even before JSON parsing
-			this.lastHeartbeatResponse = Date.now();
-			this.lastActivityTime = Date.now();
-			
-			// Try to parse as JSON, but don't fail if it's not valid JSON
-			try {
-				response = JSON.parse(rawText);
-			} catch (jsonError) {
-				// Log but don't show error for parsing issues
-				console.warn('Received non-JSON message or invalid JSON:', 
-							 rawText.substring(0, 100) + (rawText.length > 100 ? '...' : ''));
-				
-				// Reset connection attempts on any activity, even invalid JSON
-				this.inactivityReconnectAttempts = 0;
-				return;
-			}
-			
-			// Update counts for reconnection logic
-			this.inactivityReconnectAttempts = 0;
-			this.reconnectAttempts = 0; // Reset reconnect attempts on successful message
-			
-			// Process based on message type
-			if (response.setupComplete) {
-				console.log('Setup complete received');
-				this.sendPrompt("Hi, introduce yourself in a sentence for me. Be friendly to me.");
-			}
-			
-			// Handle model content
-			if (response.serverContent?.modelTurn?.parts) {
-				const parts = response.serverContent.modelTurn.parts;
-				let hasAudioParts = false;
-				parts.forEach(part => {
-					if (part.text) {
-						console.log('Model response:', part.text);
-						const event = new CustomEvent('modelResponse', {
-							detail: {
-								text: part.text
-							}
-						});
-						window.dispatchEvent(event);
-					}
-					if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
-						hasAudioParts = true;
-						console.log('Received audio response with mime type:', part.inlineData.mimeType);
-						try {
-							const rateMatch = part.inlineData.mimeType.match(/rate=(\d+)/);
-							const sampleRate = rateMatch ? parseInt(rateMatch[1]) : 24000;
-							this.audioPlayer.resume();
-							const audioData = base64ToArrayBuffer(part.inlineData.data);
-							console.log('Processing audio chunk of size:', audioData.byteLength);
-							this.audioPlayer.addPCM16(new Uint8Array(audioData));
-						} catch (err) {
-							console.error('Error processing audio:', err);
-						}
-					}
-				});
-				if (response.serverContent.turnComplete && hasAudioParts) {
-					console.log('Turn complete, finalizing audio');
-					this.audioPlayer.complete();
-				}
-			}
-			
-			// Simply log heartbeat messages but don't take specific action
-			if (rawText.includes('heartbeat')) {
-				console.log('Heartbeat received from server');
-			}
-		} catch (err) {
-			// Just log the error but keep connection alive
-			console.error('Error handling message:', err);
-			
-			// Still update timestamps to prevent timeout-based reconnects
-			this.lastHeartbeatResponse = Date.now();
-			this.lastActivityTime = Date.now();
-		}
-	}
+    appendModelText(text) {
+        if (!text) return;
+        this.currentResponseText += text;
+        const modelResponseEvent = new CustomEvent('modelResponse', {
+            detail: { text }
+        });
+        window.dispatchEvent(modelResponseEvent);
+    }
+    async processAudioDelta(base64Chunk) {
+        if (!base64Chunk) return;
+        try {
+            await this.audioPlayer.resume();
+            const audioData = base64ToArrayBuffer(base64Chunk);
+            this.audioPlayer.addPCM16(new Uint8Array(audioData));
+        } catch (err) {
+            console.error('Error processing realtime audio delta:', err);
+        }
+    }
+    finalizeResponse() {
+        this.responseActive = false;
+        this.currentResponseText = '';
+        if (this.responseTimeout) {
+            clearTimeout(this.responseTimeout);
+            this.responseTimeout = null;
+        }
+        if (messageFormatter && !messageFormatter.messageComplete) {
+            messageFormatter.finalizeMessage();
+        }
+    }
+    createResponse() {
+        if (!this.isConnected()) return;
+        if (this.responseActive) {
+            console.log('Response already active, not creating a new one');
+            return;
+        }
+        const responseTypeValue = document.getElementById('responseType').value;
+        const modalities = responseTypeValue === 'audio' ? ['text', 'audio'] : ['text'];
+        const payload = this.provider === 'chatgpt'
+            ? { type: 'response.create', response: { output_modalities: modalities } }
+            : {
+                type: 'response.create',
+                response: {
+                    modalities,
+                    ...(this.model ? { model: this.model } : {})
+                }
+            };
+        this.responseActive = true;
+        this.currentResponseText = '';
+        this.ws.send(JSON.stringify(payload));
+        updateDiagnostics({
+            lastEvent: 'response.create',
+            state: 'responding',
+            connected: 'yes'
+        });
+        this.responseTimeout = setTimeout(() => {
+            if (this.responseActive) {
+                console.warn('No response.done event received before timeout, resetting response state');
+                this.finalizeResponse();
+                updateDiagnostics({
+                    state: 'connected',
+                    lastEvent: 'response.timeout',
+                    connected: 'yes'
+                });
+            }
+        }, 45000);
+    }
+    async handleMessage(event) {
+        try {
+            let rawText = '';
+            if (event.data instanceof Blob) {
+                rawText = await event.data.text();
+            } else if (typeof event.data === 'string') {
+                rawText = event.data;
+            } else {
+                console.warn('Unhandled realtime message format:', event.data);
+                return;
+            }
+            let response;
+            try {
+                response = JSON.parse(rawText);
+            } catch (jsonError) {
+                console.warn('Received non-JSON realtime message:', rawText.substring(0, 120));
+                return;
+            }
+            this.lastActivityTime = Date.now();
+            const type = response.type || '';
+            updateDiagnostics({
+                lastEvent: type || 'message',
+                connected: 'yes'
+            });
+            switch (type) {
+                case 'session.created':
+                case 'session.updated':
+                    if (this.pendingGreeting) {
+                        this.pendingGreeting = false;
+                        this.sendPrompt("Hi, introduce yourself in a sentence for me. Be friendly to me.");
+                    }
+                    break;
+                case 'response.output_text.delta':
+                case 'response.text.delta':
+                case 'response.output_audio_transcript.delta':
+                case 'response.audio_transcript.delta':
+                    this.appendModelText(response.delta || '');
+                    break;
+                case 'response.output_text.done':
+                case 'response.text.done':
+                case 'response.output_audio_transcript.done':
+                case 'response.audio_transcript.done':
+                    if (response.text) {
+                        this.appendModelText(response.text);
+                    }
+                    break;
+                case 'response.output_audio.delta':
+                case 'response.audio.delta':
+                    await this.processAudioDelta(response.delta);
+                    break;
+                case 'response.output_audio.done':
+                case 'response.audio.done':
+                    this.audioPlayer.complete();
+                    break;
+                case 'response.done':
+                    this.audioPlayer.complete();
+                    this.finalizeResponse();
+                    updateDiagnostics({
+                        state: 'connected',
+                        lastEvent: 'response.done',
+                        connected: 'yes'
+                    });
+                    break;
+                case 'error': {
+                    const errorMessage = response.error?.message || response.message || 'Realtime provider returned an error.';
+                    console.error(`[${this.config.label}]`, response.error || response);
+                    showError(errorMessage);
+                    this.finalizeResponse();
+                    updateDiagnostics({
+                        state: 'error',
+                        connected: 'no',
+                        lastEvent: 'provider.error',
+                        lastError: errorMessage
+                    });
+                    break;
+                }
+                default:
+                    if (type.includes('delta') && typeof response.delta === 'string') {
+                        this.appendModelText(response.delta);
+                    }
+                    break;
+            }
+        } catch (err) {
+            console.error('Error handling realtime message:', err);
+            updateDiagnostics({
+                state: 'error',
+                connected: 'no',
+                lastEvent: 'message.exception',
+                lastError: err.message || 'Unhandled realtime message error'
+            });
+        }
+    }
     async connect() {
-        const uri = 'wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17';
+        const uri = this.config.buildWsUrl
+            ? this.config.buildWsUrl(this.model)
+            : this.config.wsUrl;
         if (this.isConnected()) {
             console.log('Already connected');
             return;
         }
+        updateDiagnostics({
+            provider: this.config.label,
+            model: this.model || 'server default',
+            state: 'connecting',
+            connected: 'no',
+            lastEvent: 'connect.start',
+            lastError: '-'
+        });
         try {
-            this.ws = new WebSocket(
-                uri,
-                [
-                    "realtime",
-                    "openai-insecure-api-key." + this.apiKey,
-                    "openai-beta.realtime-v1"
-                ]
-            );
+            this.ws = new WebSocket(uri, this.config.protocols(this.apiKey));
             return new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => {
+                    updateDiagnostics({
+                        state: 'error',
+                        connected: 'no',
+                        lastEvent: 'connect.timeout',
+                        lastError: 'Connection timed out'
+                    });
                     reject(new Error('Connection timed out'));
                     this.ws = null;
                 }, 10000);
                 this.ws.onmessage = this.handleMessage;
                 this.ws.onopen = () => {
-                    console.log('WebSocket connected successfully');
+                    console.log('Realtime websocket connected successfully');
                     clearTimeout(timeout);
                     const systemPrompt = document.getElementById('systemPrompt');
-                    const responseType = document.getElementById('responseType');
-                    const setupMessage = {
-                        type: 'session.update',
-                        session: {
-                            modalities: responseType.value === 'audio' ? ['text', 'audio'] : ['text'],
-                            instructions: systemPrompt.value
+                    const responseTypeValue = document.getElementById('responseType').value;
+                    const modalities = responseTypeValue === 'audio' ? ['text', 'audio'] : ['text'];
+                    const setupMessage = this.provider === 'chatgpt'
+                        ? {
+                            type: 'session.update',
+                            session: {
+                                instructions: systemPrompt.value,
+                                output_modalities: modalities
+                            }
                         }
-                    };
+                        : {
+                            type: 'session.update',
+                            session: {
+                                instructions: systemPrompt.value,
+                                modalities,
+                                ...(this.model ? { model: this.model } : {})
+                            }
+                        };
                     this.ws.send(JSON.stringify(setupMessage));
+                    updateDiagnostics({
+                        state: 'connected',
+                        connected: 'yes',
+                        lastEvent: 'ws.open'
+                    });
                     resolve();
                 };
                 this.ws.onerror = (error) => {
-                    console.error('WebSocket error:', error);
+                    console.error('Realtime websocket error:', error);
                     clearTimeout(timeout);
                     this.ws = null;
+                    updateDiagnostics({
+                        state: 'error',
+                        connected: 'no',
+                        lastEvent: 'ws.error',
+                        lastError: 'Realtime websocket error'
+                    });
                     reject(new Error('Connection error occurred'));
                 };
                 this.ws.onclose = (event) => {
-                    console.log('WebSocket closed:', event.code, event.reason);
+                    console.log('Realtime websocket closed:', event.code, event.reason);
                     clearTimeout(timeout);
                     this.ws = null;
+                    updateDiagnostics({
+                        state: this.stopped ? 'stopped' : 'disconnected',
+                        connected: 'no',
+                        lastEvent: `ws.close:${event.code}`,
+                        ...(event.reason ? { lastError: event.reason } : {})
+                    });
                     if (!this.stopped) {
                         reject(new Error(`Connection closed: ${event.code}`));
                     }
                 };
             });
         } catch (error) {
-            console.error('Failed to create WebSocket:', error);
+            console.error('Failed to create realtime websocket:', error);
             this.ws = null;
+            updateDiagnostics({
+                state: 'error',
+                connected: 'no',
+                lastEvent: 'connect.exception',
+                lastError: error.message || 'Failed to create realtime websocket'
+            });
             throw error;
         }
     }
@@ -1196,7 +1568,13 @@ class ChatGPTPublisher {
     }
     sendPrompt(text) {
         if (!this.isConnected()) {
-            console.error('WebSocket not connected');
+            console.error('Realtime websocket not connected');
+            updateDiagnostics({
+                state: 'disconnected',
+                connected: 'no',
+                lastEvent: 'prompt.skipped',
+                lastError: 'Realtime websocket not connected'
+            });
             return;
         }
         this.ws.send(JSON.stringify({
@@ -1210,50 +1588,83 @@ class ChatGPTPublisher {
                 }]
             }
         }));
-        if (!this.responseActive) {
-            this.responseActive = true;
-            setTimeout(() => {
-                if (this.isConnected()) {
-                    this.ws.send(JSON.stringify({
-                        type: 'response.create',
-                        response: {
-                            modalities: document.getElementById('responseType').value === 'audio' ? ['text', 'audio'] : ['text']
-                        }
-                    }));
-                }
-            }, 300);
-        } else {
-            console.log('Response already active, not creating a new one');
-        }
+        this.lastActivityTime = Date.now();
+        updateDiagnostics({
+            state: 'connected',
+            connected: 'yes',
+            lastEvent: 'prompt.sent'
+        });
+        setTimeout(() => this.createResponse(), 100);
     }
     isConnected() {
         return this.ws && this.ws.readyState === WebSocket.OPEN;
     }
+    async reconnect() {
+        updateDiagnostics({
+            state: 'reconnecting',
+            connected: 'no',
+            lastEvent: 'reconnect.start'
+        });
+        if (this.ws) {
+            try {
+                this.ws.close();
+            } catch (e) {
+                console.warn('Error closing websocket during reconnect:', e);
+            }
+            this.ws = null;
+        }
+        await this.connect();
+        updateDiagnostics({
+            state: 'connected',
+            connected: 'yes',
+            lastEvent: 'reconnect.success'
+        });
+        return true;
+    }
     async start() {
         try {
             this.stopped = false;
+            this.pendingGreeting = true;
             this.isRecognizing = false;
             this.interimTranscript = '';
             this.finalTranscript = '';
-            this.activeConversation = false;
             this.responseActive = false;
+            this.currentResponseText = '';
+            if (this.responseTimeout) {
+                clearTimeout(this.responseTimeout);
+                this.responseTimeout = null;
+            }
             await this.connect();
             if (this.stream.getAudioTracks().length > 0) {
                 await this.setupSpeechRecognition();
             } else {
                 console.log('No audio tracks available, skipping speech recognition');
             }
-            console.log('ChatGPT connected successfully');
+            updateDiagnostics({
+                state: 'ready',
+                connected: this.isConnected() ? 'yes' : 'no',
+                lastEvent: 'publisher.start'
+            });
+            console.log(`${this.config.label} connected successfully`);
         } catch (err) {
-            console.error('Failed to start ChatGPT:', err);
+            console.error(`Failed to start ${this.config.label}:`, err);
+            updateDiagnostics({
+                state: 'error',
+                connected: 'no',
+                lastEvent: 'publisher.start.error',
+                lastError: err.message || 'Failed to start realtime provider'
+            });
             this.stop();
             throw err;
         }
     }
     stop() {
         this.stopped = true;
-        this.activeConversation = false;
         this.responseActive = false;
+        if (this.responseTimeout) {
+            clearTimeout(this.responseTimeout);
+            this.responseTimeout = null;
+        }
         if (this.ws) {
             this.ws.close();
             this.ws = null;
@@ -1276,7 +1687,13 @@ class ChatGPTPublisher {
         this.isRecognizing = false;
         this.interimTranscript = '';
         this.finalTranscript = '';
+        this.currentResponseText = '';
         clearTimeout(this.recognitionTimeout);
+        updateDiagnostics({
+            state: 'stopped',
+            connected: 'no',
+            lastEvent: 'publisher.stop'
+        });
     }
 }
 function countTokens(text) {
@@ -1284,9 +1701,10 @@ function countTokens(text) {
     return Math.ceil(text.length / 4);
 }
 class GoogleLivePublisher {
-    constructor(stream, apiKey) {
+    constructor(stream, apiKey, modelOverride = '') {
         this.stream = stream;
         this.apiKey = apiKey;
+        this.model = modelOverride || GEMINI_DEFAULT_LIVE_MODEL;
         this.ws = null;
         this.audioContext = null;
         this.videoProcessor = null;
@@ -1308,9 +1726,17 @@ class GoogleLivePublisher {
         this.reconnectTimeout = null;
         this.pingInterval = null;
         this.lastHeartbeatResponse = Date.now();
-		this.conversationHistory = [];
+        this.conversationHistory = [];
         this.maxTokens = 20000; // Set below the 32K limit
         this.loadConversationHistory(); 
+        updateDiagnostics({
+            provider: 'Google Gemini Live',
+            model: this.model,
+            state: 'initialized',
+            connected: 'no',
+            lastEvent: 'publisher.created',
+            lastError: '-'
+        });
     }
 	loadConversationHistory() {
         const savedHistory = localStorage.getItem('conversationHistory');
@@ -1500,6 +1926,11 @@ class GoogleLivePublisher {
             // Process based on message type
             if (response.setupComplete) {
                 console.log('Setup complete received');
+                updateDiagnostics({
+                    state: 'connected',
+                    connected: 'yes',
+                    lastEvent: 'setup.complete'
+                });
                 this.sendPrompt("Hi, introduce yourself in a sentence for me. Be friendly to me.");
             }
             
@@ -1545,6 +1976,11 @@ class GoogleLivePublisher {
                 // After processing all parts, add to history if response is complete
                 if (modelTextResponse && response.serverContent.turnComplete) {
                     this.addAssistantMessage(modelTextResponse);
+                    updateDiagnostics({
+                        state: 'connected',
+                        connected: 'yes',
+                        lastEvent: 'response.turn.complete'
+                    });
                 }
             }
             
@@ -1561,11 +1997,21 @@ class GoogleLivePublisher {
                 // If the response has a heartbeat field (in any form), log it
                 if (rawText.includes('heartbeat')) {
                     console.log('Message appears to contain heartbeat information');
+                    updateDiagnostics({
+                        connected: 'yes',
+                        lastEvent: 'heartbeat'
+                    });
                 }
             }
         } catch (err) {
             // Just log the error but keep connection alive
             console.error('Error handling message:', err);
+            updateDiagnostics({
+                state: 'error',
+                connected: this.isConnected() ? 'yes' : 'no',
+                lastEvent: 'message.exception',
+                lastError: err.message || 'Error handling Gemini live message'
+            });
             
             // Still update timestamps to prevent timeout-based reconnects
             this.lastHeartbeatResponse = Date.now();
@@ -1604,18 +2050,49 @@ class GoogleLivePublisher {
             };
             console.log('Sending prompt:', message);
             this.ws.send(JSON.stringify(message));
+            updateDiagnostics({
+                state: 'connected',
+                connected: 'yes',
+                lastEvent: 'prompt.sent'
+            });
         } else {
             console.error('WebSocket still not ready after reconnect attempt');
+            updateDiagnostics({
+                state: 'disconnected',
+                connected: 'no',
+                lastEvent: 'prompt.skipped',
+                lastError: 'Gemini websocket not ready'
+            });
         }
     }
     sendMediaChunk(mediaChunks) {
         if (this.ws?.readyState === WebSocket.OPEN) {
-            const message = {
-                realtimeInput: {
-                    mediaChunks
-                }
-            };
-            this.ws.send(JSON.stringify(message));
+            if (!Array.isArray(mediaChunks) || mediaChunks.length === 0) {
+                return;
+            }
+            const firstChunk = mediaChunks[0];
+            if (!firstChunk?.mimeType || !firstChunk?.data) {
+                return;
+            }
+            let realtimeInput = null;
+            if (firstChunk.mimeType.startsWith('audio/')) {
+                realtimeInput = {
+                    audio: {
+                        mimeType: firstChunk.mimeType,
+                        data: firstChunk.data
+                    }
+                };
+            } else if (firstChunk.mimeType.startsWith('image/') || firstChunk.mimeType.startsWith('video/')) {
+                realtimeInput = {
+                    video: {
+                        mimeType: firstChunk.mimeType,
+                        data: firstChunk.data
+                    }
+                };
+            }
+            if (realtimeInput) {
+                this.ws.send(JSON.stringify({ realtimeInput }));
+            }
         }
     }
     isConnected() {
@@ -1626,7 +2103,15 @@ class GoogleLivePublisher {
 		this.loadConversationHistory();
 		
 		const host = 'generativelanguage.googleapis.com';
-		const uri = `wss://${host}/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.apiKey}`;
+		const uri = `wss://${host}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${this.apiKey}`;
+        updateDiagnostics({
+            provider: 'Google Gemini Live',
+            model: this.model,
+            state: 'connecting',
+            connected: 'no',
+            lastEvent: 'connect.start',
+            lastError: '-'
+        });
 		if (this.isConnected()) {
 			console.log('Already connected');
 			return;
@@ -1682,6 +2167,12 @@ class GoogleLivePublisher {
             console.error('WebSocket error:', error);
             const errorMsg = 'Connection error occurred. Please check your API key and try again.';
             showError(errorMsg);
+            updateDiagnostics({
+                state: 'error',
+                connected: 'no',
+                lastEvent: 'ws.error',
+                lastError: errorMsg
+            });
             if (!this.stopped) {
                 this.attemptReconnect();
             } else {
@@ -1693,10 +2184,15 @@ class GoogleLivePublisher {
 			let errorMsg = 'Connection closed.';
 			
 			// Don't show error for intentional closing (when stopping)
-			if (this.stopped) {
-				console.log('WebSocket closed intentionally');
-				return;
-			}
+		if (this.stopped) {
+			console.log('WebSocket closed intentionally');
+            updateDiagnostics({
+                state: 'stopped',
+                connected: 'no',
+                lastEvent: `ws.close:${event.code}`
+            });
+			return;
+		}
 			
 			if (event.code === 1007) {
 				// Handle invalid JSON payload error specially
@@ -1760,6 +2256,12 @@ class GoogleLivePublisher {
 			if (this.stopped || this.reconnectAttempts >= this.maxReconnectAttempts) {
 				this.handleConnectionFailure();
 			}
+            updateDiagnostics({
+                state: this.stopped ? 'stopped' : 'disconnected',
+                connected: 'no',
+                lastEvent: `ws.close:${event.code}`,
+                lastError: event.reason || errorMsg
+            });
 		};
         return new Promise((resolve, reject) => {
             const connectionTimeout = setTimeout(() => {
@@ -1771,7 +2273,7 @@ class GoogleLivePublisher {
                 const systemPrompt = document.getElementById('systemPrompt');
                 const setupMessage = {
                     setup: {
-                        model: "models/gemini-2.0-flash-exp",
+                        model: this.model,
                         systemInstruction: {
                             parts: [{
                                 text: systemPrompt.value
@@ -1782,7 +2284,7 @@ class GoogleLivePublisher {
                             topK: 1,
                             topP: 1,
                             candidateCount: 1,
-                            responseModalities: responseType.value === 'audio' ? 'AUDIO' : 'TEXT',
+                            responseModalities: [responseType.value === 'audio' ? 'AUDIO' : 'TEXT'],
                             ...(responseType.value === 'audio' && {
                                 speechConfig: {
                                     voiceConfig: {
@@ -1797,10 +2299,21 @@ class GoogleLivePublisher {
                 };
                 console.log('Sending setup message:', setupMessage);
                 this.ws.send(JSON.stringify(setupMessage));
+                updateDiagnostics({
+                    state: 'connected',
+                    connected: 'yes',
+                    lastEvent: 'ws.open'
+                });
                 resolve();
             }, { once: true });
             this.ws.addEventListener('error', () => {
                 clearTimeout(connectionTimeout);
+                updateDiagnostics({
+                    state: 'error',
+                    connected: 'no',
+                    lastEvent: 'connect.error',
+                    lastError: 'Gemini websocket connection error'
+                });
                 reject(new Error('Connection error'));
             }, { once: true });
         });
@@ -1859,6 +2372,11 @@ class GoogleLivePublisher {
 		if (this.reconnectAttempts <= this.maxReconnectAttempts) {
 			const delay = Math.min(30000, Math.pow(2, this.reconnectAttempts) * 1000);
 			console.log(`Attempting to reconnect in ${delay/1000} seconds (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+            updateDiagnostics({
+                state: 'reconnecting',
+                connected: 'no',
+                lastEvent: `reconnect.scheduled.${this.reconnectAttempts}`
+            });
 			if (this.reconnectTimeout) {
 				clearTimeout(this.reconnectTimeout);
 			}
@@ -1877,6 +2395,11 @@ class GoogleLivePublisher {
 		if (this._reconnectPromise) {
 			return this._reconnectPromise;
 		}
+        updateDiagnostics({
+            state: 'reconnecting',
+            connected: 'no',
+            lastEvent: 'reconnect.start'
+        });
 		if (this.ws) {
 			try {
 				this.ws.close();
@@ -1891,9 +2414,20 @@ class GoogleLivePublisher {
 				await this.connect();
 				console.log('Successfully reconnected');
 				showError('Connection restored!');
+                updateDiagnostics({
+                    state: 'connected',
+                    connected: 'yes',
+                    lastEvent: 'reconnect.success'
+                });
 				return true;
 			} catch (error) {
 				console.error('Failed to reconnect:', error);
+                updateDiagnostics({
+                    state: 'error',
+                    connected: 'no',
+                    lastEvent: 'reconnect.error',
+                    lastError: error.message || 'Gemini reconnect failed'
+                });
 				this.attemptReconnect();
 				throw error;
 			} finally {
@@ -1927,8 +2461,19 @@ class GoogleLivePublisher {
             await this.connect();
             await this.setupAudioProcessing();
             this.setupVideoProcessing();
+            updateDiagnostics({
+                state: 'ready',
+                connected: this.isConnected() ? 'yes' : 'no',
+                lastEvent: 'publisher.start'
+            });
         } catch (err) {
             console.error('Failed to start:', err);
+            updateDiagnostics({
+                state: 'error',
+                connected: 'no',
+                lastEvent: 'publisher.start.error',
+                lastError: err.message || 'Failed to start Gemini publisher'
+            });
             this.stop();
             throw err;
         }
@@ -2036,6 +2581,11 @@ class GoogleLivePublisher {
 		}
 		this.videoProcessor = null;
 		this.canvasContext = null;
+        updateDiagnostics({
+            state: 'stopped',
+            connected: 'no',
+            lastEvent: 'publisher.stop'
+        });
 	}
 }
 class AudioPlayer {
@@ -2186,6 +2736,7 @@ class MessageFormatter {
             contentDiv.className = 'markdown-content';
             this.currentMessageElement.appendChild(contentDiv);
             responsesDiv.appendChild(this.currentMessageElement);
+            this.messageComplete = false;
         }
         const contentDiv = this.currentMessageElement.querySelector('.markdown-content');
         contentDiv.innerHTML = this.formatMarkdown(this.messageBuffer);
@@ -2267,21 +2818,56 @@ async function tryGetInitialPermissions() {
 }
 const apiKeyInput = document.getElementById('apiKey');
 apiKeyInput.value = localStorage.getItem('apiKey') || '';
+const modelOverrideInput = document.getElementById('modelOverride');
+
+function normalizeModelOverride(providerName, value) {
+    let normalized = (value || '').trim();
+    if (!normalized) return '';
+    if (providerName === 'gemini' && !normalized.startsWith('models/')) {
+        normalized = `models/${normalized}`;
+    }
+    return normalized;
+}
+function getStoredModelOverride(providerName) {
+    return (localStorage.getItem(`modelOverride_${providerName}`) || '').trim();
+}
+function getEffectiveModelForProvider(providerName) {
+    const overrideValue = normalizeModelOverride(providerName, modelOverrideInput?.value || getStoredModelOverride(providerName));
+    if (overrideValue) {
+        return overrideValue;
+    }
+    return providerUIConfig?.[providerName]?.defaultModel || '';
+}
+function saveModelOverride(providerName, value) {
+    const rawValue = (value || '').trim();
+    if (rawValue) {
+        localStorage.setItem(`modelOverride_${providerName}`, rawValue);
+    } else {
+        localStorage.removeItem(`modelOverride_${providerName}`);
+    }
+}
+
+function isRealtimeProvider(providerName) {
+    return providerName === 'chatgpt' || providerName === 'xai';
+}
+
+function createPublisherForProvider(providerName, activeStream, apiKey) {
+    const effectiveModel = getEffectiveModelForProvider(providerName);
+    if (providerName === 'gemini') {
+        return new GoogleLivePublisher(activeStream, apiKey, effectiveModel);
+    }
+    return new RealtimePublisher(activeStream, apiKey, providerName, effectiveModel);
+}
 
 document.getElementById('apiKey').addEventListener('input', validateApiKey);
 function validateApiKey() {
     const apiKey = apiKeyInput.value.trim();
     startButton.disabled = !apiKey;
-    
-    // Only try to use provider-specific storage if providerSelect exists
-    if (window.providerSelect) {
-        const provider = providerSelect.value;
-        localStorage.setItem(`apiKey_${provider}`, apiKey);
-    } else {
-        // Fallback to old method if providerSelect isn't created yet
-        localStorage.setItem('apiKey', apiKey);
-    }
-    
+    const selectedProvider = (typeof providerSelect !== 'undefined' && providerSelect?.value)
+        ? providerSelect.value
+        : (localStorage.getItem('selectedProvider') || 'gemini');
+    localStorage.setItem(`apiKey_${selectedProvider}`, apiKey);
+    localStorage.setItem('apiKey', apiKey);
     return apiKey;
 }
 startButton.addEventListener('click', async () => {
@@ -2289,6 +2875,12 @@ startButton.addEventListener('click', async () => {
     if (!apiKey) {
         apiKeyInput.classList.add('highlight');
         setTimeout(() => apiKeyInput.classList.remove('highlight'), 2000);
+        updateDiagnostics({
+            state: 'error',
+            connected: 'no',
+            lastEvent: 'start.blocked',
+            lastError: 'Missing API key or client secret'
+        });
         return;
     }
     try {
@@ -2307,20 +2899,30 @@ startButton.addEventListener('click', async () => {
             }
             preview.srcObject = null;
             startButton.textContent = 'Start Stream';
+            startButton.dataset.started = "false";
             startButton.disabled = false;
             sendButton.disabled = true;
             document.getElementById('systemPrompt').disabled = false;
+            updateDiagnostics({
+                state: 'stopped',
+                connected: 'no',
+                lastEvent: 'stream.stopped'
+            });
             return;
         }
+        updateDiagnostics({
+            state: 'starting',
+            connected: 'no',
+            lastEvent: 'stream.start.requested',
+            lastError: '-'
+        });
         startButton.textContent = 'Starting...';
         startButton.disabled = true;
         stream = await getStream();
         preview.srcObject = stream;
         sessionStorage.setItem('apiKey', apiKey);
         const currentProvider = providerSelect.value;
-        publisher = currentProvider === 'chatgpt'
-            ? new ChatGPTPublisher(stream, apiKey)
-            : new GoogleLivePublisher(stream, apiKey);
+        publisher = createPublisherForProvider(currentProvider, stream, apiKey);
         await publisher.start();
         startButton.textContent = 'Stop Stream';
         startButton.dataset.started = "true";
@@ -2330,6 +2932,12 @@ startButton.addEventListener('click', async () => {
         if (stream.getAudioTracks().length > 0) {
             setupAudioIndicator(stream);
         }
+        updateDiagnostics({
+            state: 'running',
+            connected: publisher.isConnected && publisher.isConnected() ? 'yes' : 'no',
+            lastEvent: 'stream.started',
+            lastError: '-'
+        });
     } catch (err) {
         console.error(err);
         showError('Failed to start publishing: ' + err.message);
@@ -2338,6 +2946,12 @@ startButton.addEventListener('click', async () => {
         startButton.disabled = false;
         sendButton.disabled = true;
         document.getElementById('systemPrompt').disabled = false;
+        updateDiagnostics({
+            state: 'error',
+            connected: 'no',
+            lastEvent: 'stream.start.failed',
+            lastError: err.message || 'Failed to start publishing'
+        });
     }
 });
 let currentAudioIndicator = null;
@@ -2537,7 +3151,7 @@ muteVideoButton.addEventListener('click', () => {
     }
 });
 muteMicButton.addEventListener('click', () => {
-    if (providerSelect.value === 'chatgpt' && publisher && publisher.recognition) {
+    if (isRealtimeProvider(providerSelect.value) && publisher && publisher.recognition) {
         if (!micMuted) {
             publisher.recognition.stop();
             publisher.isRecognizing = false;
@@ -2790,6 +3404,10 @@ function showError(message) {
 	errorDisplay.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
 	errorDisplay.style.border = '1px solid #ff6b6b';
 	errorDisplay.style.borderRadius = '8px';
+    updateDiagnostics({
+        lastEvent: 'ui.error',
+        lastError: message
+    });
 	setTimeout(() => {
 		errorDisplay.style.display = 'none';
 		errorDisplay.textContent = '';
@@ -2841,69 +3459,71 @@ sendButton.addEventListener('click', async () => {
         }
     }
 });
-document.getElementById('voiceSelect').addEventListener('change', async () => {
-    if (publisher && startButton.textContent === 'Stop Stream') {
-        startButton.textContent = 'Starting...';
-        startButton.disabled = true;
-        publisher.stop();
-        publisher = null;
-        try {
-            const stream = await getStream();
-            preview.srcObject = stream;
-            const apiKey = document.getElementById('apiKey').value;
-            publisher = new GoogleLivePublisher(stream, apiKey);
-            await publisher.start();
-            startButton.textContent = 'Stop Stream';
-            startButton.disabled = false;
-			startButton.dataset.started = "true";
-			sendButton.disabled = false;
-            document.getElementById('systemPrompt').disabled = true;
-        } catch (err) {
-            console.error(err);
-            showError('Failed to restart with new voice: ' + err.message);
-            startButton.textContent = 'Start Stream';
-            startButton.disabled = false;
-			startButton.dataset.started = "false";
-			sendButton.disabled = true;
-			document.getElementById('systemPrompt').disabled = false;
+async function restartActivePublisher() {
+    if (!publisher || startButton.textContent !== 'Stop Stream') {
+        return;
+    }
+    updateDiagnostics({
+        state: 'restarting',
+        connected: 'no',
+        lastEvent: 'stream.restart.requested',
+        lastError: '-'
+    });
+    startButton.textContent = 'Starting...';
+    startButton.disabled = true;
+    publisher.stop();
+    publisher = null;
+    try {
+        stream = await getStream();
+        preview.srcObject = stream;
+        const apiKey = document.getElementById('apiKey').value.trim();
+        const currentProvider = providerSelect.value;
+        publisher = createPublisherForProvider(currentProvider, stream, apiKey);
+        await publisher.start();
+        startButton.textContent = 'Stop Stream';
+        startButton.disabled = false;
+		startButton.dataset.started = "true";
+		sendButton.disabled = false;
+        document.getElementById('systemPrompt').disabled = true;
+        if (stream.getAudioTracks().length > 0) {
+            setupAudioIndicator(stream);
         }
+		if (audioContext) {
+			audioContext.close();
+			audioContext = null;
+		}
+        updateDiagnostics({
+            state: 'running',
+            connected: publisher.isConnected && publisher.isConnected() ? 'yes' : 'no',
+            lastEvent: 'stream.restart.success',
+            lastError: '-'
+        });
+    } catch (err) {
+        console.error(err);
+        showError('Failed to restart stream: ' + err.message);
+        startButton.textContent = 'Start Stream';
+        startButton.disabled = false;
+		startButton.dataset.started = "false";
+		sendButton.disabled = true;
+		document.getElementById('systemPrompt').disabled = false;
+        updateDiagnostics({
+            state: 'error',
+            connected: 'no',
+            lastEvent: 'stream.restart.failed',
+            lastError: err.message || 'Failed to restart stream'
+        });
     }
+}
+document.getElementById('voiceSelect').addEventListener('change', async () => {
+    if (providerSelect.value !== 'gemini') {
+        return;
+    }
+    await restartActivePublisher();
 });
-document.getElementById('responseType').addEventListener('change', function() {
+document.getElementById('responseType').addEventListener('change', async function() {
     const voiceSelect = document.getElementById('voiceSelect');
-    voiceSelect.style.display = this.value === 'audio' ? 'block' : 'none';
-    if (publisher && startButton.textContent === 'Stop Stream') {
-        startButton.textContent = 'Starting...';
-        startButton.disabled = true;
-        publisher.stop();
-        publisher = null;
-        (async () => {
-            try {
-                const stream = await getStream();
-                preview.srcObject = stream;
-                const apiKey = document.getElementById('apiKey').value;
-                publisher = new GoogleLivePublisher(stream, apiKey);
-                await publisher.start();
-                startButton.textContent = 'Stop Stream';
-				startButton.dataset.started = "true";
-                startButton.disabled = false;
-				sendButton.disabled = false;
-				document.getElementById('systemPrompt').disabled = true;
-				if (audioContext) {
-					audioContext.close();
-					audioContext = null;
-				}
-            } catch (err) {
-                console.error(err);
-                showError('Failed to restart with new response type: ' + err.message);
-                startButton.textContent = 'Start Stream';
-				startButton.dataset.started = "false";
-                startButton.disabled = false;
-				sendButton.disabled = true;
-				document.getElementById('systemPrompt').disabled = false;
-            }
-        })();
-    }
+    voiceSelect.style.display = providerSelect.value === 'gemini' && this.value === 'audio' ? 'block' : 'none';
+    await restartActivePublisher();
 });
 messageInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
@@ -2913,93 +3533,153 @@ messageInput.addEventListener('keypress', (e) => {
 const providerSelect = document.createElement('select');
 providerSelect.id = 'providerSelect';
 providerSelect.innerHTML = `
-    <option value="gemini">Google Gemini</option>
-    <option value="chatgpt">ChatGPT</option>
+    <option value="gemini">Google Gemini Live</option>
+    <option value="chatgpt">OpenAI Realtime</option>
+    <option value="xai">xAI Realtime</option>
 `;
 const apiKeyContainer = document.querySelector('.api-key-container');
 apiKeyContainer.parentElement.insertBefore(providerSelect, apiKeyContainer);
+const providerUIConfig = {
+    gemini: {
+        apiKeyPlaceholder: 'Enter Gemini API Key',
+        apiKeyInfoHtml: 'Get your free Gemini API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.',
+        defaultModel: GEMINI_DEFAULT_LIVE_MODEL,
+        modelPlaceholder: `Optional model override (default ${GEMINI_DEFAULT_LIVE_MODEL})`,
+        disableCaptureSelection: false,
+        deviceNotice: ''
+    },
+    chatgpt: {
+        ...REALTIME_PROVIDER_CONFIG.chatgpt,
+        modelPlaceholder: `Optional model override (default ${REALTIME_PROVIDER_CONFIG.chatgpt.defaultModel})`,
+        disableCaptureSelection: true
+    },
+    xai: {
+        ...REALTIME_PROVIDER_CONFIG.xai,
+        modelPlaceholder: 'Optional model override (uses xAI server default if blank)',
+        disableCaptureSelection: true
+    }
+};
 const defaultPrompts = {
     gemini: "You are a friendly social chat assistant that can see and hear the user. Avoid describing what you see unless asked.",
-    chatgpt: "You are a friendly and helpful social chat assistant that can see and hear the user."
+    chatgpt: "You are a friendly and helpful social chat assistant.",
+    xai: "You are a friendly and helpful social chat assistant."
 };
 const systemPrompt = document.getElementById('systemPrompt');
 systemPrompt.value = defaultPrompts.gemini;
-if (localStorage) {
-    const savedProvider = localStorage.getItem('selectedProvider');
-    if (savedProvider) {
-        providerSelect.value = savedProvider;
-        const apiKeyInfo = document.querySelector('.api-key-info');
-        if (savedProvider === 'chatgpt') {
-            apiKeyInput.placeholder = 'Enter ChatGPT API Key';
-            apiKeyInfo.innerHTML = 'Get your ChatGPT API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>';
-        }
-        systemPrompt.value = defaultPrompts[providerSelect.value];
-    }
-}
-if (providerSelect.value === 'chatgpt') {
-    videoSelect.disabled = true;
-    audioSelect.disabled = true;
-    const deviceNotice = document.createElement('div');
-    deviceNotice.id = 'chatgpt-device-notice';
-    deviceNotice.className = 'api-key-info';
-    deviceNotice.innerHTML = 'ChatGPT uses your system default microphone for speech recognition';
-    deviceNotice.style.marginTop = '8px';
-    deviceNotice.style.padding = '6px';
-    deviceNotice.style.background = '#333';
-    deviceNotice.style.borderRadius = '6px';
-    const deviceContainer = document.querySelector('.controls');
-    deviceContainer.insertBefore(deviceNotice, muteMicButton.parentElement.nextSibling);
-}
-if (localStorage) {
-    const savedPrompts = localStorage.getItem('systemPrompts');
-    if (savedPrompts) {
-        const prompts = JSON.parse(savedPrompts);
-        Object.assign(defaultPrompts, prompts);
-        systemPrompt.value = defaultPrompts[providerSelect.value];
-    }
-}
-systemPrompt.addEventListener('change', function() {
-    defaultPrompts[providerSelect.value] = this.value;
-    if (localStorage) {
-        localStorage.setItem('systemPrompts', JSON.stringify(defaultPrompts));
-    }
-});
-document.getElementById('providerSelect').addEventListener('change', function() {
-    const apiKeyInfo = document.querySelector('#apikeyinfo');
-    const apiKeyInput = document.getElementById('apiKey');
-    
-    const providerKey = localStorage.getItem(`apiKey_${this.value}`) || '';
-    apiKeyInput.value = providerKey;
-    
-    if (this.value === 'chatgpt') {
-        apiKeyInput.placeholder = 'Enter ChatGPT API Key';
-        apiKeyInfo.innerHTML = 'Get your ChatGPT API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a>';
-    } else {
-        apiKeyInput.placeholder = 'Enter Gemini API Key';
-        apiKeyInfo.innerHTML = 'Get your free Gemini API key at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>';
-    }
-    
-    systemPrompt.value = defaultPrompts[this.value];
-    const isChatGPT = this.value === 'chatgpt';
-    videoSelect.disabled = isChatGPT;
-    audioSelect.disabled = isChatGPT;
-    let deviceNotice = document.getElementById('chatgpt-device-notice');
-    if (!deviceNotice && isChatGPT) {
+
+function updateRealtimeDeviceNotice(text) {
+    let deviceNotice = document.getElementById('realtime-device-notice');
+    if (!deviceNotice) {
         deviceNotice = document.createElement('div');
-        deviceNotice.id = 'chatgpt-device-notice';
+        deviceNotice.id = 'realtime-device-notice';
         deviceNotice.className = 'api-key-info';
-        deviceNotice.innerHTML = 'ChatGPT uses your system default microphone for speech recognition';
         deviceNotice.style.marginTop = '8px';
         deviceNotice.style.padding = '6px';
         deviceNotice.style.background = '#333';
         deviceNotice.style.borderRadius = '6px';
         const deviceContainer = document.querySelector('.controls');
         deviceContainer.insertBefore(deviceNotice, muteMicButton.parentElement.nextSibling);
-    } else if (deviceNotice && !isChatGPT) {
+    }
+    deviceNotice.innerHTML = text;
+}
+
+function removeRealtimeDeviceNotice() {
+    const deviceNotice = document.getElementById('realtime-device-notice');
+    if (deviceNotice) {
         deviceNotice.remove();
     }
-    
+}
+
+function applyProviderUI(providerName, restoreKey = true) {
+    const config = providerUIConfig[providerName] || providerUIConfig.gemini;
+    const apiKeyInfo = document.querySelector('#apikeyinfo');
+    const responseTypeValue = document.getElementById('responseType').value;
+    if (restoreKey) {
+        apiKeyInput.value = localStorage.getItem(`apiKey_${providerName}`) || '';
+        modelOverrideInput.value = getStoredModelOverride(providerName);
+    }
+    apiKeyInput.placeholder = config.apiKeyPlaceholder;
+    apiKeyInfo.innerHTML = config.apiKeyInfoHtml;
+    modelOverrideInput.placeholder = config.modelPlaceholder || 'Optional model override';
+    systemPrompt.value = defaultPrompts[providerName] || defaultPrompts.gemini;
+    videoSelect.disabled = config.disableCaptureSelection;
+    audioSelect.disabled = config.disableCaptureSelection;
+    if (config.disableCaptureSelection && audioSelect.value === 'none') {
+        const firstAudioOption = Array.from(audioSelect.options).find(option => option.value !== 'none');
+        if (firstAudioOption) {
+            audioSelect.value = firstAudioOption.value;
+            localStorage.setItem('selectedAudioId', audioSelect.value);
+        }
+    }
+    if (config.disableCaptureSelection) {
+        updateRealtimeDeviceNotice(config.deviceNotice);
+    } else {
+        removeRealtimeDeviceNotice();
+    }
+    const voiceSelect = document.getElementById('voiceSelect');
+    voiceSelect.style.display = providerName === 'gemini' && responseTypeValue === 'audio' ? 'block' : 'none';
+    const effectiveModel = getEffectiveModelForProvider(providerName);
+    updateDiagnostics({
+        provider: config.label || (providerName === 'gemini' ? 'Google Gemini Live' : providerName),
+        model: effectiveModel || 'server default',
+        state: publisher ? 'switching' : 'idle',
+        connected: publisher && publisher.isConnected && publisher.isConnected() ? 'yes' : 'no',
+        lastEvent: 'provider.selected'
+    });
+    validateApiKey();
+}
+if (localStorage) {
+    const savedPrompts = localStorage.getItem('systemPrompts');
+    if (savedPrompts) {
+        const prompts = JSON.parse(savedPrompts);
+        Object.assign(defaultPrompts, prompts);
+    }
+}
+const savedProvider = localStorage.getItem('selectedProvider');
+providerSelect.value = providerUIConfig[savedProvider] ? savedProvider : 'gemini';
+applyProviderUI(providerSelect.value, true);
+systemPrompt.addEventListener('change', function() {
+    defaultPrompts[providerSelect.value] = this.value;
+    if (localStorage) {
+        localStorage.setItem('systemPrompts', JSON.stringify(defaultPrompts));
+    }
+});
+modelOverrideInput.addEventListener('change', async function() {
+    const providerName = providerSelect.value;
+    saveModelOverride(providerName, this.value);
+    const effectiveModel = getEffectiveModelForProvider(providerName);
+    const config = providerUIConfig[providerName] || providerUIConfig.gemini;
+    updateDiagnostics({
+        provider: config.label || (providerName === 'gemini' ? 'Google Gemini Live' : providerName),
+        model: effectiveModel || 'server default',
+        state: publisher ? 'restarting' : 'idle',
+        connected: publisher && publisher.isConnected && publisher.isConnected() ? 'yes' : 'no',
+        lastEvent: 'model.override.changed',
+        lastError: '-'
+    });
+    await restartActivePublisher();
+});
+modelOverrideInput.addEventListener('input', function() {
+    const providerName = providerSelect.value;
+    saveModelOverride(providerName, this.value);
+    const effectiveModel = getEffectiveModelForProvider(providerName);
+    const config = providerUIConfig[providerName] || providerUIConfig.gemini;
+    updateDiagnostics({
+        provider: config.label || (providerName === 'gemini' ? 'Google Gemini Live' : providerName),
+        model: effectiveModel || 'server default',
+        lastEvent: 'model.override.input'
+    });
+});
+modelOverrideInput.addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        modelOverrideInput.blur();
+    }
+});
+document.getElementById('providerSelect').addEventListener('change', async function() {
+    applyProviderUI(this.value, true);
     localStorage.setItem('selectedProvider', this.value);
+    await restartActivePublisher();
 });
 
 const avatar = new PuppetAvatar('#puppet-container');
@@ -3268,13 +3948,6 @@ function addClearHistoryButton() {
     }
 }
 document.addEventListener('DOMContentLoaded', () => {
-    const savedProvider = localStorage.getItem('selectedProvider') || 'gemini';
-    providerSelect.value = savedProvider;
-    
-    const providerKey = localStorage.getItem(`apiKey_${savedProvider}`) || localStorage.getItem('apiKey') || '';
-    apiKeyInput.value = providerKey;
-    
-    validateApiKey();
 	addClearHistoryButton();
 });
 

@@ -696,7 +696,7 @@ const SETTINGS_METADATA = Object.freeze({
   "geminimodel": {
     type: "text",
     category: "configure_llm_api",
-    description: "Gemini model identifier to call (for example gemini-1.5-flash)."
+    description: "Gemini model identifier to call (for example gemini-2.5-flash)."
   },
   "giphy": {
     type: "boolean",
