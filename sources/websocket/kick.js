@@ -1557,6 +1557,7 @@ function initElements() {
         startAuth: q('start-auth'),
         signOut: q('sign-out'),
         channelLabel: q('channel-label'),
+        viewerCount: q('viewer-count'),
         eventLog: q('event-log'),
         chatFeed: q('chat-feed'),
         chatFeedEmpty: q('chat-feed-empty'),
@@ -2158,11 +2159,26 @@ function shouldRunKickViewerHeartbeat() {
     return kickViewerHeartbeat.isLive !== false;
 }
 
+function updateKickViewerCountDisplay(count) {
+    if (!els.viewerCount) {
+        return;
+    }
+    if (!Number.isFinite(count)) {
+        els.viewerCount.textContent = 'Viewers: —';
+        els.viewerCount.className = 'status-chip warning';
+        return;
+    }
+    const normalizedCount = Math.max(0, Math.floor(count));
+    els.viewerCount.textContent = `Viewers: ${normalizedCount}`;
+    els.viewerCount.className = normalizedCount > 0 ? 'status-chip' : 'status-chip warning';
+}
+
 function emitKickViewerUpdate(count) {
     const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
     kickViewerHeartbeat.lastKnownCount = normalizedCount;
     kickViewerHeartbeat.hasKnownCount = true;
     kickViewerHeartbeat.lastSentAt = Date.now();
+    updateKickViewerCountDisplay(normalizedCount);
     pushMessage({
         type: 'kick',
         event: 'viewer_update',
@@ -2274,7 +2290,8 @@ function syncKickViewerHeartbeat(emitZeroOnStop = false) {
             emitKickViewerUpdate(0);
         }
         kickViewerHeartbeat.hadConnectedTransport = false;
-        kickViewerHeartbeat.isLive = false;
+        // Disconnect means unknown state; allow heartbeat to resume on reconnect.
+        kickViewerHeartbeat.isLive = null;
     }
 }
 
@@ -2290,6 +2307,7 @@ function resetKickViewerHeartbeatState() {
     kickViewerHeartbeat.isLive = null;
     kickViewerHeartbeat.lastSentAt = 0;
     kickViewerHeartbeat.lastPollErrorAt = 0;
+    updateKickViewerCountDisplay(null);
 }
 
 function updateSocketState(payload = {}) {

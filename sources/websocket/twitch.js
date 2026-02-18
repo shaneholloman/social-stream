@@ -650,6 +650,7 @@ let getViewerCountInterval = null;
 let getFollowersInterval = null;
 let getSubscribersInterval = null;
 let tokenValidationInterval = null;
+const TWITCH_VIEWER_POLL_INTERVAL_MS = 30000;
 let badges = null;
 
 	async function ensureTmiClient() {
@@ -881,7 +882,7 @@ async function ensureChatClientInstance() {
 
 			getViewerCount(channel);
 			clearInterval(getViewerCountInterval);
-			getViewerCountInterval = setInterval(() => getViewerCount(channel), 60000);
+			getViewerCountInterval = setInterval(() => getViewerCount(channel), TWITCH_VIEWER_POLL_INTERVAL_MS);
 
 			clearInterval(tokenValidationInterval);
 			tokenValidationInterval = setInterval(async () => {
