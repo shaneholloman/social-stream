@@ -288,6 +288,17 @@ function getLiteStatusSnapshot() {
     };
 }
 
+function normalizeKickChatType(value) {
+    if (typeof value !== 'string') {
+        return 'user';
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'bot' || normalized === 'userbot') {
+        return 'bot';
+    }
+    return 'user';
+}
+
 function notifyLiteStatus(reason) {
     if (!isLiteEmbedded()) return;
     sendLiteMessage('kick-lite-status', { status: getLiteStatusSnapshot(), reason });
@@ -320,7 +331,7 @@ function applyLiteConfig(message) {
         }
     }
     if (typeof message.chatType === 'string' && message.chatType.trim()) {
-        const next = message.chatType.trim();
+        const next = normalizeKickChatType(message.chatType);
         if (next !== state.chat.type) {
             state.chat.type = next;
             changed = true;
@@ -1654,7 +1665,7 @@ function loadConfig() {
             state.socket.allowProxy = cfg.allowProxy;
         }
         if (cfg.chatType) {
-            state.chat.type = cfg.chatType;
+            state.chat.type = normalizeKickChatType(cfg.chatType);
         }
     } catch (err) {
         console.error('Failed to load Kick config', err);
@@ -1784,6 +1795,9 @@ function persistTokens() {
 }
 
 function signOut() {
+    disconnectBridge();
+    void disconnectLocalSocket();
+    resetKickViewerHeartbeatState();
     // Clear tokens
     state.tokens = null;
     state.authUser = null;
@@ -1885,7 +1899,9 @@ function updateInputsFromState() {
         }
     }
     if (els.chatType) {
-        els.chatType.value = state.chat?.type || 'user';
+        const normalizedType = normalizeKickChatType(state.chat?.type);
+        state.chat.type = normalizedType;
+        els.chatType.value = normalizedType;
     }
     if (els.chatStatus) {
         els.chatStatus.textContent = '';
@@ -2002,7 +2018,8 @@ function bindEvents() {
     }
     if (els.chatType) {
         els.chatType.addEventListener('change', () => {
-            state.chat.type = els.chatType.value;
+            state.chat.type = normalizeKickChatType(els.chatType.value);
+            els.chatType.value = state.chat.type;
             persistConfig();
         });
     }
@@ -2075,11 +2092,15 @@ function extractKickViewerCount(payload) {
         return null;
     }
     const viewerCountCandidates = [
+        payload?.number_viewers,
         payload?.viewer_count,
         payload?.viewers,
         payload?.viewerCount,
         payload?.concurrent_viewers,
         payload?.concurrent,
+        payload?.data?.number_viewers,
+        payload?.data?.viewer_count,
+        payload?.data?.viewers,
         payload?.meta?.viewer_count,
         payload?.meta?.viewers,
         payload?.summary?.viewer_count,
@@ -2087,10 +2108,15 @@ function extractKickViewerCount(payload) {
         payload?.channel?.viewer_count,
         payload?.channel?.viewers_count,
         payload?.channel?.viewers,
+        payload?.livestream?.number_viewers,
         payload?.livestream?.viewer_count,
         payload?.livestream?.viewers,
+        payload?.stream?.number_viewers,
         payload?.stream?.viewer_count,
-        payload?.stream?.viewers
+        payload?.stream?.viewers,
+        payload?.data?.livestream?.number_viewers,
+        payload?.data?.livestream?.viewer_count,
+        payload?.data?.livestream?.viewers
     ];
     for (const candidate of viewerCountCandidates) {
         const normalized = parseViewerCountCandidate(candidate);
@@ -2111,6 +2137,11 @@ function extractKickLiveFlag(payload) {
         payload?.online,
         payload?.status,
         payload?.stream_status,
+        payload?.data?.is_live,
+        payload?.data?.isLive,
+        payload?.data?.online,
+        payload?.data?.status,
+        payload?.data?.stream_status,
         payload?.livestream?.is_live,
         payload?.livestream?.isLive,
         payload?.livestream?.online,
@@ -2118,7 +2149,11 @@ function extractKickLiveFlag(payload) {
         payload?.stream?.is_live,
         payload?.stream?.isLive,
         payload?.stream?.online,
-        payload?.stream?.status
+        payload?.stream?.status,
+        payload?.data?.livestream?.is_live,
+        payload?.data?.livestream?.isLive,
+        payload?.data?.livestream?.online,
+        payload?.data?.livestream?.status
     ];
     for (const candidate of liveCandidates) {
         if (typeof candidate === 'boolean') {
@@ -4567,7 +4602,7 @@ async function sendChatMessage() {
     if (state.chat.sending) {
         return;
     }
-    const messageType = els.chatType ? els.chatType.value : state.chat.type || 'user';
+    const messageType = normalizeKickChatType(els.chatType ? els.chatType.value : state.chat.type || 'user');
     state.chat.type = messageType;
     persistConfig();
     try {
@@ -4579,7 +4614,7 @@ async function sendChatMessage() {
             payload.broadcaster_user_id = channelId;
             payload.type = 'user';
         } else {
-            payload.type = 'userbot';
+            payload.type = 'bot';
         }
         const response = await apiFetch('/public/v1/chat', {
             method: 'POST',
