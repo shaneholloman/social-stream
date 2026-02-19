@@ -1210,6 +1210,9 @@
 				return;
 			}
 		} else if (isLikeEvent) {
+			if (!settings.capturelikeevent) {
+				return;
+			}
 			ital = "liked";
 			if (!chatname) {
 				return;
@@ -1470,6 +1473,9 @@
 				return;
 			}
 		} else if (isLikeEvent) {
+			if (!settings.capturelikeevent) {
+				return;
+			}
 			ital = "liked";
 			if (!chatname) {
 				return;

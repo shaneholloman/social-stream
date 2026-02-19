@@ -5579,6 +5579,14 @@ input:checked + .slider:before {
                                     <img class="icon" src="./sources/images/tiktok.png" style="display: inline-block;" />🚪
                                     <span data-translate="capture-joined-events"> Don't block "joined" stream events (TikTok) </span>
                                 </div>
+                                <div title="Allow 'liked' stream events in TikTok (can be high volume)">
+                                    <label class="switch">
+                                        <input type="checkbox" data-setting="capturelikeevent" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <img class="icon" src="./sources/images/tiktok.png" style="display: inline-block;" />
+                                    <span> Allow "liked" stream events (TikTok) </span>
+                                </div>
 								<div title="Do not treat coin-bought items as gifts on Tiktok, such as roses">
                                     <label class="switch">
                                         <input type="checkbox" data-setting="notiktokdonations" />
@@ -11864,3 +11872,4 @@ input:checked + .slider:before {
         <script type="text/javascript" src="spotify-auth-helper.js"></script>
     </body>
 </html>
+

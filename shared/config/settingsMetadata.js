@@ -198,6 +198,11 @@ const SETTINGS_METADATA = Object.freeze({
     category: "custom_injection",
     description: "Don't block 'joined' stream events in TikTok"
   },
+  "capturelikeevent": {
+    type: "boolean",
+    category: "custom_injection",
+    description: "Allow 'liked' stream events in TikTok (high volume)"
+  },
   "chatbotHistoryTotal": {
     type: "number",
     category: "chat_bot",
