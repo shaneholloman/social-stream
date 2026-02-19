@@ -195,6 +195,14 @@ function log(msg,a,b){
 	console.log(msg,a,b);
 }
 
+function getSpotifyAuthTroubleshootingText() {
+    return 'Please ensure:\n'
+        + '1. Spotify integration is enabled\n'
+        + '2. Client ID and Secret are filled in\n'
+        + '3. Your redirect URIs are configured in Spotify app settings\n'
+        + '4. The Spotify account is Premium and listed as an authorized Development Mode user (new app limits began February 11, 2026; existing app limits began March 9, 2026).';
+}
+
 function handleSpotifyAuthResultFromBackground(result) {
 	const spotifyAuthButton = document.getElementById('spotifyAuthButton');
 	if (!spotifyAuthButton) {
@@ -274,10 +282,13 @@ function handleSpotifyAuthResultFromBackground(result) {
 			manualLinkField.value = '';
 		}
 		console.log('Spotify connected successfully.');
+        if (result?.warning) {
+            alert('Spotify connected, but playback access is limited:\n\n' + result.warning);
+        }
 	} else {
 		const errorMsg = result?.error || 'Unknown error';
 		console.error('Spotify auth failed (async result):', errorMsg);
-		alert('Failed to connect to Spotify. Error: ' + errorMsg);
+		alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\n' + getSpotifyAuthTroubleshootingText());
 	}
 }
 
@@ -7095,20 +7106,20 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			const response = await sendSpotifyCommand({ cmd: "spotifyAuth" });
 			handleSpotifyAuthResponse(response);
 			
-			function handleSpotifyAuthResponse(response) {
-				console.log('Spotify auth response received:', response);
-				spotifyAuthButton.disabled = false;
-				const callbackDiv = document.getElementById('spotifyCallbackDiv');
-				const manualLinkContainer = document.getElementById('spotifyManualLinkContainer');
-				const manualLinkField = document.getElementById('spotifyManualAuthUrl');
-				
-				if (response && response.success) {
-					spotifyAuthStatus.style.display = 'inline';
-					spotifyAuthButton.querySelector('span').textContent = '🔄 Reconnect';
-					if (spotifySignOutButton) {
-						spotifySignOutButton.style.display = 'inline-block';
-					}
-					// Hide manual callback input on success
+				function handleSpotifyAuthResponse(response) {
+					console.log('Spotify auth response received:', response);
+					spotifyAuthButton.disabled = false;
+					const callbackDiv = document.getElementById('spotifyCallbackDiv');
+					const manualLinkContainer = document.getElementById('spotifyManualLinkContainer');
+					const manualLinkField = document.getElementById('spotifyManualAuthUrl');
+
+					if (response && response.success) {
+						spotifyAuthStatus.style.display = 'inline';
+						spotifyAuthButton.querySelector('span').textContent = '🔄 Reconnect';
+						if (spotifySignOutButton) {
+							spotifySignOutButton.style.display = 'inline-block';
+						}
+
 						if (callbackDiv) {
 							callbackDiv.style.display = 'none';
 							document.getElementById('spotifyCallbackInput').value = '';
@@ -7119,27 +7130,30 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 								manualLinkField.value = '';
 							}
 						}
-					// Show success message if already connected
+
 						if (response.alreadyConnected) {
 							console.log('Already connected to Spotify');
 						} else if (response.message && response.message.includes('authorization')) {
-							// For SSAPP, the OAuth window opened - wait for callback
-						console.log('OAuth window opened - waiting for authorization');
-						spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
-						// Show manual input as backup after 5 seconds
-						if (window.ssapp && callbackDiv) {
-							setTimeout(() => {
-								if (!spotifyAuthStatus.style.display || spotifyAuthStatus.style.display === 'none') {
-									callbackDiv.style.display = 'block';
-									console.log('If the authorization window is stuck, you can paste the callback URL manually.');
-								}
-							}, 5000);
+							// For SSAPP, the OAuth window opened - wait for callback.
+							console.log('OAuth window opened - waiting for authorization');
+							spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
+							if (window.ssapp && callbackDiv) {
+								setTimeout(() => {
+									if (!spotifyAuthStatus.style.display || spotifyAuthStatus.style.display === 'none') {
+										callbackDiv.style.display = 'block';
+										console.log('If the authorization window is stuck, you can paste the callback URL manually.');
+									}
+								}, 5000);
+							}
 						}
-					}
-				} else if (response?.waitingForManualCallback || response?.waitingForCallback) {
-					spotifyAuthButton.disabled = true;
-					const waitingForManual = !!response.waitingForManualCallback;
-					spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
+
+						if (response?.warning) {
+							alert('Spotify connected, but playback access is limited:\n\n' + response.warning);
+						}
+					} else if (response?.waitingForManualCallback || response?.waitingForCallback) {
+						spotifyAuthButton.disabled = true;
+						const waitingForManual = !!response.waitingForManualCallback;
+						spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
 
 						if (callbackDiv) {
 							callbackDiv.style.display = waitingForManual ? 'block' : 'none';
@@ -7177,34 +7191,33 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 						spotifyAuthButton.querySelector('span').textContent = '🔗 Connect to Spotify';
 						const errorMsg = response?.error || 'Unknown error';
 						console.error('Spotify auth failed:', errorMsg);
-					
-					// Show manual callback input if the background specifically asked for manual completion
-					if (callbackDiv && (response?.needsManualCallback || response?.waitingForManualCallback)) {
-						callbackDiv.style.display = 'block';
-						console.log('Please paste the callback URL manually.');
-					}
 
-					if (manualLinkContainer) {
-						if (response?.manualAuthUrl) {
-							manualLinkContainer.style.display = 'block';
-							if (manualLinkField) {
-								manualLinkField.value = response.manualAuthUrl;
-							}
-						} else {
-							manualLinkContainer.style.display = 'none';
-							if (manualLinkField) {
-								manualLinkField.value = '';
+						// Show manual callback input if the background specifically asked for manual completion.
+						if (callbackDiv && (response?.needsManualCallback || response?.waitingForManualCallback)) {
+							callbackDiv.style.display = 'block';
+							console.log('Please paste the callback URL manually.');
+						}
+
+						if (manualLinkContainer) {
+							if (response?.manualAuthUrl) {
+								manualLinkContainer.style.display = 'block';
+								if (manualLinkField) {
+									manualLinkField.value = response.manualAuthUrl;
+								}
+							} else {
+								manualLinkContainer.style.display = 'none';
+								if (manualLinkField) {
+									manualLinkField.value = '';
+								}
 							}
 						}
-					}
-					
-					// Only show alert if not already connected
-					if (errorMsg !== 'Already connected') {
-						alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\nPlease ensure:\n1. Spotify integration is enabled\n2. Client ID and Secret are filled in\n3. Your redirect URIs are configured in Spotify app settings');
+
+						if (errorMsg !== 'Already connected') {
+							alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\n' + getSpotifyAuthTroubleshootingText());
+						}
 					}
 				}
-			}
-		});
+			});
 	}
 	
 	// Spotify Sign Out Button

@@ -4791,7 +4791,14 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 				(async () => {
 					try {
 						const success = await spotify.handleAuthCallback(request.code, request.state, request.redirectUri);
-						sendResponse({success: success});
+						const warning = (success && spotify && typeof spotify.consumeAuthWarning === 'function')
+							? spotify.consumeAuthWarning()
+							: null;
+						sendResponse({
+							success: success,
+							warning: warning || undefined,
+							message: warning ? `Connected to Spotify, but playback access is limited: ${warning}` : undefined
+						});
 					} catch (error) {
 						console.error("Spotify callback error:", error);
 						sendResponse({success: false, error: error.message});
@@ -4833,12 +4840,21 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 				console.log("OAuth flow result:", normalized);
 
 				if (normalized.success && normalized.alreadyConnected) {
-					sendResponse({ success: true, alreadyConnected: true });
+					sendResponse({
+						success: true,
+						alreadyConnected: true,
+						warning: normalized.warning,
+						message: normalized.message
+					});
 					return;
 				}
 
 				if (normalized.success) {
-					sendResponse({ success: true, message: normalized.message });
+					sendResponse({
+						success: true,
+						message: normalized.message,
+						warning: normalized.warning
+					});
 					return;
 				}
 
@@ -4900,29 +4916,36 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 					
 					console.log("Parsed OAuth callback - code:", code ? "present" : "missing", "state:", state, "error:", error);
 					
-					if (error) {
-						sendResponse({success: false, error: error});
-					} else if (code) {
-						console.log("Processing Spotify callback with code...");
-						// Process the callback
-						const success = await spotify.handleAuthCallback(code, state, request.redirectUri || redirectUri);
-						console.log("Spotify callback completed, success:", success);
-						
-						if (success) {
-							// Verify tokens were saved
-							chrome.storage.local.get(['settings'], function(data) {
-								if (data.settings && data.settings.spotifyAccessToken) {
-									console.log("✅ Spotify tokens successfully saved to settings!");
-								} else {
-									console.warn("⚠️ Spotify tokens may not have been saved properly");
-								}
+						if (error) {
+							sendResponse({success: false, error: error});
+						} else if (code) {
+							console.log("Processing Spotify callback with code...");
+							// Process the callback
+							const success = await spotify.handleAuthCallback(code, state, request.redirectUri || redirectUri);
+							console.log("Spotify callback completed, success:", success);
+							const warning = (success && spotify && typeof spotify.consumeAuthWarning === 'function')
+								? spotify.consumeAuthWarning()
+								: null;
+							
+							if (success) {
+								// Verify tokens were saved
+								chrome.storage.local.get(['settings'], function(data) {
+									if (data.settings && data.settings.spotifyAccessToken) {
+										console.log("✅ Spotify tokens successfully saved to settings!");
+									} else {
+										console.warn("⚠️ Spotify tokens may not have been saved properly");
+									}
+								});
+							}
+							
+							sendResponse({
+								success: success,
+								warning: warning || undefined,
+								message: warning ? `Connected to Spotify, but playback access is limited: ${warning}` : undefined
 							});
+						} else {
+							sendResponse({success: false, error: "No authorization code found in URL"});
 						}
-						
-						sendResponse({success: success});
-					} else {
-						sendResponse({success: false, error: "No authorization code found in URL"});
-					}
 				} catch (error) {
 					console.error("Manual callback error:", error);
 					sendResponse({success: false, error: error.message || error.toString()});

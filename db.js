@@ -107,9 +107,6 @@ class MessageStoreDB {
             expiresAt: now + (this.daysToKeep * MS_PER_DAY)
         };
         
-        // Log what we're storing
-        console.log("Storing message with userid:", messageData.userid, "chatname:", messageData.chatname, "type:", messageData.type);
-
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.storeName, 'readwrite');
             const store = tx.objectStore(this.storeName);
@@ -130,7 +127,6 @@ class MessageStoreDB {
                         exists: true,
                         lastActivity: messageData.timestamp
                     });
-                    console.log("Cached user as existing:", cacheKey);
                 }
                 
                 resolve(request.result); 
