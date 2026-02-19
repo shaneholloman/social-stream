@@ -1281,6 +1281,21 @@ class EventFlowSystem {
         const text = tmp.textContent || tmp.innerText || '';
         return text.replace(/\s\s+/g, ' ').trim();
     }
+
+    normalizeEventType(eventType) {
+        const normalized = (eventType || '').toLowerCase().trim();
+        // Backward compatibility alias: legacy Twitch ad event spelling.
+        if (normalized === 'adbreak') {
+            return 'ad_break';
+        }
+        return normalized;
+    }
+
+    eventTypeMatches(targetEventType, messageEventType) {
+        const normalizedTarget = this.normalizeEventType(targetEventType);
+        const normalizedMessage = this.normalizeEventType(messageEventType);
+        return !!normalizedTarget && normalizedMessage === normalizedTarget;
+    }
     
     async evaluateTrigger(triggerNode, message) {
         const { triggerType, config } = triggerNode;
@@ -1436,9 +1451,9 @@ class EventFlowSystem {
 
             case 'eventType':
                 // Check if the event type matches
-                const targetEvent = (config.eventType || '').toLowerCase().trim();
-                const msgEvent = (message.event || '').toLowerCase().trim();
-                match = targetEvent && msgEvent === targetEvent;
+                const targetEvent = config.eventType || '';
+                const msgEvent = message.event || '';
+                match = this.eventTypeMatches(targetEvent, msgEvent);
                 return match;
 
             // === NEW DEDICATED EVENT TRIGGERS ===
@@ -1512,15 +1527,15 @@ class EventFlowSystem {
             }
 
             case 'eventOther': {
-                const targetEventType = (config.eventType || '').toLowerCase().trim();
-                const msgEventType = (message.event || '').toLowerCase().trim();
-                return targetEventType && msgEventType === targetEventType;
+                const targetEventType = config.eventType || '';
+                const msgEventType = message.event || '';
+                return this.eventTypeMatches(targetEventType, msgEventType);
             }
 
             case 'eventCustom': {
-                const targetEventType = (config.eventType || '').toLowerCase().trim();
-                const msgEventType = (message.event || '').toLowerCase().trim();
-                const eventMatch = targetEventType && msgEventType === targetEventType;
+                const targetEventType = config.eventType || '';
+                const msgEventType = message.event || '';
+                const eventMatch = this.eventTypeMatches(targetEventType, msgEventType);
 
                 // If there's a custom condition, evaluate it
                 if (eventMatch && config.customCondition) {
