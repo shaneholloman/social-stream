@@ -7,11 +7,16 @@ class SpotifyIntegration {
 		this.tokenExpiry = null;
 		this.currentTrack = null;
 		this.pollingInterval = null;
-       this.settings = null;
-       this.callbacks = {
-           onNewTrack: null,
-           onCommandResponse: null
-       };
+		this.settings = null;
+		this.callbacks = {
+			onNewTrack: null,
+			onCommandResponse: null
+		};
+		this.authWarning = null;
+		this.lastPolicyWarning = {
+			key: null,
+			timestamp: 0
+		};
 
 		this.browserRedirectUri = 'https://socialstream.ninja/spotify.html';
 		this.electronRedirectUri = 'http://127.0.0.1:8888/callback';
@@ -150,6 +155,99 @@ class SpotifyIntegration {
         return `https://accounts.spotify.com/authorize?client_id=${this.settings.spotifyClientId.textsetting}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes.join(' '))}&state=${state}`;
     }
 
+    getDevelopmentModePolicyGuidance() {
+        return 'Spotify Development Mode changes (new apps from February 11, 2026; existing apps from March 9, 2026) require Premium, allow one Development Mode Client ID per developer, and limit each client to up to five authorized users.';
+    }
+
+    setAuthWarning(warning) {
+        this.authWarning = warning || null;
+    }
+
+    consumeAuthWarning() {
+        const warning = this.authWarning;
+        this.authWarning = null;
+        return warning;
+    }
+
+    reportPolicyRestriction(message, errorCode = 'spotify_policy_restriction') {
+        const cleanMessage = (message || '').trim();
+        if (!cleanMessage) {
+            return;
+        }
+
+        const now = Date.now();
+        const warningKey = `${errorCode}:${cleanMessage}`;
+        if (
+            this.lastPolicyWarning.key === warningKey &&
+            (now - this.lastPolicyWarning.timestamp) < 120000
+        ) {
+            return;
+        }
+
+        this.lastPolicyWarning = {
+            key: warningKey,
+            timestamp: now
+        };
+
+        console.warn('[Spotify Policy Restriction]', cleanMessage);
+
+        if (this.callbacks.onTrackUpdate) {
+            this.callbacks.onTrackUpdate({
+                track: this.currentTrack || null,
+                status: 'error',
+                isPlaying: false,
+                progressMs: 0,
+                durationMs: 0,
+                receivedAt: now,
+                errorCode,
+                message: cleanMessage
+            });
+        }
+
+        if (this.callbacks.onPolicyIssue) {
+            try {
+                this.callbacks.onPolicyIssue({
+                    message: cleanMessage,
+                    errorCode,
+                    timestamp: now
+                });
+            } catch (error) {
+                console.warn('Spotify policy callback error:', error);
+            }
+        }
+    }
+
+    async checkDevelopmentModeEligibility() {
+        if (!this.accessToken) {
+            return null;
+        }
+
+        try {
+            const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+                headers: {
+                    'Authorization': `Bearer ${this.accessToken}`
+                }
+            });
+
+            if (response.status === 401) {
+                await this.refreshAccessToken();
+                return null;
+            }
+
+            if (response.status === 403) {
+                return this.parsePlaybackError(
+                    response,
+                    'Spotify denied playback access for this account.'
+                );
+            }
+
+            return null;
+        } catch (error) {
+            console.warn('Spotify eligibility check failed:', error);
+            return null;
+        }
+    }
+
 	notifySpotifyAuthResult(result) {
 		if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
 			return;
@@ -198,20 +296,27 @@ class SpotifyIntegration {
 				throw new Error(`Spotify authorization failed: ${errorParam}`);
 			}
 
-			if (!code) {
-				throw new Error('Spotify authorization did not complete.');
-			}
+				if (!code) {
+					throw new Error('Spotify authorization did not complete.');
+				}
 
-			const success = await this.handleAuthCallback(code, returnedState, redirectUri);
-			if (!success) {
-				throw new Error('Failed to process Spotify authorization response.');
-			}
+				const success = await this.handleAuthCallback(code, returnedState, redirectUri);
+				if (!success) {
+					throw new Error('Failed to process Spotify authorization response.');
+				}
 
-			this.notifySpotifyAuthResult({ success: true, message: 'Connected to Spotify!' });
-		} catch (error) {
-			const message = error?.message || error?.toString() || 'Spotify authorization failed.';
-			console.error('Chrome identity Spotify auth error:', message);
-			this.notifySpotifyAuthResult({ success: false, error: message });
+				const warning = this.consumeAuthWarning();
+				this.notifySpotifyAuthResult({
+					success: true,
+					warning,
+					message: warning
+						? `Connected to Spotify, but playback access is limited: ${warning}`
+						: 'Connected to Spotify!'
+				});
+			} catch (error) {
+				const message = error?.message || error?.toString() || 'Spotify authorization failed.';
+				console.error('Chrome identity Spotify auth error:', message);
+				this.notifySpotifyAuthResult({ success: false, error: message });
 		} finally {
 			this.identityAuthInFlight = false;
 		}
@@ -305,19 +410,26 @@ class SpotifyIntegration {
 
         if (result.code) {
             try {
-                const success = await this.handleAuthCallback(
-                    result.code,
-                    result.state || state,
-                    this.normalizeLoopbackRedirectUri(result.redirectUri || redirectUri)
-                );
+	                const success = await this.handleAuthCallback(
+	                    result.code,
+	                    result.state || state,
+	                    this.normalizeLoopbackRedirectUri(result.redirectUri || redirectUri)
+	                );
 
-                if (success) {
-                    this.notifySpotifyAuthResult({ success: true, message: 'Connected to Spotify!' });
-                } else {
-                    this.notifySpotifyAuthResult({
-                        success: false,
-                        error: 'Failed to process Spotify authorization response.'
-                    });
+	                if (success) {
+                        const warning = this.consumeAuthWarning();
+	                    this.notifySpotifyAuthResult({
+                            success: true,
+                            warning,
+                            message: warning
+                                ? `Connected to Spotify, but playback access is limited: ${warning}`
+                                : 'Connected to Spotify!'
+                        });
+	                } else {
+	                    this.notifySpotifyAuthResult({
+	                        success: false,
+	                        error: 'Failed to process Spotify authorization response.'
+	                    });
                 }
             } catch (error) {
                 console.error('Spotify OAuth callback processing failed:', error);
@@ -501,6 +613,15 @@ class SpotifyIntegration {
                 return null;
             }
 
+            if (response.status === 403) {
+                const message = await this.parsePlaybackError(
+                    response,
+                    'Spotify blocked playback status for this account.'
+                );
+                this.reportPolicyRestriction(message, 'spotify_playback_403');
+                return null;
+            }
+
             const data = await response.json();
             
             if (data && data.item) {
@@ -572,13 +693,28 @@ class SpotifyIntegration {
         const lower = msg.toLowerCase();
 
         if (response.status === 403) {
+            const policyGuidance = this.getDevelopmentModePolicyGuidance();
+
             if (lower.includes('premium')) {
-                return "Spotify Premium required for playback control.";
+                return `Spotify Premium is required for this Spotify Development Mode integration. ${policyGuidance}`;
+            }
+            if (
+                lower.includes('development mode') ||
+                lower.includes('authorized user') ||
+                lower.includes('not authorized') ||
+                lower.includes('allowlist') ||
+                lower.includes('whitelist') ||
+                lower.includes('quota mode')
+            ) {
+                return `This Spotify account is not allowed for this app's Development Mode. ${policyGuidance}`;
+            }
+            if (lower.includes('scope')) {
+                return "Spotify permissions issue. Try disconnecting and reconnecting Spotify.";
             }
             if (lower.includes('restricted')) {
                 return "This device doesn't support remote control.";
             }
-            return "Spotify permissions issue. Try disconnecting and reconnecting Spotify.";
+            return `Spotify denied playback access for this app/account. ${policyGuidance}`;
         }
 
         if (response.status === 429) {
@@ -1429,11 +1565,13 @@ class SpotifyIntegration {
         return null;
     }
 
-    // OAuth flow methods for initial setup
+	// OAuth flow methods for initial setup
 	async startOAuthFlow() {
 		if (!this.settings.spotifyClientId?.textsetting) {
 			throw new Error("Spotify Client ID not configured");
 		}
+
+        this.setAuthWarning(null);
 
         // Ensure tokens are loaded from settings
         if (!this.accessToken && this.settings.spotifyAccessToken) {
@@ -1451,8 +1589,15 @@ class SpotifyIntegration {
                 console.log("Token expired, refreshing...");
                 await this.refreshAccessToken();
             }
+            const eligibilityWarning = await this.checkDevelopmentModeEligibility();
+            this.setAuthWarning(eligibilityWarning);
             // Return success with indicator that we're already connected
-            return { success: true, alreadyConnected: true };
+            return {
+                success: true,
+                alreadyConnected: true,
+                warning: eligibilityWarning || undefined,
+                message: eligibilityWarning || undefined
+            };
         }
 
 		const scopes = ['user-read-currently-playing', 'user-read-playback-state', 'user-modify-playback-state'];
@@ -1565,9 +1710,11 @@ class SpotifyIntegration {
     }
 
     // Handle OAuth callback
-    async handleAuthCallback(code, state, redirectUriOverride = null) {
-        // Check state from memory or storage
-        let validState = false;
+	    async handleAuthCallback(code, state, redirectUriOverride = null) {
+            this.setAuthWarning(null);
+
+	        // Check state from memory or storage
+	        let validState = false;
         
         if (state === this.pendingAuthState) {
             validState = true;
@@ -1586,10 +1733,10 @@ class SpotifyIntegration {
             return false;
         }
 
-        const redirectUri = this.normalizeLoopbackRedirectUri(redirectUriOverride || this.getDefaultRedirectUri());
-        await this.exchangeCodeForToken(code, redirectUri);
-        return true;
-    }
+	        const redirectUri = this.normalizeLoopbackRedirectUri(redirectUriOverride || this.getDefaultRedirectUri());
+	        await this.exchangeCodeForToken(code, redirectUri);
+	        return true;
+	}
 
     async exchangeCodeForToken(code, redirectUri) {
         const authString = btoa(`${this.settings.spotifyClientId.textsetting}:${this.settings.spotifyClientSecret.textsetting}`);
@@ -1626,13 +1773,19 @@ class SpotifyIntegration {
                     console.log('Spotify tokens saved to settings successfully');
                 });
                 
-                console.log('Spotify tokens saved successfully');
-                if (this.settings?.spotifyEnabled) {
-                    this.startPolling();
-                }
-            } else {
-                throw new Error('No access token received from Spotify');
-            }
+	                console.log('Spotify tokens saved successfully');
+	                if (this.settings?.spotifyEnabled) {
+	                    this.startPolling();
+	                }
+
+                    const eligibilityWarning = await this.checkDevelopmentModeEligibility();
+                    this.setAuthWarning(eligibilityWarning);
+                    if (eligibilityWarning) {
+                        console.warn('Spotify post-auth eligibility warning:', eligibilityWarning);
+                    }
+	            } else {
+	                throw new Error('No access token received from Spotify');
+	            }
         } catch (error) {
             console.error('Token exchange error:', error);
             throw error;

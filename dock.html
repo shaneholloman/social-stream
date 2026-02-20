@@ -21,6 +21,7 @@
 				--font-color: var(--comment-color, #fff);
 				--font-color-name: var(--author-color, #ddd);
 				--background-color: #36393f;
+				--topbar-background: #0009;
 				--locked-chatbar: 0px;
 				--menu-background-color: #2f3136;
 				--menu-border-color: 0 0 5px #000;
@@ -71,6 +72,10 @@
 				--special-bgcolor-bubble-odd: #08244cd1;
 				--bgcolor-bubble: #000d;
 				--bgcolor-bubble-odd: #111d;
+				--name-bubble-bg: #2a5bd7;
+				--name-bubble-text: var(--font-color-name);
+				--name-bubble-radius: 999px;
+				--name-bubble-padding: 2px 8px;
 
 				--scrollbar-visible: inherit;
 				--padding-rows: 3px;
@@ -136,6 +141,9 @@
 			
 			.blurred {
 				filter: blur(var(--blur-amount));
+			}
+			body.noblur .blurred {
+				filter: none !important;
 			}
 
 			@keyframes float {
@@ -332,7 +340,7 @@
 				background-repeat: no-repeat;
 				background-size: contain;
 				padding: 5px;
-				margin: 0 5px 0 0;
+				margin: 0;
 				cursor: help;
 				padding-left: 34px;
 				border-radius: 25%;
@@ -859,6 +867,9 @@
 				text-decoration: line-through;
 				filter: blur(5px);
 			}
+			body.noblur .timed-out {
+				filter: none !important;
+			}
 
 			/* Optionally add badges for roles */
 			.marked-host:before {
@@ -993,6 +1004,32 @@
 			
 			.hl-message.bubble span.hl-donation {
 				margin: auto 0
+			}
+			body.namebubble .hl-message.bubble .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+				margin: auto 6px auto 0;
+			}
+			body.alignright.namebubble .hl-message.bubble .hl-name {
+				margin: auto 0 auto 6px;
+			}
+			body.namebubble .hl-rightside.bubble .hl-righttopline .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+				margin-right: 6px;
+			}
+			body.namebubble.twoLines .hl-firstline .hl-name {
+				background-color: var(--name-bubble-bg);
+				color: var(--name-bubble-text);
+				border-radius: var(--name-bubble-radius);
+				padding: var(--name-bubble-padding);
+			}
+			body.namebubble.twoLines.alignright .hl-firstline .hl-name {
+				margin: auto 0 auto 6px;
 			}
 			
 
@@ -2106,7 +2143,7 @@
 			}
 
 			.fadeout {
-				animation: fadeout 2s both;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2) both;
 				-webkit-transition: opacity 1.5s ease-in-out;
 				transition: opacity 1.5s ease-in-out;
 				opacity: 0;
@@ -2125,7 +2162,7 @@
 			}
 
 			.fadein {
-				animation: fadein 1s both;
+				animation: fadein var(--animation-speed, 1s) both;
 				-webkit-transition: opacity 0.5s ease-in-out;
 				transition: opacity 0.5s ease-in-out;
 				opacity: 1;
@@ -2152,7 +2189,7 @@
 			}
 
 			.swiperight {
-				animation: swiperight 1s;
+				animation: swiperight var(--animation-speed, 1s);
 			}
 			@keyframes swiperight {
 				0% {
@@ -2164,7 +2201,7 @@
 			}
 
 			.swipeleft {
-				animation: swipeleft 1s;
+				animation: swipeleft var(--animation-speed, 1s);
 			}
 			@keyframes swipeleft {
 				0% {
@@ -2176,7 +2213,7 @@
 			}
 
 			.swipeup {
-				animation: swipeup 1s;
+				animation: swipeup var(--animation-speed, 1s);
 			}
 			@keyframes swipeup {
 				0% {
@@ -2188,42 +2225,42 @@
 			}
 
 			.fadeout.swipeup {
-				animation: fadeout 2s, swipeup 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 			.fadein.swipeup {
-				animation: fadein 2s, swipeup 1s;
+				animation: fadein calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 
 			.fadeout.fadein {
-				animation: fadeout 2s, fadein 2s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), fadein calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.swipeleft.fadein {
-				animation: swipeleft 1s, fadein 1s;
+				animation: swipeleft var(--animation-speed, 1s), fadein var(--animation-speed, 1s);
 			}
 			.swipeleft.fadeout {
-				animation: fadeout 2s, swipeleft 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeleft var(--animation-speed, 1s);
 			}
 
 			.swiperight.fadein {
-				animation: swiperight 1s, fadein 1s;
+				animation: swiperight var(--animation-speed, 1s), fadein var(--animation-speed, 1s);
 			}
 			.swiperight.fadeout {
-				animation: swiperight 1s, fadeout 2s;
+				animation: swiperight var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.swipeup.fadeout {
-				animation: fadeout 2s, swipeup 1s;
+				animation: fadeout calc(var(--animation-speed, 1s) * 2), swipeup var(--animation-speed, 1s);
 			}
 
 			.swipeleft.fadein.fadeout {
-				animation: swipeleft 1s, fadein 1s, fadeout 2s;
+				animation: swipeleft var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 			.swipeup.fadein.fadeout {
-				animation: swipeup 1s, fadein 1s, fadeout 2s;
+				animation: swipeup var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 			.swiperight.fadein.fadeout {
-				animation: swiperight 1s, fadein 1s, fadeout 2s;
+				animation: swiperight var(--animation-speed, 1s), fadein var(--animation-speed, 1s), fadeout calc(var(--animation-speed, 1s) * 2);
 			}
 
 			.electronDraggable {
@@ -2426,15 +2463,23 @@
 		  vertical-align: top;
 		}
 		#topbar {
-			display: flex;
-			margin: 0 auto;
+			display: inline-flex;
+			align-items: center;
+			gap: 5px;
+			width: max-content;
+			max-width: none;
+			margin: 0;
 			text-align: center;
 			position: fixed;
 			right: 0;
+			left: auto;
 			z-index: 999;
-			background-color: #0009;
+			background-color: var(--topbar-background, #0009);
 			border-radius: 0 0 0 13px;
-			padding-left: 3px;
+			padding: 0 8px 0 3px;
+			box-sizing: border-box;
+			overflow: visible;
+			white-space: nowrap;
 		}
 		#topbar:empty {
 			display:none;
@@ -2535,6 +2580,7 @@
 		<div id="topbar"></div>
 		<div id="pinned" class="output"></div>
 		<div id="output" class="output"></div>
+		<div id="backToLive" onclick="returnToLive();" style="display:none; position:fixed; bottom:40px; left:50%; transform:translateX(-50%); z-index:9999; background:rgba(0,120,255,0.9); color:#fff; padding:6px 16px; border-radius:20px; cursor:pointer; font-size:14px; font-family:sans-serif; box-shadow:0 2px 8px rgba(0,0,0,0.3); white-space:nowrap;">Back to live (<span id="missedCount">0</span> new)</div>
 		<div id="menu" class="electronDraggable">
 			<!-- Main buttons -->
 
@@ -2853,6 +2899,13 @@
 				return value !== null && value !== undefined && value !== "";
 			}
 
+			function normalizeColor(value) {
+				if (!hasValue(value)) { return value; }
+				value = String(value).trim();
+				if (/^[0-9a-fA-F]{3,8}$/.test(value)) { return "#" + value; }
+				return value;
+			}
+
 			function parseNumericValue(value) {
 				if (!hasValue(value)) {
 					return null;
@@ -2971,6 +3024,72 @@
 				document.body.style.setProperty("--text-shadow", shadowValue);
 			}
 
+			function clamp(value, min, max) {
+				if (value < min) { return min; }
+				if (value > max) { return max; }
+				return value;
+			}
+
+			function parseColorToRgb(colorValue) {
+				if (!hasValue(colorValue)) {
+					return null;
+				}
+				var color = String(colorValue).trim();
+				var hexMatch = color.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+				if (hexMatch) {
+					var hex = hexMatch[1];
+					if (hex.length === 3 || hex.length === 4) {
+						return {
+							r: parseInt(hex.charAt(0) + hex.charAt(0), 16),
+							g: parseInt(hex.charAt(1) + hex.charAt(1), 16),
+							b: parseInt(hex.charAt(2) + hex.charAt(2), 16)
+						};
+					}
+					return {
+						r: parseInt(hex.slice(0, 2), 16),
+						g: parseInt(hex.slice(2, 4), 16),
+						b: parseInt(hex.slice(4, 6), 16)
+					};
+				}
+
+				var rgbMatch = color.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+				if (rgbMatch) {
+					return {
+						r: clamp(parseFloat(rgbMatch[1]) || 0, 0, 255),
+						g: clamp(parseFloat(rgbMatch[2]) || 0, 0, 255),
+						b: clamp(parseFloat(rgbMatch[3]) || 0, 0, 255)
+					};
+				}
+				return null;
+			}
+
+			function withOpacity(colorValue, opacityValue) {
+				var rgb = parseColorToRgb(colorValue);
+				if (!rgb) {
+					return null;
+				}
+				return "rgba(" + Math.round(rgb.r) + ", " + Math.round(rgb.g) + ", " + Math.round(rgb.b) + ", " + opacityValue + ")";
+			}
+
+			function applyBubbleOpacity(opacityValue) {
+				if (!hasValue(opacityValue)) {
+					return;
+				}
+				var parsedOpacity = parseFloat(opacityValue);
+				if (isNaN(parsedOpacity)) {
+					return;
+				}
+				var clampedOpacity = clamp(parsedOpacity, 0, 1);
+				var rootStyles = getComputedStyle(document.documentElement);
+				["--bgcolor-bubble", "--bgcolor-bubble-odd"].forEach(function (varName) {
+					var currentColor = rootStyles.getPropertyValue(varName).trim();
+					var updatedColor = withOpacity(currentColor, clampedOpacity);
+					if (updatedColor) {
+						document.documentElement.style.setProperty(varName, updatedColor);
+					}
+				});
+			}
+
 			var tainted = false;
 
 			var urlParams = new URLSearchParams(window.location.search);
@@ -2997,6 +3116,20 @@
 			var timeoutTimer = null;
 			var isOBSBrowserSource = false;
 			var customNodeLimit = false;
+			var historyMode = urlParams.has("history");
+			var historyInitialLoadLimit = parseInt(urlParams.get("loadlast"), 10) || 30;
+			var historyBrowsing = false;
+			var isLoadingHistory = false;
+			var reachedOldest = false;
+			var oldestLoadedTimestamp = null;
+			var oldestLoadedDbId = null;
+			var missedLiveCount = 0;
+			var historyMissedLiveBuffer = [];
+			var historyFlushTimer = null;
+			var waitingForRecentHistory = false;
+			var historyReturnSyncPending = false;
+			var historyReturnSyncTimedOut = false;
+			var prependMode = false;
 			var body = document.body;
 			var html = document.documentElement;
 			var mainOutputWindow = getById("output");
@@ -3025,14 +3158,40 @@
 			var textGlowWidthParam = null;
 			var textGlowColorParam = null;
 
-			var fontColorParam = urlParams.get("fontcolor");
+			var fontColorParam = normalizeColor(urlParams.get("fontcolor"));
 			if (hasValue(fontColorParam)) {
 				document.documentElement.style.setProperty("--font-color", fontColorParam);
 			}
 
-			var nameColorParam = urlParams.get("namecolor");
+			var nameColorParam = normalizeColor(urlParams.get("namecolor"));
 			if (hasValue(nameColorParam)) {
 				document.documentElement.style.setProperty("--font-color-name", nameColorParam);
+			}
+
+			var bubbleOpacityParam = urlParams.get("bubbleopacity");
+			var viewerBarBgParam = normalizeColor(urlParams.get("viewerbarbg") || urlParams.get("viewerbarbackground") || urlParams.get("topbarbg"));
+			if (hasValue(viewerBarBgParam)) {
+				document.documentElement.style.setProperty("--topbar-background", viewerBarBgParam);
+			}
+			var nameBubbleColorParam = normalizeColor(urlParams.get("namebubblecolor"));
+			if (hasValue(nameBubbleColorParam)) {
+				document.documentElement.style.setProperty("--name-bubble-bg", nameBubbleColorParam);
+			}
+			var nameBubbleTextParam = normalizeColor(urlParams.get("namebubbletext"));
+			if (hasValue(nameBubbleTextParam)) {
+				document.documentElement.style.setProperty("--name-bubble-text", nameBubbleTextParam);
+			}
+			var nameBubbleRadiusParam = toCssLength(urlParams.get("namebubbleradius"), "px");
+			if (hasValue(nameBubbleRadiusParam)) {
+				document.documentElement.style.setProperty("--name-bubble-radius", nameBubbleRadiusParam);
+			}
+			var nameBubblePaddingParam = urlParams.get("namebubblepadding");
+			if (hasValue(nameBubblePaddingParam)) {
+				var paddingVal = String(nameBubblePaddingParam).trim();
+				if (/^[\d.]+$/.test(paddingVal)) {
+					paddingVal = paddingVal + "px";
+				}
+				document.documentElement.style.setProperty("--name-bubble-padding", paddingVal);
 			}
 
 			var fontWeightParam = urlParams.get("fontweight");
@@ -3046,7 +3205,7 @@
 			}
 
 			var strokeWidthParam = urlParams.get("strokewidth") || urlParams.get("stroke");
-			var strokeColorParam = urlParams.get("strokecolor") || urlParams.get("strokeColor");
+			var strokeColorParam = normalizeColor(urlParams.get("strokecolor") || urlParams.get("strokeColor"));
 			if (hasValue(strokeWidthParam)) {
 				customStrokeWidthParam = strokeWidthParam;
 			}
@@ -3058,7 +3217,7 @@
 			}
 
 			var outlineWidthParam = urlParams.get("outlinewidth");
-			var outlineColorParam = urlParams.get("outlinecolor");
+			var outlineColorParam = normalizeColor(urlParams.get("outlinecolor"));
 			if (hasValue(outlineWidthParam)) {
 				customOutlineWidthParam = outlineWidthParam;
 			}
@@ -3071,7 +3230,7 @@
 			hasCustomOutline = customOutlineWidthParam !== null || customOutlineColorParam !== null;
 
 			var glowWidthParam = urlParams.get("glowwidth");
-			var glowColorParam = urlParams.get("glowcolor");
+			var glowColorParam = normalizeColor(urlParams.get("glowcolor"));
 			if (hasValue(glowWidthParam)) {
 				textGlowWidthParam = glowWidthParam;
 			}
@@ -3162,12 +3321,20 @@
 			if (urlParams.has("disabletimeout")) {
 				autoTimeoutEnabled = false;
 			}
-			
+
+			var noBlur = urlParams.has("noblur");
+			if (noBlur) {
+				document.body.classList.add("noblur");
+			}
+
 			var blurred = false;
 			if (urlParams.has("blur") || urlParams.has("blurred")) {
 				blurred = urlParams.get("blur") ||  urlParams.get("blurred") || "5";
 				blurred = parseFloat(blurred)+"px";
-				document.documentElement.style.setProperty("--blur-amount", blurred);				
+				document.documentElement.style.setProperty("--blur-amount", blurred);
+			}
+			if (noBlur) {
+				blurred = false;
 			}
 			
 			var onlyTwitch = false;
@@ -3369,12 +3536,11 @@
 			}
 
 			if (urlParams.has("pressedcolor")) {
-				// must be a hex code value, without the #.
-				let pressedColor = urlParams.get("pressedcolor") || false;
+				let pressedColor = normalizeColor(urlParams.get("pressedcolor")) || false;
 				if (!pressedColor) {
 					document.documentElement.style.setProperty("--pressed-color", "unset", "");
 				} else {
-					document.documentElement.style.setProperty("--pressed-color", "#" + pressedColor, "");
+					document.documentElement.style.setProperty("--pressed-color", pressedColor, "");
 				}
 			}
 			
@@ -3400,6 +3566,9 @@
 			var bubble = false;
 			if (urlParams.has("bubble")) {
 				bubble = true;
+			}
+			if (urlParams.has("namebubble")) {
+				document.body.classList.add("namebubble");
 			}
 			
 			var showviewercount = false;
@@ -3816,6 +3985,18 @@
 
 			if (urlParams.has("swipeup")) {
 				transitionType.push("swipeup");
+			}
+
+			var animationSpeedMs = 1000;
+			var fadeoutTimeoutMs = 1500;
+			if (urlParams.has("animationspeed")) {
+				var speed = parseFloat(urlParams.get("animationspeed"));
+				if (!isNaN(speed) && speed > 0) {
+					animationSpeedMs = speed * 1000;
+					fadeoutTimeoutMs = speed * 1500;
+					document.documentElement.style.setProperty('--animation-speed', speed + 's');
+					document.documentElement.style.setProperty('--animate-duration', speed + 's');
+				}
 			}
 
 			var reversed = false;
@@ -4934,6 +5115,8 @@
 				document.documentElement.style.setProperty("--bgcolor-bubble-odd", getComputedStyle(document.documentElement).getPropertyValue("--bgcolor-bubble"));
 			}
 
+			applyBubbleOpacity(bubbleOpacityParam);
+
 			if (urlParams.has("nooutline")) {
 				setTextShadow("0 0 #0000");
 				if (!darkmode){
@@ -5093,6 +5276,54 @@
 					}
 				});
 				ro.observe(document.scrollingElement);
+			}
+
+			if (historyMode) {
+				var historyScrollContainer = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+				var historyLiveEdgeThreshold = 120;
+				var historyUsesWindowScroll = historyScrollContainer === document.scrollingElement || historyScrollContainer === document.documentElement || historyScrollContainer === document.body;
+				var isNearHistoryLiveEdge = function() {
+					if (!historyScrollContainer) {
+						return false;
+					}
+					var distanceFromBottom = historyScrollContainer.scrollHeight - (historyScrollContainer.scrollTop + historyScrollContainer.clientHeight);
+					return distanceFromBottom <= historyLiveEdgeThreshold;
+				};
+				var historyTopIntent = function(forceEnter) {
+					if (!historyScrollContainer) {
+						return;
+					}
+					if (historyBrowsing) {
+						if (isNearHistoryLiveEdge()) {
+							returnToLive();
+							return;
+						}
+						if (historyScrollContainer.scrollTop < 100 && !isLoadingHistory && !reachedOldest) {
+							loadOlderMessages();
+						}
+						return;
+					}
+					if (reversed) {
+						return;
+					}
+					if (!horizontal && historyScrollContainer.scrollTop < 50 && (forceEnter || mainOutputWindow.firstElementChild)) {
+						enterHistoryMode();
+					}
+				};
+				var onHistoryScroll = function() {
+					historyTopIntent(false);
+				};
+				var onHistoryWheel = function(event) {
+					if (event.deltaY < 0) {
+						historyTopIntent(true);
+					}
+				};
+				historyScrollContainer.addEventListener("scroll", onHistoryScroll);
+				historyScrollContainer.addEventListener("wheel", onHistoryWheel, { passive: true });
+				if (historyUsesWindowScroll) {
+					window.addEventListener("scroll", onHistoryScroll, { passive: true });
+					window.addEventListener("wheel", onHistoryWheel, { passive: true });
+				}
 			}
 
 			function emoji() {
@@ -5891,10 +6122,142 @@
 			}
 			
 			let sentBefore = false;
-			function getRecentHistory() {
+			function getRecentHistory(limit = 30) {
 				if (sentBefore) {return;}
 				sentBefore = true;
-				send2Extension({ action: "getRecentHistory", value: 30 });
+				waitingForRecentHistory = true;
+				send2Extension({ action: "getRecentHistory", value: limit });
+			}
+
+			function bufferMissedLiveMessage(messageData) {
+				if (!messageData || typeof messageData !== "object") {
+					return;
+				}
+				historyMissedLiveBuffer.push(Object.assign({}, messageData));
+				if (historyMissedLiveBuffer.length > 500) {
+					historyMissedLiveBuffer.shift();
+				}
+			}
+
+			function flushMissedLiveBuffer() {
+				if (historyBrowsing || historyReturnSyncPending || !historyMissedLiveBuffer.length) {
+					return;
+				}
+				var buffered = historyMissedLiveBuffer.slice();
+				historyMissedLiveBuffer = [];
+				buffered.forEach(function(msg) {
+					var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+					if (!displayId || !document.querySelector("[data-mid='" + displayId + "']")) {
+						processData({ contents: msg }, { reloaded: true, suppressLiveSideEffects: true, skipHistoryDeferral: true });
+					}
+				});
+				jumptoBottom2();
+			}
+
+			function enterHistoryMode() {
+				if (historyBrowsing) {
+					return;
+				}
+				if (reversed) {
+					return;
+				}
+				historyBrowsing = true;
+				missedLiveCount = 0;
+				reachedOldest = false;
+				getById("backToLive").style.display = "";
+				getById("missedCount").textContent = "0";
+				loadOlderMessages();
+			}
+
+			function loadOlderMessages() {
+				if (reversed || isLoadingHistory || reachedOldest) return;
+				isLoadingHistory = true;
+				var firstNode = mainOutputWindow.firstElementChild;
+				if (firstNode && firstNode.rawContents && firstNode.rawContents.timestamp) {
+					var nodeTimestamp = firstNode.rawContents.timestamp;
+					if (oldestLoadedTimestamp == null || nodeTimestamp < oldestLoadedTimestamp) {
+						oldestLoadedTimestamp = nodeTimestamp;
+						if (firstNode.rawContents.dbid != null) {
+							oldestLoadedDbId = firstNode.rawContents.dbid;
+						}
+					} else if (nodeTimestamp === oldestLoadedTimestamp && firstNode.rawContents.dbid != null) {
+						if (oldestLoadedDbId != null) {
+							oldestLoadedDbId = Math.min(oldestLoadedDbId, firstNode.rawContents.dbid);
+						} else {
+							oldestLoadedDbId = firstNode.rawContents.dbid;
+						}
+					}
+				} else {
+					oldestLoadedTimestamp = oldestLoadedTimestamp || Date.now();
+				}
+				send2Extension({
+					action: "getHistoryBefore",
+					value: { before: oldestLoadedTimestamp, beforeId: oldestLoadedDbId, limit: 50 }
+				});
+			}
+
+			function pruneFromBottom() {
+				var nodes = document.querySelectorAll("#output>div:not(.queued)");
+				var limit = customNodeLimit || 200;
+				var excess = nodes.length - limit;
+				if (excess > 0) {
+					for (var i = nodes.length - 1; i >= nodes.length - excess; i--) {
+						nodes[i].remove();
+					}
+				}
+			}
+
+				function returnToLive(options = {}) {
+					var liveTarget = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+					var distanceFromBottom = 0;
+					var distanceFromTop = 0;
+					if (liveTarget) {
+						distanceFromBottom = liveTarget.scrollHeight - (liveTarget.scrollTop + liveTarget.clientHeight);
+						distanceFromTop = liveTarget.scrollTop;
+					}
+					var shouldAdaptiveReload = false;
+					if (typeof options.reloadRecentHistory === "undefined") {
+						var hardReloadDistance = Math.max(300, (liveTarget ? liveTarget.clientHeight : 0) * 1.5);
+						var atHistoryStart = historyBrowsing && distanceFromTop <= 80;
+						shouldAdaptiveReload = atHistoryStart || distanceFromBottom > hardReloadDistance;
+					}
+				var reloadRecentHistory = options.reloadRecentHistory === true || shouldAdaptiveReload;
+				var clearBeforeReload = options.clearBeforeReload === true || (reloadRecentHistory && options.clearBeforeReload !== false);
+				historyBrowsing = false;
+				reachedOldest = false;
+				isLoadingHistory = false;
+				missedLiveCount = 0;
+				oldestLoadedTimestamp = null;
+				oldestLoadedDbId = null;
+				getById("backToLive").style.display = "none";
+				getById("missedCount").textContent = "0";
+				if (historyFlushTimer) {
+					clearTimeout(historyFlushTimer);
+					historyFlushTimer = null;
+				}
+				historyReturnSyncPending = false;
+				historyReturnSyncTimedOut = false;
+				if (!reloadRecentHistory) {
+					waitingForRecentHistory = false;
+					flushMissedLiveBuffer();
+					jumptoBottom2();
+					return;
+				}
+				if (clearBeforeReload) {
+					mainOutputWindow.innerHTML = "";
+				}
+				sentBefore = false;
+				historyReturnSyncPending = true;
+				getRecentHistory(historyInitialLoadLimit);
+				historyFlushTimer = setTimeout(function() {
+					historyFlushTimer = null;
+					if (waitingForRecentHistory) {
+						waitingForRecentHistory = false;
+						historyReturnSyncPending = false;
+						historyReturnSyncTimedOut = true;
+						flushMissedLiveBuffer();
+					}
+				}, 1500);
 			}
 
 			function timeSince(timestamp) {
@@ -6233,17 +6596,69 @@
 					  }
 					};
 				} else if (data.recentHistory) {
+					waitingForRecentHistory = false;
+					if (historyFlushTimer) {
+						clearTimeout(historyFlushTimer);
+						historyFlushTimer = null;
+					}
+					var prependRecentHistory = historyReturnSyncTimedOut && !historyBrowsing;
+					historyReturnSyncTimedOut = false;
 					//console.log(data);
 					setTimeout(()=>{
-						data.recentHistory.reverse().forEach(async msg=>{
+						var recentMessages = prependRecentHistory ? data.recentHistory : data.recentHistory.slice().reverse();
+						recentMessages.forEach(function(msg) {
 							//console.log({contents:msg});
-							if (!msg.id || !document.querySelector("[data-mid='"+msg.id+"']")){
-								await processData({contents:msg}); 
+							var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+							if (!displayId || !document.querySelector("[data-mid='"+displayId+"']")){
+								var normalizedMsg = (msg && msg.mid && msg.mid !== msg.id) ? Object.assign({}, msg, { id: msg.mid, dbid: msg.id }) : msg;
+								if (prependRecentHistory) {
+									prependMode = true;
+									processData({contents: normalizedMsg}, { skipHistoryDeferral: true });
+									prependMode = false;
+								} else {
+									processData({contents: normalizedMsg}, { skipHistoryDeferral: true });
+								}
 							}
 						});
 						console.log("Loaded from remote DB storage");
+						historyReturnSyncPending = false;
+						flushMissedLiveBuffer();
 						jumptoBottom2();
 					},1000);
+				} else if (data.historyBefore) {
+					if (!historyBrowsing) {
+						isLoadingHistory = false;
+						return;
+					}
+					var hContainer = alignbottom || fadetop ? getById("output") : document.scrollingElement;
+					var prevScrollHeight = hContainer.scrollHeight;
+					var prevScrollTop = hContainer.scrollTop;
+
+					var histMsgs = data.historyBefore;
+					if (histMsgs.length && histMsgs[histMsgs.length - 1] && histMsgs[histMsgs.length - 1].timestamp) {
+						var oldestMsg = histMsgs[histMsgs.length - 1];
+						oldestLoadedTimestamp = oldestMsg.timestamp;
+						if (oldestMsg.id != null) {
+							oldestLoadedDbId = oldestMsg.id;
+						}
+					}
+					histMsgs.forEach(function(msg) {
+						var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+						if (!displayId || !document.querySelector("[data-mid='" + displayId + "']")) {
+							var normalizedMsg = (msg && msg.mid && msg.mid !== msg.id) ? Object.assign({}, msg, { id: msg.mid, dbid: msg.id }) : msg;
+							prependMode = true;
+							processData({contents: normalizedMsg});
+							prependMode = false;
+						}
+					});
+
+					var newScrollHeight = hContainer.scrollHeight;
+					hContainer.scrollTop = newScrollHeight - (prevScrollHeight - prevScrollTop);
+
+					pruneFromBottom();
+
+					isLoadingHistory = false;
+					if (!data.historyBefore.length) { reachedOldest = true; }
 				} else if ("userHistory" in data) {
 					//delete messages, but also block user. remote, so we won't sync,
 					//console.log(data.userHistory);
@@ -7044,9 +7459,16 @@
 							}
 						}
 						
-						if (urlParams.has("loadlast") && e.data.streamID==roomID) {
-							getRecentHistory(parseInt(urlParams.get("loadlast")) || 30);
-						}
+							var streamMatchesRoom = false;
+							if (e.data.streamID && roomID) {
+								var incomingStreamId = e.data.streamID.toString().trim();
+								streamMatchesRoom = roomID.split(",").some(function(roomToken) {
+									return roomToken.trim() === incomingStreamId;
+								});
+							}
+							if ((historyMode || urlParams.has("loadlast")) && streamMatchesRoom) {
+								getRecentHistory(historyInitialLoadLimit);
+							}
 					}
 
 					if ("action" in e.data && e.data.UUID && "value" in e.data && !e.data.value && e.data.action == "push-connection") {
@@ -7221,6 +7643,10 @@
 			//	}
 
 			function jumptoBottom() {
+				if (historyBrowsing) {
+					returnToLive();
+					return;
+				}
 				var ele = getById("jumpto");
 				forceAutoscroll = !forceAutoscroll;
 				if (forceAutoscroll) {
@@ -8054,6 +8480,7 @@
 			}
 
 			function cleanUpOldNodes() {
+				if (historyBrowsing) return;
 				if (horizontal) {
 					horizontalPruneMessages();
 					return;
@@ -8123,12 +8550,12 @@
 				if (animateout) {
 					animateCSS(node, animateout); // animate then delete
 				} else if (fadeout && horizontal) {
-					node.classList.add("fadeout"); 
+					node.classList.add("fadeout");
 					setTimeout(
 						function (node) {
 							nodeRemove(node);
 						},
-						1500,
+						fadeoutTimeoutMs,
 						node
 					);
 				} else if (horizontal) {
@@ -8139,7 +8566,7 @@
 						function (node) {
 							nodeRemove(node);
 						},
-						1500,
+						fadeoutTimeoutMs,
 						node
 					);
 				} else if (scrolltype === "smooth") {
@@ -8797,12 +9224,30 @@
 			}
 
 			function processData(data, reloaded = false) {
+				var processDataOptions = {};
+				if (reloaded && typeof reloaded === "object") {
+					processDataOptions = reloaded;
+					reloaded = !!processDataOptions.reloaded;
+				} else {
+					reloaded = !!reloaded;
+				}
 				if (data.contents) {
 					data = data.contents;
 
+					var shouldDeferForHistory = (historyBrowsing || historyReturnSyncPending) && !reloaded && !prependMode && !processDataOptions.skipHistoryDeferral;
+					if (shouldDeferForHistory) {
+						if (historyBrowsing) {
+							missedLiveCount++;
+							getById("missedCount").textContent = missedLiveCount;
+						}
+						bufferMissedLiveMessage(data);
+						return;
+					}
+
 					var invisible = false;
 					var makeBlurred = false;
-					
+					var suppressLiveSideEffects = prependMode === true || processDataOptions.suppressLiveSideEffects === true;
+
 					if (debug){
 						console.log(data);
 					}
@@ -8872,7 +9317,7 @@
 						}
 						data.command = true;
 					}
-					if (startstop && data.chatmessage && data.chatname && data.admin && window.obsstudio) {
+					if (!suppressLiveSideEffects && startstop && data.chatmessage && data.chatname && data.admin && window.obsstudio) {
 						if (data.chatmessage == "!start"){
 							try {
 								window.obsstudio["startStreaming"]();
@@ -8960,22 +9405,24 @@
 					}
 				}
 
-					try {
-						if (applyCustomActions) {
-							let response = applyCustomActions(data); // Any custom actions (not synced with github)
-							if (response === false) {
-								// cancel
-								return;
-							} else if (response === null) {
-								// cancel <== official way of cancelling.
-								return;
-							} else if (response) {
-								// replace with modified message
-								data = response;
-							} // else if 'undefined', just ignore the response.
+					if (!suppressLiveSideEffects) {
+						try {
+							if (applyCustomActions) {
+								let response = applyCustomActions(data); // Any custom actions (not synced with github)
+								if (response === false) {
+									// cancel
+									return;
+								} else if (response === null) {
+									// cancel <== official way of cancelling.
+									return;
+								} else if (response) {
+									// replace with modified message
+									data = response;
+								} // else if 'undefined', just ignore the response.
+							}
+						} catch (e) {
+							console.error(e);
 						}
-					} catch (e) {
-						console.error(e);
 					}
 
 					if (filterEvents && data.event && data.chatmessage) {
@@ -9060,7 +9507,7 @@
 						data.chatmessage = "";
 					}
 
-					if (electronSavePath && isStreamSetup) {
+					if (!suppressLiveSideEffects && electronSavePath && isStreamSetup) {
 						// Electron: use IPC to append to file
 						try {
 							const date = new Date().toLocaleString("en-US", {
@@ -9085,7 +9532,7 @@
 						} catch (err) {
 							console.error("Electron write failed:", err);
 						}
-					} else if (writer && isStreamSetup) {
+					} else if (!suppressLiveSideEffects && writer && isStreamSetup) {
 						// Browser: use StreamSaver
 						try {
 							const date = new Date().toLocaleString("en-US", {
@@ -9114,7 +9561,7 @@
 						}
 					}
 
-					if (singlewriter) {
+					if (!suppressLiveSideEffects && singlewriter) {
 						data.timestamp = new Date().getTime();
 						overwriteFile(JSON.stringify(data));
 					}
@@ -9675,6 +10122,8 @@
 
 					if (horizontal) {
 						horizontalAddNodeToTicker(node);
+					} else if (prependMode) {
+						mainOutputWindow.insertBefore(node, mainOutputWindow.firstChild);
 					} else {
 						mainOutputWindow.appendChild(node);
 					}
@@ -9819,52 +10268,54 @@
 					
 					const metaFeatured = data.meta && data.meta.featured;
 
-					if (metaFeatured) {
-						if (autoTimeoutEnabled) {
-							autoShowQueue.push(node);
-							checkAutoShow();
-						} else {
-							selectedMessage(false, node);
-						}
-					} else if (autoyoutubememberchat && (data.type == "youtube") && data.membership){
-						if (autoTimeoutEnabled) {
-							autoShowQueue.push(node);
-							checkAutoShow();
-						} else {
-							selectedMessage(false, node);
-						}
-					} else if (autoshow && !bot) {
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-							// pass auto show, since filtered out
-						} else if (!(autoshowdonos || autoshowmembers || autoshowcontentimages) || (autoshowdonos && data.hasDonation) || (autoshowmembers && data.membership) || (autoshowcontentimages && data.contentimg)) {
-							// dono or not to dono.
+					if (!suppressLiveSideEffects) {
+						if (metaFeatured) {
 							if (autoTimeoutEnabled) {
 								autoShowQueue.push(node);
 								checkAutoShow();
 							} else {
 								selectedMessage(false, node);
 							}
-						}
-					} else if (data.admin && autofeaturepriv){
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-						//
-						} else {
+						} else if (autoyoutubememberchat && (data.type == "youtube") && data.membership){
 							if (autoTimeoutEnabled) {
 								autoShowQueue.push(node);
 								checkAutoShow();
 							} else {
 								selectedMessage(false, node);
 							}
-						}
-					} else if (data.vip && autofeaturevip){
-						if (doNotAutoshowFiltered && node.classList.contains("hide")) {
-						//
-						} else {
-							if (autoTimeoutEnabled) {
-								autoShowQueue.push(node);
-								checkAutoShow();
+						} else if (autoshow && !bot) {
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+								// pass auto show, since filtered out
+							} else if (!(autoshowdonos || autoshowmembers || autoshowcontentimages) || (autoshowdonos && data.hasDonation) || (autoshowmembers && data.membership) || (autoshowcontentimages && data.contentimg)) {
+								// dono or not to dono.
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
+							}
+						} else if (data.admin && autofeaturepriv){
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+							//
 							} else {
-								selectedMessage(false, node);
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
+							}
+						} else if (data.vip && autofeaturevip){
+							if (doNotAutoshowFiltered && node.classList.contains("hide")) {
+							//
+							} else {
+								if (autoTimeoutEnabled) {
+									autoShowQueue.push(node);
+									checkAutoShow();
+								} else {
+									selectedMessage(false, node);
+								}
 							}
 						}
 					}
@@ -9930,79 +10381,83 @@
 						enqueueTypewriter(contentElement, node);
 					}
 					
-					const shouldBeep = beep || (beepFirstTime && data.firsttime);
-					if (shouldBeep) { 
-						if (!(data.command && doNotTTSBeep) && !(nobeepevent && data.event) && !(nobeepmod && mod) && !(nobeephost && host) && !(nobeepbot && bot)){
-							playtone();
+					if (!suppressLiveSideEffects) {
+						const shouldBeep = beep || (beepFirstTime && data.firsttime);
+						if (shouldBeep) { 
+							if (!(data.command && doNotTTSBeep) && !(nobeepevent && data.event) && !(nobeepmod && mod) && !(nobeephost && host) && !(nobeepbot && bot)){
+								playtone();
+							}
 						}
 					}
 					
 					cleanUpOldNodes();
 
-					applyBotActions(data); // Official actions
+					if (!suppressLiveSideEffects) {
+						applyBotActions(data); // Official actions
 
-					if (data.queueme) {
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					} else if (selfQueue && data.chatmessage && (selfQueue.some(item => data.chatmessage.split(" ").includes(item)))) {
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton(); 
-					} else if (autoQueueQuestions && data.question) {
-						// Auto-pin questions when autoQueueQuestions URL parameter is set
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					} else if (autoQueueDonations && (data.hasDonation || data.donation)) {
-						// Auto-pin questions when autoQueueQuestions URL parameter is set
-						selectedQueue.push(node);
-						node.children[0].dataset.qid = selectedQueue.length;
-						node.classList.add("queued");
-						updateQueueButton();
-					}
-					
-					if (autoPinQuestions && data.question) {
-						pinIt(node);
-					}
-					
-					if (autoPinDonations && data.hasDonation) {
-						pinIt(node);
-					}
-					
-					
-					if (data.command && doNotTTSBeep){
-						// skipp TTS
-					} else if (TTS.ttscommand && data.chatmessage && (data.textContent || data.chatmessage).includes(TTS.ttscommand+" ") && (!TTS.ttscommandmembersonly || (TTS.ttscommandmembersonly && data.membership))){
-						if (!node.classList.contains("hide")) {
-							if (waitToReveal) {
-								setTimeout(function() {
-									// Check if node still exists and is connected to DOM
-									if (node && node.isConnected && !node.classList.contains("hide")) {
-										TTS.speechMeta(data);
-									}
-								}, waitToReveal);
-							} else {
-								TTS.speechMeta(data);
-							}
+						if (data.queueme) {
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
+						} else if (selfQueue && data.chatmessage && (selfQueue.some(item => data.chatmessage.split(" ").includes(item)))) {
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton(); 
+						} else if (autoQueueQuestions && data.question) {
+							// Auto-pin questions when autoQueueQuestions URL parameter is set
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
+						} else if (autoQueueDonations && (data.hasDonation || data.donation)) {
+							// Auto-pin questions when autoQueueQuestions URL parameter is set
+							selectedQueue.push(node);
+							node.children[0].dataset.qid = selectedQueue.length;
+							node.classList.add("queued");
+							updateQueueButton();
 						}
-					} else if (TTS.speech) {
-						if (!node.classList.contains("hide")) {
-							if (waitToReveal) {
-								setTimeout(function() {
-									// Check if node still exists and is connected to DOM
-									if (node && node.isConnected && !node.classList.contains("hide")) {
-										TTS.speechMeta(data);
-									}
-								}, waitToReveal);
-							} else {
-								TTS.speechMeta(data);
-							}
+						
+						if (autoPinQuestions && data.question) {
+							pinIt(node);
 						}
-					} 
+						
+						if (autoPinDonations && data.hasDonation) {
+							pinIt(node);
+						}
+						
+						
+						if (data.command && doNotTTSBeep){
+							// skipp TTS
+						} else if (TTS.ttscommand && data.chatmessage && (data.textContent || data.chatmessage).includes(TTS.ttscommand+" ") && (!TTS.ttscommandmembersonly || (TTS.ttscommandmembersonly && data.membership))){
+							if (!node.classList.contains("hide")) {
+								if (waitToReveal) {
+									setTimeout(function() {
+										// Check if node still exists and is connected to DOM
+										if (node && node.isConnected && !node.classList.contains("hide")) {
+											TTS.speechMeta(data);
+										}
+									}, waitToReveal);
+								} else {
+									TTS.speechMeta(data);
+								}
+							}
+						} else if (TTS.speech) {
+							if (!node.classList.contains("hide")) {
+								if (waitToReveal) {
+									setTimeout(function() {
+										// Check if node still exists and is connected to DOM
+										if (node && node.isConnected && !node.classList.contains("hide")) {
+											TTS.speechMeta(data);
+										}
+									}, waitToReveal);
+								} else {
+									TTS.speechMeta(data);
+								}
+							}
+						} 
+					}
 					return node;
 				}
 				return false;

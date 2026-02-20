@@ -425,8 +425,8 @@ async function callLLMAPI(prompt, model = null, callback = null, abortController
 			callback = null;
 			break;
 		case "gemini":
-			endpoint = "https://generativelanguage.googleapis.com/v1beta/chat/completions";
-			model = model || settings.geminimodel?.textsetting || "gemini-2.0-flash";
+			endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+			model = model || settings.geminimodel?.textsetting || "gemini-2.5-flash";
 			apiKey = settings.geminiApiKey?.textsetting;
 			callback = null;
 			break;

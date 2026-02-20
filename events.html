@@ -14,6 +14,7 @@
     --card-bg: linear-gradient(145deg, #1a2a48, #162238);
     --card-shadow: rgba(0, 0, 0, 0.3);
     --scale-output: 1;
+    --topbar-background: #0009;
 }
 
 body, html {
@@ -176,22 +177,30 @@ body, html {
     background-repeat: no-repeat;
     background-size: contain;
     padding: 5px;
-    margin: 0 5px 0 0;
+    margin: 0;
     cursor: help;
     padding-left: 34px;
     border-radius: 25%;
 }
 
 #topbar {
-    display: flex;
-    margin: 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    width: max-content;
+    max-width: none;
+    margin: 0;
     text-align: center;
     position: fixed;
     right: 0;
+    left: auto;
     z-index: 999;
-    background-color: #0009;
+    background-color: var(--topbar-background, #0009);
     border-radius: 0 0 0 13px;
-    padding-left: 3px;
+    padding: 0 8px 0 3px;
+    box-sizing: border-box;
+    overflow: visible;
+    white-space: nowrap;
 }
 
 #topbar:empty {
@@ -539,6 +548,16 @@ body.light-mode .meta-value.badge {
 		}
 	}
 
+	function normalizeColorParam(value) {
+		if (typeof value !== "string") return null;
+		const trimmed = value.trim();
+		if (!trimmed) return null;
+		if (/^[0-9a-fA-F]{3,8}$/.test(trimmed)) {
+			return "#" + trimmed;
+		}
+		return trimmed;
+	}
+
     var password = "false";
     var featuredMode = false;
     
@@ -563,6 +582,10 @@ body.light-mode .meta-value.badge {
 	var fontFamily = urlParams.has("font") ? urlParams.get("font") : "Roboto";
 	var googleFont = urlParams.has("googlefont") ? urlParams.get("googlefont") : "";
 	const showViewerCount = urlParams.has("showviewercount");
+	const viewerBarBg = normalizeColorParam(urlParams.get("viewerbarbg") || urlParams.get("viewerbarbackground") || urlParams.get("topbarbg"));
+	if (viewerBarBg) {
+		document.documentElement.style.setProperty("--topbar-background", viewerBarBg);
+	}
 
 	// Apply scale if specified
 	var scale = 1;

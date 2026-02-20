@@ -4095,6 +4095,9 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 			if (request.setting == "limitedyoutubememberchat") {
 				pushSettingChange();
 			}
+			if (request.setting == "limitedtwitchmemberchat") {
+				pushSettingChange();
+			}
 			if (request.setting == "drawmode") {
 				sendWaitlistConfig(null, true);
 			}
@@ -4179,6 +4182,9 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 			if (request.setting == "capturejoinedevent") {
 				pushSettingChange();
 			} 
+			if (request.setting == "capturelikeevent") {
+				pushSettingChange();
+			}
 			if (request.setting == "bttv") {
 				if (settings.bttv) {
 					clearAllWithPrefix("uid2bttv2.twitch:");
@@ -4791,7 +4797,14 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 				(async () => {
 					try {
 						const success = await spotify.handleAuthCallback(request.code, request.state, request.redirectUri);
-						sendResponse({success: success});
+						const warning = (success && spotify && typeof spotify.consumeAuthWarning === 'function')
+							? spotify.consumeAuthWarning()
+							: null;
+						sendResponse({
+							success: success,
+							warning: warning || undefined,
+							message: warning ? `Connected to Spotify, but playback access is limited: ${warning}` : undefined
+						});
 					} catch (error) {
 						console.error("Spotify callback error:", error);
 						sendResponse({success: false, error: error.message});
@@ -4833,12 +4846,21 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 				console.log("OAuth flow result:", normalized);
 
 				if (normalized.success && normalized.alreadyConnected) {
-					sendResponse({ success: true, alreadyConnected: true });
+					sendResponse({
+						success: true,
+						alreadyConnected: true,
+						warning: normalized.warning,
+						message: normalized.message
+					});
 					return;
 				}
 
 				if (normalized.success) {
-					sendResponse({ success: true, message: normalized.message });
+					sendResponse({
+						success: true,
+						message: normalized.message,
+						warning: normalized.warning
+					});
 					return;
 				}
 
@@ -4900,29 +4922,36 @@ chrome.runtime.onMessage.addListener(async function (request, sender, sendRespon
 					
 					console.log("Parsed OAuth callback - code:", code ? "present" : "missing", "state:", state, "error:", error);
 					
-					if (error) {
-						sendResponse({success: false, error: error});
-					} else if (code) {
-						console.log("Processing Spotify callback with code...");
-						// Process the callback
-						const success = await spotify.handleAuthCallback(code, state, request.redirectUri || redirectUri);
-						console.log("Spotify callback completed, success:", success);
-						
-						if (success) {
-							// Verify tokens were saved
-							chrome.storage.local.get(['settings'], function(data) {
-								if (data.settings && data.settings.spotifyAccessToken) {
-									console.log("✅ Spotify tokens successfully saved to settings!");
-								} else {
-									console.warn("⚠️ Spotify tokens may not have been saved properly");
-								}
+						if (error) {
+							sendResponse({success: false, error: error});
+						} else if (code) {
+							console.log("Processing Spotify callback with code...");
+							// Process the callback
+							const success = await spotify.handleAuthCallback(code, state, request.redirectUri || redirectUri);
+							console.log("Spotify callback completed, success:", success);
+							const warning = (success && spotify && typeof spotify.consumeAuthWarning === 'function')
+								? spotify.consumeAuthWarning()
+								: null;
+							
+							if (success) {
+								// Verify tokens were saved
+								chrome.storage.local.get(['settings'], function(data) {
+									if (data.settings && data.settings.spotifyAccessToken) {
+										console.log("✅ Spotify tokens successfully saved to settings!");
+									} else {
+										console.warn("⚠️ Spotify tokens may not have been saved properly");
+									}
+								});
+							}
+							
+							sendResponse({
+								success: success,
+								warning: warning || undefined,
+								message: warning ? `Connected to Spotify, but playback access is limited: ${warning}` : undefined
 							});
+						} else {
+							sendResponse({success: false, error: "No authorization code found in URL"});
 						}
-						
-						sendResponse({success: success});
-					} else {
-						sendResponse({success: false, error: "No authorization code found in URL"});
-					}
 				} catch (error) {
 					console.error("Manual callback error:", error);
 					sendResponse({success: false, error: error.message || error.toString()});
@@ -8455,7 +8484,7 @@ function processHype(data) { // data here should be a chat message
     }
 
     // Handle viewer count updates separately
-    if (data.event === 'viewer_update' && data.meta) {
+    if (data.event === 'viewer_update' && ("meta" in data)) {
         updateViewerCount(data); // This updates viewers and sends combined data via its own path
         return; // Return here so it doesn't process as a chatter
     }
@@ -9578,6 +9607,13 @@ async function processIncomingRequest(request, UUID = false) { // from the dock 
 				var res = await getLastMessagesDB(request.value);
 				if (isExtensionOn) {
 					sendDataP2P({ recentHistory: res }, UUID);
+				}
+			}
+		} else if (request.action === "getHistoryBefore" && request.value) {
+			if (isExtensionOn) {
+				var res = await getMessagesBeforeDB(request.value.before, request.value.limit || 50, request.value.beforeId);
+				if (isExtensionOn) {
+					sendDataP2P({ historyBefore: res }, UUID);
 				}
 			}
 		} else if (request.action === "toggleVIPUser" && request.value && request.value.chatname && request.value.type) {
@@ -12306,36 +12342,55 @@ async function applyBotActions(data, tab = false) {
 		}
 		//console.logdata);
 		
-		if (settings.forwardcommands2twitch && data.type && (data.type !== "twitch") && !data.reflection && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid) {
-			if (!data.bot && data.chatmessage.startsWith("!")) {
-				//messageTimeout = Date.now();
-				var msg = {};
-				
-				msg.tid = data.tid;
-				msg.url = tab.url;
-				
-				msg.destination = "twitch.tv"; // sent to twitch tabs only
+		const forwardCommandDestinations = [];
+		if (settings.forwardcommands2twitch) {
+			forwardCommandDestinations.push("twitch");
+		}
+		if (settings.forwardcommands2kick) {
+			forwardCommandDestinations.push("kick");
+		}
+		if (settings.forwardcommands2youtube) {
+			forwardCommandDestinations.push("youtube");
+		}
+		if (forwardCommandDestinations.length && data.type && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid && !data.bot && data.chatmessage.startsWith("!")) {
+			let sourceType = String(data.type).toLowerCase();
+			if (sourceType === "youtube_streaming") {
+				sourceType = "youtube";
+			}
 
-				msg.response =  data.chatmessage;
+			if (data.reflection && forwardCommandDestinations.includes(sourceType)) {
+				return null;
+			}
+
+			if (!data.reflection) {
+				let commandMessage = data.chatmessage;
 				
 				if (!data.textonly){
 					var textArea = document.createElement('textarea');
-					textArea.innerHTML = msg.response;
-					msg.response = textArea.value;
+					textArea.innerHTML = commandMessage;
+					commandMessage = textArea.value;
 				}
-				msg.response = msg.response.replace(/(<([^>]+)>)/gi, "");
-				msg.response = msg.response.replace(/[#@]/g, "");
-				msg.response = msg.response.replace(/\.(?=\S(?!$))/g, " ");
-				msg.response = msg.response.trim();
+				commandMessage = commandMessage.replace(/(<([^>]+)>)/gi, "");
+				commandMessage = commandMessage.replace(/[#@]/g, "");
+				commandMessage = commandMessage.replace(/\.(?=\S(?!$))/g, " ");
+				commandMessage = commandMessage.trim();
 				
-				if (msg.response){
-					sendMessageToTabs(msg, true, data, true, false, 1000);
+				if (commandMessage){
+					for (const destination of forwardCommandDestinations) {
+						if (destination === sourceType) {
+							continue;
+						}
+
+						const msg = {
+							tid: data.tid,
+							url: tab.url,
+							destination,
+							response: commandMessage
+						};
+
+						sendMessageToTabs(msg, true, data, true, false, 1000);
+					}
 				}
-				
-			} 
-		} else if (settings.forwardcommands2twitch && data.type && (data.type === "twitch") && data.reflection && !skipRelay && data.chatmessage && data.chatname && !data.event && tab && data.tid) {
-			if (!data.bot && data.chatmessage.startsWith("!")) {
-				return null;
 			}
 		}
 

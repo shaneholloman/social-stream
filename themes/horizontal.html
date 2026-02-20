@@ -271,6 +271,19 @@ body, html {
     var hideNames = urlParams.has("hidenames") || urlParams.has("nonames");
     var hideSource = urlParams.has("hidesource");
     var textOnly = urlParams.has("textonly");
+    var fullMessage = urlParams.has("fullmessage");
+    var textWidth = urlParams.has("textwidth") ? parseInt(urlParams.get("textwidth")) : 0;
+
+    if (fullMessage) {
+        document.querySelector('style').textContent += `
+            .text { max-width: none !important; }
+            .name { max-width: none !important; }
+        `;
+    } else if (textWidth > 0) {
+        document.querySelector('style').textContent += `
+            .text { max-width: ${textWidth}px !important; }
+        `;
+    }
 
     const chatContainer = document.getElementById('chat-container');
     const messageListWrapper = document.getElementById('message-list-wrapper');

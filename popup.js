@@ -195,6 +195,14 @@ function log(msg,a,b){
 	console.log(msg,a,b);
 }
 
+function getSpotifyAuthTroubleshootingText() {
+    return 'Please ensure:\n'
+        + '1. Spotify integration is enabled\n'
+        + '2. Client ID and Secret are filled in\n'
+        + '3. Your redirect URIs are configured in Spotify app settings\n'
+        + '4. The Spotify account is Premium and listed as an authorized Development Mode user (new app limits began February 11, 2026; existing app limits began March 9, 2026).';
+}
+
 function handleSpotifyAuthResultFromBackground(result) {
 	const spotifyAuthButton = document.getElementById('spotifyAuthButton');
 	if (!spotifyAuthButton) {
@@ -274,10 +282,13 @@ function handleSpotifyAuthResultFromBackground(result) {
 			manualLinkField.value = '';
 		}
 		console.log('Spotify connected successfully.');
+        if (result?.warning) {
+            alert('Spotify connected, but playback access is limited:\n\n' + result.warning);
+        }
 	} else {
 		const errorMsg = result?.error || 'Unknown error';
 		console.error('Spotify auth failed (async result):', errorMsg);
-		alert('Failed to connect to Spotify. Error: ' + errorMsg);
+		alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\n' + getSpotifyAuthTroubleshootingText());
 	}
 }
 
@@ -509,20 +520,28 @@ if (typeof(chrome.runtime)=='undefined'){
 	const pendingCallbacks = new Map();
 	let callbackIdCounter = 0;
 	
-	chrome.runtime.sendMessage = async function(data, callback){ // every single response, is either nothing, or update()
-		if (typeof(callback) == "function") {
-			// Generate unique callback ID
-			const callbackId = ++callbackIdCounter;
-			
-			// Create promise with timeout
-			const promise = new Promise((resolve) => {
-				// Store callback with timeout
-				const timeoutId = setTimeout(() => {
-					pendingCallbacks.delete(callbackId);
-					// If timeout, get sync response as fallback
-					const response = ipcRenderer.sendSync('fromPopup', data);
-					resolve(response);
-				}, 500);
+		chrome.runtime.sendMessage = async function(data, callback){ // every single response, is either nothing, or update()
+			if (typeof(callback) == "function") {
+				// Generate unique callback ID
+				const callbackId = ++callbackIdCounter;
+				const isGetSettingsRequest = !!(data && data.cmd === "getSettings");
+				const timeoutMs = isGetSettingsRequest ? 3000 : 500;
+				
+				// Create promise with timeout
+				const promise = new Promise((resolve) => {
+					// Store callback with timeout
+					const timeoutId = setTimeout(() => {
+						pendingCallbacks.delete(callbackId);
+						if (isGetSettingsRequest) {
+							// For startup hydration, avoid forcing a synchronous fallback from potentially stale cache.
+							// Let periodic retries continue, and allow late async callback responses to update the UI.
+							resolve(undefined);
+							return;
+						}
+						// For other messages, keep sync fallback behavior.
+						const response = ipcRenderer.sendSync('fromPopup', data);
+						resolve(response);
+					}, timeoutMs);
 				
 				pendingCallbacks.set(callbackId, { 
 					callback: resolve, 
@@ -2716,51 +2735,6 @@ function update(response, sync = true) {
             document.getElementById("remote_control_url").href = baseURL + "sampleapi.html?session=" + response.streamID + password;
             // The hideLinks variable is not reset to false globally here, its state is managed by the checkbox and classList.
 
-            if ('settings' in response) {
-                setupTtsProviders(response); // Handle TTS provider setting initialization
-
-                const targetMap = getTargetMap(); // Assuming getTargetMap() is defined
-                const paramNums = Object.values(targetMap);
-
-                for (var key in response.settings) {
-                    try {
-                        if (key === "midiConfig") {
-                            if (response.settings[key]) {
-                                document.getElementById("midiConfig").classList.add("pressed");
-                                document.getElementById("midiConfig").innerText = " Config Loaded";
-                            } else {
-                                document.getElementById("midiConfig").classList.remove("pressed");
-                                document.getElementById("midiConfig").innerText = " Load Config";
-                            }
-                            continue; // Continue to next setting
-                        }
-
-                        if (typeof response.settings[key] == "object") {
-                            // Pass 'response' to handle 'mynameext' correctly within processObjectSetting
-                            processObjectSetting(key, response.settings[key], sync, paramNums, response);
-                        } else {
-                            processLegacySetting(key, response.settings[key], sync);
-                        }
-                    } catch (e) {
-                        console.error(`Error processing setting ${key}:`, e);
-                    }
-                }
-
-                if ("translation" in response.settings) {
-                    translation = response.settings["translation"];
-                    miniTranslate(document.body); // Assuming miniTranslate is defined
-                }
-            }
-
-            createTabsFromSettings(response); // Assuming createTabsFromSettings is defined
-
-            // Check if MIDI is enabled and initialize if needed
-            const midiCheckbox = document.querySelector('input[data-setting="midi"]');
-            if (midiCheckbox && midiCheckbox.checked) {
-                // MIDI was enabled in settings, initialize the dropdown
-                handleMidiToggle(true);
-            }
-
             // Refresh all page links.
             refreshLinks();
 
@@ -2802,6 +2776,51 @@ function update(response, sync = true) {
 
             } catch (e) {
                 console.error("Error cleaning TTS params from links:", e);
+            }
+        }
+
+        if ('settings' in response && (response.streamID || ssapp)) {
+            setupTtsProviders(response); // Handle TTS provider setting initialization
+
+            const targetMap = getTargetMap(); // Assuming getTargetMap() is defined
+            const paramNums = Object.values(targetMap);
+
+            for (var key in response.settings) {
+                try {
+                    if (key === "midiConfig") {
+                        if (response.settings[key]) {
+                            document.getElementById("midiConfig").classList.add("pressed");
+                            document.getElementById("midiConfig").innerText = " Config Loaded";
+                        } else {
+                            document.getElementById("midiConfig").classList.remove("pressed");
+                            document.getElementById("midiConfig").innerText = " Load Config";
+                        }
+                        continue; // Continue to next setting
+                    }
+
+                    if (typeof response.settings[key] == "object") {
+                        // Pass 'response' to handle 'mynameext' correctly within processObjectSetting
+                        processObjectSetting(key, response.settings[key], sync, paramNums, response);
+                    } else {
+                        processLegacySetting(key, response.settings[key], sync);
+                    }
+                } catch (e) {
+                    console.error(`Error processing setting ${key}:`, e);
+                }
+            }
+
+            if ("translation" in response.settings) {
+                translation = response.settings["translation"];
+                miniTranslate(document.body); // Assuming miniTranslate is defined
+            }
+
+            createTabsFromSettings(response); // Assuming createTabsFromSettings is defined
+
+            // Check if MIDI is enabled and initialize if needed
+            const midiCheckbox = document.querySelector('input[data-setting="midi"]');
+            if (midiCheckbox && midiCheckbox.checked) {
+                // MIDI was enabled in settings, initialize the dropdown
+                handleMidiToggle(true);
             }
         }
 
@@ -3647,7 +3666,7 @@ function handleElementParam(ele, targetId, paramType, sync, value = null) {
     return true;
 }
 function handleExclusiveCases(ele, paramType, paramValue, sync) {
-    const exclusiveTypes = ['param1', 'param4', 'param5'];
+    const exclusiveTypes = ['param1', 'param4', 'param5', 'param13'];
     if (!exclusiveTypes.includes(paramType)) return;
 
     // Handle exclusive settings like darkmode/lightmode
@@ -3660,11 +3679,19 @@ function handleExclusiveCases(ele, paramType, paramValue, sync) {
         },
         param4: {
             'alignright': 'align=center',
-            'align=center': 'alignright'
+            'align=center': 'alignright',
+            'transparent': 'pagebg',
+            'pagebg': 'transparent'
         },
         param5: {
             'alignright': 'aligncenter',
-            'aligncenter': 'alignright'
+            'aligncenter': 'alignright',
+            'transparent': 'pagebg',
+            'pagebg': 'transparent'
+        },
+        param13: {
+            'nobg': 'pagebg',
+            'pagebg': 'nobg'
         }
     };
 
@@ -3707,6 +3734,15 @@ function handleTextParam(ele, targetId, paramType, sync) {
     // Check if there's a corresponding checkbox
     const checkboxSelector = `input[data-param${paramNum}='${paramValue}']`;
     const checkbox = document.querySelector(checkboxSelector);
+
+    // For color text params with paired checkboxes, auto-toggle so users don't need two steps.
+    if (sync && checkbox && (paramValue === 'viewerbarbg' || paramValue === 'pagebg' || paramValue === 'bgcolor')) {
+        const hasTextValue = Boolean((ele.value || '').trim());
+        if (checkbox.checked !== hasTextValue) {
+            checkbox.checked = hasTextValue;
+            updateSettings(checkbox, sync);
+        }
+    }
     
     // Only modify URL if there's no checkbox, or if checkbox exists and is checked
     if (!checkbox || checkbox.checked) {
@@ -7070,20 +7106,20 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			const response = await sendSpotifyCommand({ cmd: "spotifyAuth" });
 			handleSpotifyAuthResponse(response);
 			
-			function handleSpotifyAuthResponse(response) {
-				console.log('Spotify auth response received:', response);
-				spotifyAuthButton.disabled = false;
-				const callbackDiv = document.getElementById('spotifyCallbackDiv');
-				const manualLinkContainer = document.getElementById('spotifyManualLinkContainer');
-				const manualLinkField = document.getElementById('spotifyManualAuthUrl');
-				
-				if (response && response.success) {
-					spotifyAuthStatus.style.display = 'inline';
-					spotifyAuthButton.querySelector('span').textContent = '🔄 Reconnect';
-					if (spotifySignOutButton) {
-						spotifySignOutButton.style.display = 'inline-block';
-					}
-					// Hide manual callback input on success
+				function handleSpotifyAuthResponse(response) {
+					console.log('Spotify auth response received:', response);
+					spotifyAuthButton.disabled = false;
+					const callbackDiv = document.getElementById('spotifyCallbackDiv');
+					const manualLinkContainer = document.getElementById('spotifyManualLinkContainer');
+					const manualLinkField = document.getElementById('spotifyManualAuthUrl');
+
+					if (response && response.success) {
+						spotifyAuthStatus.style.display = 'inline';
+						spotifyAuthButton.querySelector('span').textContent = '🔄 Reconnect';
+						if (spotifySignOutButton) {
+							spotifySignOutButton.style.display = 'inline-block';
+						}
+
 						if (callbackDiv) {
 							callbackDiv.style.display = 'none';
 							document.getElementById('spotifyCallbackInput').value = '';
@@ -7094,27 +7130,30 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 								manualLinkField.value = '';
 							}
 						}
-					// Show success message if already connected
+
 						if (response.alreadyConnected) {
 							console.log('Already connected to Spotify');
 						} else if (response.message && response.message.includes('authorization')) {
-							// For SSAPP, the OAuth window opened - wait for callback
-						console.log('OAuth window opened - waiting for authorization');
-						spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
-						// Show manual input as backup after 5 seconds
-						if (window.ssapp && callbackDiv) {
-							setTimeout(() => {
-								if (!spotifyAuthStatus.style.display || spotifyAuthStatus.style.display === 'none') {
-									callbackDiv.style.display = 'block';
-									console.log('If the authorization window is stuck, you can paste the callback URL manually.');
-								}
-							}, 5000);
+							// For SSAPP, the OAuth window opened - wait for callback.
+							console.log('OAuth window opened - waiting for authorization');
+							spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
+							if (window.ssapp && callbackDiv) {
+								setTimeout(() => {
+									if (!spotifyAuthStatus.style.display || spotifyAuthStatus.style.display === 'none') {
+										callbackDiv.style.display = 'block';
+										console.log('If the authorization window is stuck, you can paste the callback URL manually.');
+									}
+								}, 5000);
+							}
 						}
-					}
-				} else if (response?.waitingForManualCallback || response?.waitingForCallback) {
-					spotifyAuthButton.disabled = true;
-					const waitingForManual = !!response.waitingForManualCallback;
-					spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
+
+						if (response?.warning) {
+							alert('Spotify connected, but playback access is limited:\n\n' + response.warning);
+						}
+					} else if (response?.waitingForManualCallback || response?.waitingForCallback) {
+						spotifyAuthButton.disabled = true;
+						const waitingForManual = !!response.waitingForManualCallback;
+						spotifyAuthButton.querySelector('span').textContent = '⏳ Waiting for authorization...';
 
 						if (callbackDiv) {
 							callbackDiv.style.display = waitingForManual ? 'block' : 'none';
@@ -7152,34 +7191,33 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 						spotifyAuthButton.querySelector('span').textContent = '🔗 Connect to Spotify';
 						const errorMsg = response?.error || 'Unknown error';
 						console.error('Spotify auth failed:', errorMsg);
-					
-					// Show manual callback input if the background specifically asked for manual completion
-					if (callbackDiv && (response?.needsManualCallback || response?.waitingForManualCallback)) {
-						callbackDiv.style.display = 'block';
-						console.log('Please paste the callback URL manually.');
-					}
 
-					if (manualLinkContainer) {
-						if (response?.manualAuthUrl) {
-							manualLinkContainer.style.display = 'block';
-							if (manualLinkField) {
-								manualLinkField.value = response.manualAuthUrl;
-							}
-						} else {
-							manualLinkContainer.style.display = 'none';
-							if (manualLinkField) {
-								manualLinkField.value = '';
+						// Show manual callback input if the background specifically asked for manual completion.
+						if (callbackDiv && (response?.needsManualCallback || response?.waitingForManualCallback)) {
+							callbackDiv.style.display = 'block';
+							console.log('Please paste the callback URL manually.');
+						}
+
+						if (manualLinkContainer) {
+							if (response?.manualAuthUrl) {
+								manualLinkContainer.style.display = 'block';
+								if (manualLinkField) {
+									manualLinkField.value = response.manualAuthUrl;
+								}
+							} else {
+								manualLinkContainer.style.display = 'none';
+								if (manualLinkField) {
+									manualLinkField.value = '';
+								}
 							}
 						}
-					}
-					
-					// Only show alert if not already connected
-					if (errorMsg !== 'Already connected') {
-						alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\nPlease ensure:\n1. Spotify integration is enabled\n2. Client ID and Secret are filled in\n3. Your redirect URIs are configured in Spotify app settings');
+
+						if (errorMsg !== 'Already connected') {
+							alert('Failed to connect to Spotify. Error: ' + errorMsg + '\n\n' + getSpotifyAuthTroubleshootingText());
+						}
 					}
 				}
-			}
-		});
+			});
 	}
 	
 	// Spotify Sign Out Button
@@ -7237,7 +7275,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		chrome.runtime.sendMessage({cmd: "getSettings"}, (response) => {
 			chrome.runtime.lastError;
 			log("getSettings response",response);
-			if ((response == undefined) || (!response.streamID)){
+			const hasSession = !!(response && response.streamID);
+			const hasSettingsPayload = !!(response && response.settings);
+			const ready = hasSession || (ssapp && hasSettingsPayload);
+			if (!ready){
 				// keep polling
 			} else {
 				clearInterval(initialSetup);
@@ -7250,7 +7291,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 	chrome.runtime.sendMessage({cmd: "getSettings"}, (response) => {
 		chrome.runtime.lastError;
 		log("getSettings response",response);
-		if ((response == undefined) || (!response.streamID)){
+		const hasSession = !!(response && response.streamID);
+		const hasSettingsPayload = !!(response && response.settings);
+		const ready = hasSession || (ssapp && hasSettingsPayload);
+		if (!ready){
 			
 		} else {
 			clearInterval(initialSetup);

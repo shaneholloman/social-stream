@@ -212,6 +212,8 @@ const extension = {
 };
 
 const WSS_PLATFORM = 'kick';
+const KICK_VIEWER_HEARTBEAT_INTERVAL_MS = 30000;
+const KICK_VIEWER_DISCONNECT_EMIT_DEBOUNCE_MS = 1500;
 let extensionInitialized = false;
 let lastBridgeNotifyStatus = null;
 let lastAuthNotifyStatus = null;
@@ -220,6 +222,16 @@ let socketBridgeInitialized = false;
 let kickWsEventLogCount = 0;
 let kickWsLastEventLogAt = 0;
 const ignoredEventTypesLogged = new Set();
+const kickViewerHeartbeat = {
+    intervalId: null,
+    pollInFlight: false,
+    lastKnownCount: 0,
+    hasKnownCount: false,
+    hadConnectedTransport: false,
+    isLive: null,
+    lastSentAt: 0,
+    lastPollErrorAt: 0
+};
 
 const LITE_MESSAGE_PREFIX = 'kick-lite-';
 let liteBridgeCoreReady = false;
@@ -276,6 +288,17 @@ function getLiteStatusSnapshot() {
     };
 }
 
+function normalizeKickChatType(value) {
+    if (typeof value !== 'string') {
+        return 'user';
+    }
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'bot' || normalized === 'userbot') {
+        return 'bot';
+    }
+    return 'user';
+}
+
 function notifyLiteStatus(reason) {
     if (!isLiteEmbedded()) return;
     sendLiteMessage('kick-lite-status', { status: getLiteStatusSnapshot(), reason });
@@ -308,7 +331,7 @@ function applyLiteConfig(message) {
         }
     }
     if (typeof message.chatType === 'string' && message.chatType.trim()) {
-        const next = message.chatType.trim();
+        const next = normalizeKickChatType(message.chatType);
         if (next !== state.chat.type) {
             state.chat.type = next;
             changed = true;
@@ -1545,6 +1568,7 @@ function initElements() {
         startAuth: q('start-auth'),
         signOut: q('sign-out'),
         channelLabel: q('channel-label'),
+        viewerCount: q('viewer-count'),
         eventLog: q('event-log'),
         chatFeed: q('chat-feed'),
         chatFeedEmpty: q('chat-feed-empty'),
@@ -1588,6 +1612,7 @@ function setChannelSlug(value, options = {}) {
         state.channelId = null;
         state.lastResolvedSlug = '';
         state.autoStart.lastSlug = '';
+        resetKickViewerHeartbeatState();
         resetThirdPartyEmoteCache();
         resetChatFeed();
     } else {
@@ -1640,7 +1665,7 @@ function loadConfig() {
             state.socket.allowProxy = cfg.allowProxy;
         }
         if (cfg.chatType) {
-            state.chat.type = cfg.chatType;
+            state.chat.type = normalizeKickChatType(cfg.chatType);
         }
     } catch (err) {
         console.error('Failed to load Kick config', err);
@@ -1770,6 +1795,9 @@ function persistTokens() {
 }
 
 function signOut() {
+    disconnectBridge();
+    void disconnectLocalSocket();
+    resetKickViewerHeartbeatState();
     // Clear tokens
     state.tokens = null;
     state.authUser = null;
@@ -1871,7 +1899,9 @@ function updateInputsFromState() {
         }
     }
     if (els.chatType) {
-        els.chatType.value = state.chat?.type || 'user';
+        const normalizedType = normalizeKickChatType(state.chat?.type);
+        state.chat.type = normalizedType;
+        els.chatType.value = normalizedType;
     }
     if (els.chatStatus) {
         els.chatStatus.textContent = '';
@@ -1988,7 +2018,8 @@ function bindEvents() {
     }
     if (els.chatType) {
         els.chatType.addEventListener('change', () => {
-            state.chat.type = els.chatType.value;
+            state.chat.type = normalizeKickChatType(els.chatType.value);
+            els.chatType.value = state.chat.type;
             persistConfig();
         });
     }
@@ -2039,7 +2070,283 @@ function supportsLocalSocket() {
     return !!(window.ninjafy && typeof window.ninjafy.startKickWebSocket === 'function');
 }
 
+function parseViewerCountCandidate(candidate) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        return Math.max(0, Math.floor(candidate));
+    }
+    if (typeof candidate === 'string') {
+        const digits = candidate.replace(/[^0-9]/g, '');
+        if (!digits) {
+            return null;
+        }
+        const parsed = parseInt(digits, 10);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+    return null;
+}
+
+function extractKickViewerCount(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+    const viewerCountCandidates = [
+        payload?.number_viewers,
+        payload?.viewer_count,
+        payload?.viewers,
+        payload?.viewerCount,
+        payload?.concurrent_viewers,
+        payload?.concurrent,
+        payload?.data?.number_viewers,
+        payload?.data?.viewer_count,
+        payload?.data?.viewers,
+        payload?.meta?.viewer_count,
+        payload?.meta?.viewers,
+        payload?.summary?.viewer_count,
+        payload?.summary?.viewers,
+        payload?.channel?.viewer_count,
+        payload?.channel?.viewers_count,
+        payload?.channel?.viewers,
+        payload?.livestream?.number_viewers,
+        payload?.livestream?.viewer_count,
+        payload?.livestream?.viewers,
+        payload?.stream?.number_viewers,
+        payload?.stream?.viewer_count,
+        payload?.stream?.viewers,
+        payload?.data?.livestream?.number_viewers,
+        payload?.data?.livestream?.viewer_count,
+        payload?.data?.livestream?.viewers
+    ];
+    for (const candidate of viewerCountCandidates) {
+        const normalized = parseViewerCountCandidate(candidate);
+        if (normalized != null) {
+            return normalized;
+        }
+    }
+    return null;
+}
+
+function extractKickLiveFlag(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return null;
+    }
+    const liveCandidates = [
+        payload?.is_live,
+        payload?.isLive,
+        payload?.online,
+        payload?.status,
+        payload?.stream_status,
+        payload?.data?.is_live,
+        payload?.data?.isLive,
+        payload?.data?.online,
+        payload?.data?.status,
+        payload?.data?.stream_status,
+        payload?.livestream?.is_live,
+        payload?.livestream?.isLive,
+        payload?.livestream?.online,
+        payload?.livestream?.status,
+        payload?.stream?.is_live,
+        payload?.stream?.isLive,
+        payload?.stream?.online,
+        payload?.stream?.status,
+        payload?.data?.livestream?.is_live,
+        payload?.data?.livestream?.isLive,
+        payload?.data?.livestream?.online,
+        payload?.data?.livestream?.status
+    ];
+    for (const candidate of liveCandidates) {
+        if (typeof candidate === 'boolean') {
+            return candidate;
+        }
+        if (typeof candidate === 'number') {
+            if (candidate === 1) return true;
+            if (candidate === 0) return false;
+        }
+        if (typeof candidate === 'string') {
+            const value = candidate.trim().toLowerCase();
+            if (!value) {
+                continue;
+            }
+            if (['live', 'online', 'started', 'active', 'on'].includes(value)) {
+                return true;
+            }
+            if (['offline', 'ended', 'stopped', 'inactive', 'off'].includes(value)) {
+                return false;
+            }
+        }
+    }
+    return null;
+}
+
+function isKickViewerTransportConnected() {
+    return state.bridge?.status === 'connected' || state.socket?.status === 'connected';
+}
+
+function shouldRunKickViewerHeartbeat() {
+    if (!state.channelSlug) {
+        return false;
+    }
+    if (!isKickViewerTransportConnected()) {
+        return false;
+    }
+    // Explicit offline status pauses heartbeat until we get a live/unknown state again.
+    return kickViewerHeartbeat.isLive !== false;
+}
+
+function updateKickViewerCountDisplay(count) {
+    if (!els.viewerCount) {
+        return;
+    }
+    if (!Number.isFinite(count)) {
+        els.viewerCount.textContent = 'Viewers: —';
+        els.viewerCount.className = 'status-chip warning';
+        return;
+    }
+    const normalizedCount = Math.max(0, Math.floor(count));
+    els.viewerCount.textContent = `Viewers: ${normalizedCount}`;
+    els.viewerCount.className = normalizedCount > 0 ? 'status-chip' : 'status-chip warning';
+}
+
+function emitKickViewerUpdate(count) {
+    const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    kickViewerHeartbeat.lastKnownCount = normalizedCount;
+    kickViewerHeartbeat.hasKnownCount = true;
+    kickViewerHeartbeat.lastSentAt = Date.now();
+    updateKickViewerCountDisplay(normalizedCount);
+    pushMessage({
+        type: 'kick',
+        event: 'viewer_update',
+        meta: normalizedCount
+    });
+    return normalizedCount;
+}
+
+async function fetchKickViewerSnapshot() {
+    const slugInput = state.channelSlug?.trim();
+    if (!slugInput || !state.tokens?.access_token) {
+        return null;
+    }
+    const slugLower = normalizeChannel(slugInput);
+    if (!slugLower) {
+        return null;
+    }
+    const params = new URLSearchParams({ slug: slugLower });
+    const data = await apiFetch(`/public/v1/channels?${params.toString()}`);
+    const entries = Array.isArray(data?.data) ? data.data : [];
+    const channel = entries.find(item => normalizeChannel(item?.slug) === slugLower) || entries[0];
+    if (!channel || typeof channel !== 'object') {
+        return null;
+    }
+    return {
+        viewerCount: extractKickViewerCount(channel),
+        isLive: extractKickLiveFlag(channel)
+    };
+}
+
+async function sendKickViewerHeartbeat(reason = 'interval') {
+    if (!shouldRunKickViewerHeartbeat()) {
+        return;
+    }
+    if (kickViewerHeartbeat.pollInFlight) {
+        return;
+    }
+    kickViewerHeartbeat.pollInFlight = true;
+    try {
+        let nextViewerCount = null;
+        const snapshot = await fetchKickViewerSnapshot();
+        if (snapshot) {
+            if (typeof snapshot.isLive === 'boolean') {
+                kickViewerHeartbeat.isLive = snapshot.isLive;
+            }
+            if (snapshot.viewerCount != null) {
+                nextViewerCount = snapshot.viewerCount;
+            } else if (kickViewerHeartbeat.isLive === false) {
+                nextViewerCount = 0;
+            }
+        }
+        if (nextViewerCount == null) {
+            nextViewerCount = kickViewerHeartbeat.hasKnownCount ? kickViewerHeartbeat.lastKnownCount : 0;
+        }
+        emitKickViewerUpdate(nextViewerCount);
+    } catch (err) {
+        const now = Date.now();
+        if (!kickViewerHeartbeat.lastPollErrorAt || now - kickViewerHeartbeat.lastPollErrorAt > 120000) {
+            kickViewerHeartbeat.lastPollErrorAt = now;
+            logKickWs(`Viewer heartbeat fallback (${reason}): ${err?.message || err}`, 'warning');
+        }
+        const fallbackCount = kickViewerHeartbeat.hasKnownCount ? kickViewerHeartbeat.lastKnownCount : 0;
+        emitKickViewerUpdate(fallbackCount);
+    } finally {
+        kickViewerHeartbeat.pollInFlight = false;
+        if (!shouldRunKickViewerHeartbeat()) {
+            syncKickViewerHeartbeat(false);
+        }
+    }
+}
+
+function syncKickViewerHeartbeat(emitZeroOnStop = false) {
+    const transportConnected = isKickViewerTransportConnected();
+    if (transportConnected) {
+        kickViewerHeartbeat.hadConnectedTransport = true;
+    }
+    const shouldRun = shouldRunKickViewerHeartbeat();
+    if (shouldRun) {
+        if (!kickViewerHeartbeat.intervalId) {
+            kickViewerHeartbeat.intervalId = setInterval(() => {
+                void sendKickViewerHeartbeat('interval');
+            }, KICK_VIEWER_HEARTBEAT_INTERVAL_MS);
+        }
+        if (
+            !kickViewerHeartbeat.lastSentAt ||
+            (Date.now() - kickViewerHeartbeat.lastSentAt) >= KICK_VIEWER_HEARTBEAT_INTERVAL_MS
+        ) {
+            void sendKickViewerHeartbeat('start');
+        }
+        return;
+    }
+
+    if (kickViewerHeartbeat.intervalId) {
+        clearInterval(kickViewerHeartbeat.intervalId);
+        kickViewerHeartbeat.intervalId = null;
+    }
+
+    if (emitZeroOnStop && !transportConnected) {
+        const hadSession = kickViewerHeartbeat.hadConnectedTransport || kickViewerHeartbeat.hasKnownCount;
+        const now = Date.now();
+        const shouldEmitDisconnectZero =
+            hadSession &&
+            (
+                !kickViewerHeartbeat.lastSentAt ||
+                (now - kickViewerHeartbeat.lastSentAt) > KICK_VIEWER_DISCONNECT_EMIT_DEBOUNCE_MS ||
+                kickViewerHeartbeat.lastKnownCount !== 0
+            );
+        if (shouldEmitDisconnectZero) {
+            emitKickViewerUpdate(0);
+        }
+        kickViewerHeartbeat.hadConnectedTransport = false;
+        // Disconnect means unknown state; allow heartbeat to resume on reconnect.
+        kickViewerHeartbeat.isLive = null;
+    }
+}
+
+function resetKickViewerHeartbeatState() {
+    if (kickViewerHeartbeat.intervalId) {
+        clearInterval(kickViewerHeartbeat.intervalId);
+        kickViewerHeartbeat.intervalId = null;
+    }
+    kickViewerHeartbeat.pollInFlight = false;
+    kickViewerHeartbeat.lastKnownCount = 0;
+    kickViewerHeartbeat.hasKnownCount = false;
+    kickViewerHeartbeat.hadConnectedTransport = false;
+    kickViewerHeartbeat.isLive = null;
+    kickViewerHeartbeat.lastSentAt = 0;
+    kickViewerHeartbeat.lastPollErrorAt = 0;
+    updateKickViewerCountDisplay(null);
+}
+
 function updateSocketState(payload = {}) {
+    syncKickViewerHeartbeat(true);
     if (!els.socketState) return;
     if (!supportsLocalSocket()) {
         // Hide socket status in browser - it's only relevant for desktop app
@@ -2156,6 +2463,7 @@ async function connectLocalSocket(force = false) {
 
     state.socket.connecting = true;
     state.socket.status = 'connecting';
+    kickViewerHeartbeat.isLive = null;
     updateSocketState({ status: 'connecting' });
     if (!state.tokens?.access_token) {
         logKickWs('No Kick access token found for socket lookup.', 'warning');
@@ -3113,6 +3421,7 @@ function connectBridge() {
         const source = new EventSource(bridgeUrl, { withCredentials: false });
         state.bridge.source = source;
         state.bridge.status = 'connecting';
+        kickViewerHeartbeat.isLive = null;
         updateBridgeState();
 
         source.onopen = () => {
@@ -3366,6 +3675,7 @@ function bridgeEventMatchesCurrentChannel(packet) {
 }
 
 function updateBridgeState() {
+    syncKickViewerHeartbeat(true);
     if (!els.bridgeState) return;
     if (state.bridge.status === 'connected') {
         els.bridgeState.textContent = 'Bridge connected';
@@ -4197,7 +4507,9 @@ function forwardSupportEvent(eventType, evt, bridgeMeta) {
 }
 
 function forwardLiveStatus(evt, bridgeMeta) {
-    const isLive = Boolean(evt?.is_live);
+    const explicitLiveState = extractKickLiveFlag(evt);
+    const isLive = explicitLiveState === true || evt?.is_live === true;
+    const hasExplicitOffline = explicitLiveState === false || evt?.is_live === false;
     const chatname = 'Kick';
     const chatmessage = isLive ? 'Stream is now LIVE' : 'Stream is now OFFLINE';
     pushMessage({
@@ -4207,8 +4519,30 @@ function forwardLiveStatus(evt, bridgeMeta) {
         chatmessage: escapeHtml(chatmessage),
         meta: evt
     });
+
+    if (typeof explicitLiveState === 'boolean') {
+        kickViewerHeartbeat.isLive = explicitLiveState;
+    } else if (evt?.is_live === true) {
+        kickViewerHeartbeat.isLive = true;
+    } else if (evt?.is_live === false) {
+        kickViewerHeartbeat.isLive = false;
+    }
+
+    let viewerTotal = extractKickViewerCount(evt);
+    if (hasExplicitOffline) {
+        viewerTotal = 0;
+    }
+    if (viewerTotal != null) {
+        emitKickViewerUpdate(viewerTotal);
+    }
+    syncKickViewerHeartbeat(false);
+
     const prefix = bridgeMeta?.verified === false ? '[LIVE ⚠]' : '[LIVE]';
-    log(`${prefix} ${isLive ? 'Online' : 'Offline'}`);
+    if (viewerTotal != null) {
+        log(`${prefix} ${isLive ? 'Online' : 'Offline'} • ${viewerTotal} viewers`);
+    } else {
+        log(`${prefix} ${isLive ? 'Online' : 'Offline'}`);
+    }
 }
 
 function updateChatSendingState(flag) {
@@ -4268,7 +4602,7 @@ async function sendChatMessage() {
     if (state.chat.sending) {
         return;
     }
-    const messageType = els.chatType ? els.chatType.value : state.chat.type || 'user';
+    const messageType = normalizeKickChatType(els.chatType ? els.chatType.value : state.chat.type || 'user');
     state.chat.type = messageType;
     persistConfig();
     try {
@@ -4280,7 +4614,7 @@ async function sendChatMessage() {
             payload.broadcaster_user_id = channelId;
             payload.type = 'user';
         } else {
-            payload.type = 'userbot';
+            payload.type = 'bot';
         }
         const response = await apiFetch('/public/v1/chat', {
             method: 'POST',

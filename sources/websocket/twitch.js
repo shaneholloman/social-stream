@@ -650,6 +650,7 @@ let getViewerCountInterval = null;
 let getFollowersInterval = null;
 let getSubscribersInterval = null;
 let tokenValidationInterval = null;
+const TWITCH_VIEWER_POLL_INTERVAL_MS = 30000;
 let badges = null;
 
 	async function ensureTmiClient() {
@@ -881,7 +882,7 @@ async function ensureChatClientInstance() {
 
 			getViewerCount(channel);
 			clearInterval(getViewerCountInterval);
-			getViewerCountInterval = setInterval(() => getViewerCount(channel), 60000);
+			getViewerCountInterval = setInterval(() => getViewerCount(channel), TWITCH_VIEWER_POLL_INTERVAL_MS);
 
 			clearInterval(tokenValidationInterval);
 			tokenValidationInterval = setInterval(async () => {
@@ -1047,7 +1048,7 @@ async function ensureChatClientInstance() {
 			});
 			return;
 		}
-		if (!settings.captureevents) {
+		if (settings.hideevents) {
 			return;
 		}
 		const notice = convertMembershipPayloadToUserNotice(payload);
@@ -1055,7 +1056,7 @@ async function ensureChatClientInstance() {
 	}
 
 	async function handleNormalizedRaid(payload) {
-		if (!payload || !settings.captureevents) {
+		if (!payload || settings.hideevents) {
 			return;
 		}
 		const tags = {
@@ -1786,6 +1787,9 @@ async function ensureChatClientInstance() {
 		try {
 		//console.log("Processing message:", parsedMessage);
 		const normalizedPayload = parsedMessage.__normalizedPayload || null;
+		const normalizedEventType = normalizedPayload?.event;
+		const normalizedEventTypeLower =
+			typeof normalizedEventType === 'string' ? normalizedEventType.toLowerCase() : '';
 		const user = parsedMessage.prefix.split('!')[0];
 		const message = normalizedPayload?.rawMessage ?? parsedMessage.trailing;
 		// Clean channel name from params (remove # prefix)
@@ -1815,8 +1819,20 @@ async function ensureChatClientInstance() {
 			});
 		}
 		
+		const isSubscriptionNoticeContext =
+			normalizedEventTypeLower === 'resub' ||
+			normalizedEventTypeLower === 'new_subscriber' ||
+			normalizedEventTypeLower === 'subscription_gift' ||
+			normalizedEventTypeLower === 'sub' ||
+			normalizedEventTypeLower === 'subscribe' ||
+			normalizedEventTypeLower === 'subgift' ||
+			normalizedEventTypeLower === 'submysterygift' ||
+			normalizedEventTypeLower === 'anonsubmysterygift' ||
+			normalizedEventTypeLower === 'anonsubgift';
+		const markSubscriberAsMembership = !!subscriber && (!settings.limitedtwitchmemberchat || isSubscriptionNoticeContext);
+
 		// Apply member chat only filter if enabled
-		if (settings.memberchatonly && !subscriber) {
+		if (settings.memberchatonly && !markSubscriberAsMembership) {
 			return;
 		}
 		
@@ -1874,9 +1890,6 @@ async function ensureChatClientInstance() {
 		}
 
 		var data = {};
-		const normalizedEventType = normalizedPayload?.event;
-		const normalizedEventTypeLower =
-			typeof normalizedEventType === 'string' ? normalizedEventType.toLowerCase() : '';
 		// Chat messages must never set data.event; reserve it for true system events (raids, cheers, /me actions, etc.).
 		if (normalizedEventType && normalizedEventTypeLower !== 'message' && normalizedEventTypeLower !== 'chat') {
 			data.event = normalizedEventType;
@@ -1921,7 +1934,7 @@ async function ensureChatClientInstance() {
 			data.chatmessage = replaceEmotesWithImages(message, twitchEmotes, isBitMessage);
 		}
 		
-		data.membership = subscriber;
+		data.membership = markSubscriberAsMembership ? subscriber : "";
 		data.subtitle = subtitle;
 		data.mod = mod;
 
@@ -2004,6 +2017,9 @@ async function ensureChatClientInstance() {
 			case 'resub':
 				eventData.chatmessage = systemMsg;
 				eventData.event = msgId === 'sub' ? 'new_subscriber' : 'resub';
+				if (settings.limitedtwitchmemberchat) {
+					eventData.membership = "Subscriber";
+				}
 				if (parsedMessage.trailing) {
 					eventData.chatmessage += " - " + parsedMessage.trailing;
 				}
@@ -2011,9 +2027,15 @@ async function ensureChatClientInstance() {
 				break;
 				
 			case 'subgift':
+			case 'anonsubgift':
+			case 'submysterygift':
+			case 'anonsubmysterygift':
 				eventData.chatmessage = systemMsg;
 				eventData.event = 'subscription_gift';
-				addEvent(`Gift Sub: ${displayName}`);
+				if (settings.limitedtwitchmemberchat) {
+					eventData.membership = "Subscriber";
+				}
+				addEvent(`Gift Sub: ${displayName || 'Anonymous'}`);
 				break;
 				
 			default:
@@ -2697,8 +2719,8 @@ async function cleanupCurrentConnection() {
 		const event = payload.event;
 		const subscription = payload.subscription;
 		
-		// Skip if captureevents is disabled
-		if (!settings.captureevents) {
+		// Skip if hideevents is enabled
+		if (settings.hideevents) {
 			return;
 		}
 
@@ -2731,6 +2753,7 @@ async function cleanupCurrentConnection() {
 			pushMessage({
 				type: "twitch",
 				event: 'new_subscriber',
+				membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 				chatmessage: subscribeMessage,
 				chatname: event.user_name,
 				userid: event.user_id,
@@ -2751,6 +2774,7 @@ async function cleanupCurrentConnection() {
 				pushMessage({
 					type: 'twitch',
 					event: 'resub',
+					membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 					chatname: event.user_name,
 					userid: event.user_id,
 					chatmessage: event.message?.text || `${event.user_name} resubscribed`,
@@ -2769,6 +2793,7 @@ async function cleanupCurrentConnection() {
 				pushMessage({
 					type: "twitch",
 					event: 'subscription_gift',
+					membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 					chatname: event.user_name,
 					chatmessage: `${event.user_name} has gifted ${event.total} tier ${event.tier} subs!`,
 					userid: event.user_id,

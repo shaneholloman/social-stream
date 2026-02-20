@@ -1945,6 +1945,20 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="show-viewer-count">🔢 Show viewer count per source; top-right</span>
                                 </div>
+								<div title="Set the top-right viewer count bar background color. Supports hex, rgba, and named colors." data-keywords="viewer bar topbar background color theme dock style">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="viewerbarbg" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🎨 Custom viewer bar background color</span>
+                                </div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+										<input type="text" id="dock_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam1="viewerbarbg" data-palette="dock_viewerbarbg_palette" />
+										<label for="dock_viewerbarbg">&gt; Viewer bar background color</label>
+									</div>
+									<input type="color" data-color="dock_viewerbarbg" id="dock_viewerbarbg_palette" class="colorPicker" title="Pick a viewer bar background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
 
                                 <div title="Another Social Stream page MUST be added to OBS with page permissions set to 'Read access to user information' or higher." data-keywords="obs remote scene indicator status corner preview permissions">
                                     <label class="switch">
@@ -2108,6 +2122,13 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <span data-translate="loadlast">🗄️ Load last ~30-msgs from the database on load </span>									
+                                </div>
+								<div data-keywords="history browse older messages scroll back archive">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="history" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🕰️ Enable history browsing (scroll up to load older messages)</span>									
                                 </div>
 								
                                 <div data-keywords="auto show feature highlight spotlight select queue">
@@ -3105,6 +3126,13 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="blur-instead">🌫️ Just blur messages from hidden sources</span>
                                 </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="noblur" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🧼 Never blur hidden or timed-out messages</span>
+                                </div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param1="branded" />
@@ -3453,95 +3481,7 @@ input:checked + .slider:before {
 									<input type="number" step="0.5" min="0" id="dock_glow_width" class="textInput instant" autocomplete="off" placeholder="e.g. 12" data-textparam1="glowwidth" />
 									<label for="dock_glow_width">&gt; Glow size / softness (px, default 10)</label>
 								</div>
-								<h3 data-translate="background-shading">Background Shading for Messages</h3>
-                                <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="hideshadow" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-alternating-background-shading">⭕👥 No alternating background shading </span>
-                                </div>
-                                <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="nomemberhighlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-members">⭕👤 No background shading for members </span>
-                                </div>
-                                <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="unhighlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-past-selected">⭕🔦 No background shading for past-selected </span>
-                                </div>
-                                <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="nofeaturedhightlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-any-selected">⛔🔦 No background shading for any selected </span>
-                                </div>
-								 <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="noquestionhightlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-any-questions">❓🔦 No background shading for "questions"</span>
-                                </div>
-                                <div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="trivialevents" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="trivial-shading-events">🤏🕶️ Allow background shading for trivial events </span>
-                                </div>
-								<div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="nofirsttimehighlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-firsttimers">⭕🌿 No background shading for first-time chatters </span>
-                                </div>
-								<div>
-                                    <label class="switch">
-                                        <input type="checkbox" data-param1="nodonohighlight" />
-                                        <span class="slider round"></span>
-                                    </label>
-                                    <span data-translate="no-background-shading-for-donations">⭕💰 No background shading for donations </span>
-                                </div>
-								<div>
-									<h3 data-translate="donation-colors">Customize Donation Colors by Threshold 🌈💰</h3>
-									<div style="width: 100%; display:inline-block;">
-										<label class="switch">
-											<input type="checkbox" data-param1="t1" />
-											<span class="slider round"></span>
-										</label>
-										Threshold: $<input type="number" min="0" step="0.01" value="0"  style="width: 45px;" id="dono_1_threshold" class="textInput" autocomplete="off" data-numbersetting="t1" />USD, Color:
-										<input type="text" style="width: 50px;" data-palette="dono_1_color_palette" id="dono_1_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t1c" />
-										<input type="color" data-color="dono_1_color" id="dono_1_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
-									</div>
-									<div style="width: 100%; display:inline-block;">
-										<label class="switch">
-											<input type="checkbox" data-param1="t2" />
-											<span class="slider round"></span>
-										</label>
-										Threshold: $<input type="number" min="0" step="0.01" value="5" style="width: 45px;" id="dono_2_threshold" class="textInput" autocomplete="off" data-numbersetting="t2" />USD, Color:
-										<input type="text" style="width: 50px;"  data-palette="dono_2_color_palette" id="dono_2_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t2c" />
-										<input type="color" data-color="dono_2_color" id="dono_2_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
-									</div>
-									<div style="width: 100%; display:inline-block;">
-										<label class="switch">
-											<input type="checkbox" data-param1="t3" />
-											<span class="slider round"></span>
-										</label>
-										Threshold: $<input type="number" min="0" step="0.01" value="50"  style="width: 45px;" id="dono_3_threshold" class="textInput" autocomplete="off"  data-numbersetting="t3" />USD, Color:
-										<input type="text" style="width: 50px;" data-palette="dono_3_color_palette" id="dono_3_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t3c" />
-										<input type="color" data-color="dono_3_color" id="dono_3_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
-									</div>
-									<br />
-								</div>
-								
+
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param1="largeavatar" />
@@ -3583,6 +3523,45 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <span data-translate="turn-message-portion-into-a-rounded-bubble">💭 Turn message portion into a rounded bubble </span>
+                                </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="namebubble" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>🏷️ Add a rounded bubble behind the name</span>
+                                </div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="flex:1; margin-right:5px;">
+										<input type="text" id="dock_name_bubble_color" class="textInput instant" autocomplete="off" placeholder="e.g. #2a5bd7" data-textparam1="namebubblecolor" data-palette="dock_name_bubble_color_palette" />
+										<label for="dock_name_bubble_color">&gt; Name bubble color</label>
+									</div>
+									<input type="color" data-color="dock_name_bubble_color" id="dock_name_bubble_color_palette" class="colorPicker" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="flex:1; margin-right:5px;">
+										<input type="text" id="dock_name_bubble_text_color" class="textInput instant" autocomplete="off" placeholder="e.g. #ffffff" data-textparam1="namebubbletext" data-palette="dock_name_bubble_text_color_palette" />
+										<label for="dock_name_bubble_text_color">&gt; Name bubble text color</label>
+									</div>
+									<input type="color" data-color="dock_name_bubble_text_color" id="dock_name_bubble_text_color_palette" class="colorPicker" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div class="textInputContainer" style="width: 95%;">
+									<input type="number" step="1" min="0" id="dock_name_bubble_radius" class="textInput instant" autocomplete="off" placeholder="e.g. 999" data-textparam1="namebubbleradius" />
+									<label for="dock_name_bubble_radius">&gt; Name bubble radius (px)</label>
+								</div>
+								<div class="textInputContainer" style="width: 95%;">
+									<input type="text" id="dock_name_bubble_padding" class="textInput instant" autocomplete="off" placeholder="e.g. 2px 8px" data-textparam1="namebubblepadding" />
+									<label for="dock_name_bubble_padding">&gt; Name bubble padding</label>
+								</div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="bubbleopacity" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>💧 Bubble opacity
+										<input type="number" style="max-width: 7ch;" min="0" max="1" step="0.05" value="1" data-numbersetting="bubbleopacity" />
+										(0-1)
+									</span>
                                 </div>
                                 <div>
                                     <label class="switch">
@@ -3662,6 +3641,106 @@ input:checked + .slider:before {
 
             <div class="wrapper">
                 <div class="collapsible">
+                    <input type="checkbox" class="collapsible-input" id="wrapper-chat-message-shading-options" />
+                    <label class="collapsible-label" for="wrapper-chat-message-shading-options"><span data-translate="background-shading">💬 Message - 🖌️ Background Shading</span></label>
+                    <div class="collapsible-text">
+                        <div class="options">
+                            <div class="options_group streaming_chat">
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="hideshadow" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-alternating-background-shading">⭕👥 No alternating background shading </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="nomemberhighlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-members">⭕👤 No background shading for members </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="unhighlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-past-selected">⭕🔦 No background shading for past-selected </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="nofeaturedhightlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-any-selected">⛔🔦 No background shading for any selected </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="noquestionhightlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-any-questions">❓🔦 No background shading for "questions"</span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="trivialevents" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="trivial-shading-events">🤏🕶️ Allow background shading for trivial events </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="nofirsttimehighlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-firsttimers">⭕🌿 No background shading for first-time chatters </span>
+                                </div>
+                                <div>
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="nodonohighlight" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span data-translate="no-background-shading-for-donations">⭕💰 No background shading for donations </span>
+                                </div>
+                                <div>
+                                    <h3 data-translate="donation-colors">Customize Donation Colors by Threshold</h3>
+                                    <div style="width: 100%; display:inline-block;">
+                                        <label class="switch">
+                                            <input type="checkbox" data-param1="t1" />
+                                            <span class="slider round"></span>
+                                        </label>
+                                        Threshold: $<input type="number" min="0" step="0.01" value="0" style="width: 45px;" id="dono_1_threshold" class="textInput" autocomplete="off" data-numbersetting="t1" />USD, Color:
+                                        <input type="text" style="width: 50px;" data-palette="dono_1_color_palette" id="dono_1_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t1c" />
+                                        <input type="color" data-color="dono_1_color" id="dono_1_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
+                                    </div>
+                                    <div style="width: 100%; display:inline-block;">
+                                        <label class="switch">
+                                            <input type="checkbox" data-param1="t2" />
+                                            <span class="slider round"></span>
+                                        </label>
+                                        Threshold: $<input type="number" min="0" step="0.01" value="5" style="width: 45px;" id="dono_2_threshold" class="textInput" autocomplete="off" data-numbersetting="t2" />USD, Color:
+                                        <input type="text" style="width: 50px;" data-palette="dono_2_color_palette" id="dono_2_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t2c" />
+                                        <input type="color" data-color="dono_2_color" id="dono_2_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
+                                    </div>
+                                    <div style="width: 100%; display:inline-block;">
+                                        <label class="switch">
+                                            <input type="checkbox" data-param1="t3" />
+                                            <span class="slider round"></span>
+                                        </label>
+                                        Threshold: $<input type="number" min="0" step="0.01" value="50" style="width: 45px;" id="dono_3_threshold" class="textInput" autocomplete="off" data-numbersetting="t3" />USD, Color:
+                                        <input type="text" style="width: 50px;" data-palette="dono_3_color_palette" id="dono_3_color" class="textInput" autocomplete="off" placeholder="HEX value" data-textparam1="t3c" />
+                                        <input type="color" data-color="dono_3_color" id="dono_3_color_palette" class="colorPicker" style="display: inline-block; cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);">
+                                    </div>
+                                    <br />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="wrapper">
+                <div class="collapsible">
                     <input type="checkbox" class="collapsible-input" id="wrapper-chat-message-effects-options" />
                     <label class="collapsible-label" for="wrapper-chat-message-effects-options"><span data-translate="message---effects">💬 Message - ✨ Effects</span></label>
                     <div class="collapsible-text">
@@ -3708,6 +3787,18 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <span data-translate="smooth-message-buffering">🚦 Smooth message buffering (prevents message floods) </span>
+                                </div>
+
+                                <div data-keywords="animation speed duration fast slow swipe fade timing">
+                                    <label class="switch">
+                                        <input type="checkbox" data-param1="animationspeed" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>
+                                        ⚡ Animation speed
+                                        <input type="range" id="dock-animationspeed-range" min="0.1" max="3" step="0.1" value="1" style="width: 150px;" data-numbersetting="animationspeed" data-range-display="dock-animationspeed-display" data-range-suffix="s" />
+                                        <span class="range-value" id="dock-animationspeed-display">1.0s</span>
+                                    </span>
                                 </div>
 
                                 <h3 data-translate="advanced-animation">Advanced animation options can be set below.</h3>
@@ -5365,7 +5456,7 @@ input:checked + .slider:before {
                                         <input type="checkbox" data-setting="streamlabsExclusive" />
                                         <span class="slider round"></span>
                                     </label>
-                                    <img class="icon" src="./sources/images/socialStream.png" style="display: inline-block;" />🧪 <span>Streamlabs: only Cloudbot/Merch/Tips</span>
+                                    <img class="icon" src="./sources/images/socialstream.png" style="display: inline-block;" />🧪 <span>Streamlabs: only Cloudbot/Merch/Tips</span>
                                 </div>
 
                                  <div title="Make Discord Videos available as VDO.Ninja view links">
@@ -5488,6 +5579,14 @@ input:checked + .slider:before {
                                     <img class="icon" src="./sources/images/tiktok.png" style="display: inline-block;" />🚪
                                     <span data-translate="capture-joined-events"> Don't block "joined" stream events (TikTok) </span>
                                 </div>
+                                <div title="Allow 'liked' stream events in TikTok (can be high volume)">
+                                    <label class="switch">
+                                        <input type="checkbox" data-setting="capturelikeevent" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <img class="icon" src="./sources/images/tiktok.png" style="display: inline-block;" />
+                                    <span> Allow "liked" stream events (TikTok) </span>
+                                </div>
 								<div title="Do not treat coin-bought items as gifts on Tiktok, such as roses">
                                     <label class="switch">
                                         <input type="checkbox" data-setting="notiktokdonations" />
@@ -5578,6 +5677,13 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <img src="./sources/images/youtube.png" class="icon" /><span data-translate="no-all-youtube-member-chat-included"> Only monthly featured messages from a YouTube are marked as a membership </span>
+                                </div>
+                                <div title="Mark a message as memberchat only when it is a Twitch subscription or resubscription notification">
+                                    <label class="switch">
+                                        <input type="checkbox" data-setting="limitedtwitchmemberchat" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <img src="./sources/images/twitch.png" class="icon" /><span data-translate="no-all-twitch-member-chat-included"> Only Twitch subscription/resub notifications are marked as a membership </span>
                                 </div>
                                 <div>
                                     <label class="switch">
@@ -5935,6 +6041,20 @@ input:checked + .slider:before {
                                         <span class="slider round"></span>
                                     </label>
                                     <span data-translate="forwardcommands2twitch">⏩ Forward chat !commands to Twitch</span>
+                                </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" id="forwardcommands2kick" data-setting="forwardcommands2kick" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>⏩ Forward chat !commands to Kick</span>
+                                </div>
+								<div>
+                                    <label class="switch">
+                                        <input type="checkbox" id="forwardcommands2youtube" data-setting="forwardcommands2youtube" />
+                                        <span class="slider round"></span>
+                                    </label>
+                                    <span>⏩ Forward chat !commands to YouTube</span>
                                 </div>
                                 <div class="textInputContainer" style="width: 95%;">
                                     <label class="switch">
@@ -8116,6 +8236,20 @@ input:checked + .slider:before {
 									</label>
 									<span>👀 Show viewer count bar in the top-right</span>
 								</div>
+								<div title="Set the top-right viewer count bar background color. Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param17="viewerbarbg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom viewer bar background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+										<input type="text" id="events_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam17="viewerbarbg" data-palette="events_viewerbarbg_palette" />
+										<label for="events_viewerbarbg">&gt; Viewer bar background color</label>
+									</div>
+									<input type="color" data-color="events_viewerbarbg" id="events_viewerbarbg_palette" class="colorPicker" title="Pick a viewer bar background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
 
 								<div>
 									<label class="switch">
@@ -8253,6 +8387,20 @@ input:checked + .slider:before {
                                         <span class="range-value" id="emotes-scale-display">1.00x</span>
                                     </span>
                                 </div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param3="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="emotes_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam3="pagebg" data-palette="emotes_pagebg_palette" />
+										<label for="emotes_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="emotes_pagebg" id="emotes_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param3="membersonly" />
@@ -8381,6 +8529,34 @@ input:checked + .slider:before {
 										<option value="minimal">Minimal</option>
 										<option value="topbar">Dock Style</option>
 									</select>
+								</div>
+								<div title="Set the top-right viewer count bar background color in topbar/dock style. Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param4="viewerbarbg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom viewer bar background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #0009, #1f2937cc, rgba(0,0,0,0.65)">
+										<input type="text" id="hype_viewerbarbg" class="textInput instant" autocomplete="off" placeholder="e.g. #0009 or rgba(0,0,0,0.65)" data-textparam4="viewerbarbg" data-palette="hype_viewerbarbg_palette" />
+										<label for="hype_viewerbarbg">&gt; Viewer bar background color</label>
+									</div>
+									<input type="color" data-color="hype_viewerbarbg" id="hype_viewerbarbg_palette" class="colorPicker" title="Pick a viewer bar background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param4="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="hype_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam4="pagebg" data-palette="hype_pagebg_palette" />
+										<label for="hype_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="hype_pagebg" id="hype_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
 								</div>
                                 <div>
                                     <label class="switch">
@@ -8732,6 +8908,20 @@ input:checked + .slider:before {
                                     </label>
                                     <span data-translate="force-transparent-background">⭕ Force transparent background </span>
                                 </div>
+								<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+									<label class="switch">
+										<input type="checkbox" data-param5="pagebg" />
+										<span class="slider round"></span>
+									</label>
+									<span>🎨 Custom page background color</span>
+								</div>
+								<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+									<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+										<input type="text" id="waitlist_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam5="pagebg" data-palette="waitlist_pagebg_palette" />
+										<label for="waitlist_pagebg">&gt; Page background color</label>
+									</div>
+									<input type="color" data-color="waitlist_pagebg" id="waitlist_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+								</div>
                                 <div>
                                     <label class="switch">
                                         <input type="checkbox" data-param5="opacity" />
@@ -9779,14 +9969,28 @@ input:checked + .slider:before {
 										<button id="creditsPreviewBtn" class="overlayButton" style="flex: 1;">Preview</button>
 									</div>
 									<br>
-									<div title="Hides page backgrounds; keeps star field on Star Wars style">
-										<label class="switch">
-											<input type="checkbox" data-param13="nobg" />
-											<span class="slider round"></span>
-										</label>
-										<span>🧼 Transparent background (hide overlay background)</span>
-									</div>
-									<br>
+										<div title="Hides page backgrounds; keeps star field on Star Wars style">
+											<label class="switch">
+												<input type="checkbox" data-param13="nobg" />
+												<span class="slider round"></span>
+											</label>
+											<span>🧼 Transparent background (hide overlay background)</span>
+										</div>
+										<div title="Set the overall page background color (useful for OBS docks so the page is not transparent/white). Supports hex, rgba, and named colors.">
+											<label class="switch">
+												<input type="checkbox" data-param13="pagebg" />
+												<span class="slider round"></span>
+											</label>
+											<span>🎨 Custom page background color</span>
+										</div>
+										<div class="colorInputRow" style="display:flex; align-items:center; gap:8px;">
+											<div class="textInputContainer" style="width: 95%;" title="Examples: #111111, #1f2937, rgba(20,20,20,0.95)">
+												<input type="text" id="credits_pagebg" class="textInput instant" autocomplete="off" placeholder="e.g. #111111 or rgba(20,20,20,0.95)" data-textparam13="pagebg" data-palette="credits_pagebg_palette" />
+												<label for="credits_pagebg">&gt; Page background color</label>
+											</div>
+											<input type="color" data-color="credits_pagebg" id="credits_pagebg_palette" class="colorPicker" title="Pick a page background color" style="cursor: pointer; width: 27px; height: 27px; vertical-align: middle; padding: 0px; z-index: 99; background-color: rgba(0, 0, 0, 0);" />
+										</div>
+										<br>
 									<span data-translate="font-family">
 										Font Family
 									</span>
@@ -10975,6 +11179,15 @@ input:checked + .slider:before {
 											⏲️ Speed (relative) <input type="number" style="max-width: 8ch;" max="10" min="0.01" value="1" size="3" data-numbersetting6="speed" />x
 										</span>
 									</div>
+									<div>
+										<label class="switch">
+											<input type="checkbox" data-param6="speedmode=time" />
+											<span class="slider round"></span>
+										</label>
+										<span>
+											🕒 FPS-independent speed (recommended for OBS)
+										</span>
+									</div>
 									<br>
 									
 									<div>
@@ -11659,3 +11872,4 @@ input:checked + .slider:before {
         <script type="text/javascript" src="spotify-auth-helper.js"></script>
     </body>
 </html>
+
