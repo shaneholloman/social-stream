@@ -1826,6 +1826,8 @@ async function ensureChatClientInstance() {
 			normalizedEventTypeLower === 'sub' ||
 			normalizedEventTypeLower === 'subscribe' ||
 			normalizedEventTypeLower === 'subgift' ||
+			normalizedEventTypeLower === 'submysterygift' ||
+			normalizedEventTypeLower === 'anonsubmysterygift' ||
 			normalizedEventTypeLower === 'anonsubgift';
 		const markSubscriberAsMembership = !!subscriber && (!settings.limitedtwitchmemberchat || isSubscriptionNoticeContext);
 
@@ -2025,12 +2027,15 @@ async function ensureChatClientInstance() {
 				break;
 				
 			case 'subgift':
+			case 'anonsubgift':
+			case 'submysterygift':
+			case 'anonsubmysterygift':
 				eventData.chatmessage = systemMsg;
 				eventData.event = 'subscription_gift';
 				if (settings.limitedtwitchmemberchat) {
 					eventData.membership = "Subscriber";
 				}
-				addEvent(`Gift Sub: ${displayName}`);
+				addEvent(`Gift Sub: ${displayName || 'Anonymous'}`);
 				break;
 				
 			default:
