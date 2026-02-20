@@ -1787,6 +1787,9 @@ async function ensureChatClientInstance() {
 		try {
 		//console.log("Processing message:", parsedMessage);
 		const normalizedPayload = parsedMessage.__normalizedPayload || null;
+		const normalizedEventType = normalizedPayload?.event;
+		const normalizedEventTypeLower =
+			typeof normalizedEventType === 'string' ? normalizedEventType.toLowerCase() : '';
 		const user = parsedMessage.prefix.split('!')[0];
 		const message = normalizedPayload?.rawMessage ?? parsedMessage.trailing;
 		// Clean channel name from params (remove # prefix)
@@ -1816,8 +1819,18 @@ async function ensureChatClientInstance() {
 			});
 		}
 		
+		const isSubscriptionNoticeContext =
+			normalizedEventTypeLower === 'resub' ||
+			normalizedEventTypeLower === 'new_subscriber' ||
+			normalizedEventTypeLower === 'subscription_gift' ||
+			normalizedEventTypeLower === 'sub' ||
+			normalizedEventTypeLower === 'subscribe' ||
+			normalizedEventTypeLower === 'subgift' ||
+			normalizedEventTypeLower === 'anonsubgift';
+		const markSubscriberAsMembership = !!subscriber && (!settings.limitedtwitchmemberchat || isSubscriptionNoticeContext);
+
 		// Apply member chat only filter if enabled
-		if (settings.memberchatonly && !subscriber) {
+		if (settings.memberchatonly && !markSubscriberAsMembership) {
 			return;
 		}
 		
@@ -1875,9 +1888,6 @@ async function ensureChatClientInstance() {
 		}
 
 		var data = {};
-		const normalizedEventType = normalizedPayload?.event;
-		const normalizedEventTypeLower =
-			typeof normalizedEventType === 'string' ? normalizedEventType.toLowerCase() : '';
 		// Chat messages must never set data.event; reserve it for true system events (raids, cheers, /me actions, etc.).
 		if (normalizedEventType && normalizedEventTypeLower !== 'message' && normalizedEventTypeLower !== 'chat') {
 			data.event = normalizedEventType;
@@ -1922,7 +1932,7 @@ async function ensureChatClientInstance() {
 			data.chatmessage = replaceEmotesWithImages(message, twitchEmotes, isBitMessage);
 		}
 		
-		data.membership = subscriber;
+		data.membership = markSubscriberAsMembership ? subscriber : "";
 		data.subtitle = subtitle;
 		data.mod = mod;
 
@@ -2005,6 +2015,9 @@ async function ensureChatClientInstance() {
 			case 'resub':
 				eventData.chatmessage = systemMsg;
 				eventData.event = msgId === 'sub' ? 'new_subscriber' : 'resub';
+				if (settings.limitedtwitchmemberchat) {
+					eventData.membership = "Subscriber";
+				}
 				if (parsedMessage.trailing) {
 					eventData.chatmessage += " - " + parsedMessage.trailing;
 				}
@@ -2014,6 +2027,9 @@ async function ensureChatClientInstance() {
 			case 'subgift':
 				eventData.chatmessage = systemMsg;
 				eventData.event = 'subscription_gift';
+				if (settings.limitedtwitchmemberchat) {
+					eventData.membership = "Subscriber";
+				}
 				addEvent(`Gift Sub: ${displayName}`);
 				break;
 				
@@ -2732,6 +2748,7 @@ async function cleanupCurrentConnection() {
 			pushMessage({
 				type: "twitch",
 				event: 'new_subscriber',
+				membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 				chatmessage: subscribeMessage,
 				chatname: event.user_name,
 				userid: event.user_id,
@@ -2752,6 +2769,7 @@ async function cleanupCurrentConnection() {
 				pushMessage({
 					type: 'twitch',
 					event: 'resub',
+					membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 					chatname: event.user_name,
 					userid: event.user_id,
 					chatmessage: event.message?.text || `${event.user_name} resubscribed`,
@@ -2770,6 +2788,7 @@ async function cleanupCurrentConnection() {
 				pushMessage({
 					type: "twitch",
 					event: 'subscription_gift',
+					membership: settings.limitedtwitchmemberchat ? "Subscriber" : "",
 					chatname: event.user_name,
 					chatmessage: `${event.user_name} has gifted ${event.total} tier ${event.tier} subs!`,
 					userid: event.user_id,

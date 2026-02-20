@@ -531,6 +531,16 @@
 		return null;
 	}
 
+	function isSubscriptionNoticeText(text) {
+		if (!text) {
+			return false;
+		}
+		if (matchSubscriberKeyword(text)) {
+			return true;
+		}
+		return /\bresub(?:scribed)?\b|\bsubscribed\b|\bsubbed\b|\bprime\s+sub\b|\bsubscription\b|\bgift(?:ed|ing)\s+\d*\s*sub(?:s)?\b/i.test(text);
+	}
+
 	function buildSubscriberSubtitle(text, label) {
 		if (!text) {
 			return "";
@@ -765,7 +775,11 @@
 			}
 		} catch (e) {}
 		
-		if (settings.memberchatonly && !subscriber){
+		const hasEventPill = !!ele.querySelector(".message-event-pill");
+		const isNoticeAttachment = hasEventPill || (typeof ele.closest === "function" && !!ele.closest(".user-notice-line, [data-test-selector='user-notice-line']"));
+		const markSubscriberAsMembership = !!subscriber && (!settings.limitedtwitchmemberchat || isNoticeAttachment);
+
+		if (settings.memberchatonly && !markSubscriberAsMembership){
 			return;
 		}
 
@@ -1070,7 +1084,7 @@
 			data.chatimg = "";
 		}
 		data.hasDonation = hasDonation;
-		data.membership = subscriber;
+		data.membership = markSubscriberAsMembership ? subscriber : "";
 		data.subtitle = subtitle;
 		data.textonly = settings.textonlymode || false;
 		data.type = "twitch";
@@ -1333,6 +1347,13 @@
 			data.event = "giftpurchase";
 		} else if (data.chatmessage.includes(" gifted ") && data.chatmessage.includes(" Sub")) {
 			data.event = "sponsorship";
+		}
+
+		if (settings.limitedtwitchmemberchat) {
+			const isMembershipNotice = (data.event === "giftpurchase") || (data.event === "sponsorship") || isSubscriptionNoticeText(data.chatmessage);
+			if (isMembershipNotice) {
+				data.membership = getTranslation("subscriber", "SUBSCRIBER");
+			}
 		}
 		
 
