@@ -129,6 +129,7 @@ const SUBSCRIPTION_RETRY_DELAY_MS = 10000;
 const CHAT_FEED_LIMIT = 200;
 const CHAT_SCROLL_THRESHOLD_PX = 48;
 const AVATAR_LOOKUP_TIMEOUT_MS = 650;
+const SOCKET_CHAT_ACTIVITY_WINDOW_MS = 45000;
 
 const state = {
     clientId: '',
@@ -169,6 +170,7 @@ const state = {
         chatroomId: null,
         channelId: null,
         userId: null,
+        lastChatEventAt: 0,
         siteApiBase: '',
         siteApiProxyBase: '',
         allowProxy: true,
@@ -2253,10 +2255,7 @@ async function fetchKickViewerSnapshot() {
     if (!slugLower) {
         return null;
     }
-    const params = new URLSearchParams({ slug: slugLower });
-    const data = await apiFetch(`/public/v1/channels?${params.toString()}`);
-    const entries = Array.isArray(data?.data) ? data.data : [];
-    const channel = entries.find(item => normalizeChannel(item?.slug) === slugLower) || entries[0];
+    const channel = await fetchKickChannelBySlug(slugLower);
     if (!channel || typeof channel !== 'object') {
         return null;
     }
@@ -2441,6 +2440,9 @@ function handleLocalSocketEvent(packet) {
     }
     const now = Date.now();
     const type = packet.type || packet.body?.event || 'event';
+    if (type === 'chat.message.sent') {
+        state.socket.lastChatEventAt = now;
+    }
     if (kickWsEventLogCount < 5 || now - kickWsLastEventLogAt > 15000) {
         kickWsEventLogCount += 1;
         kickWsLastEventLogAt = now;
@@ -2476,6 +2478,19 @@ async function connectLocalSocket(force = false) {
     if (!force && state.socket.status === 'connected') return;
     if (state.socket.connecting) return;
 
+    const chatroomId = state.socket.chatroomId != null ? String(state.socket.chatroomId).trim() : '';
+    const socketChannelId = state.socket.channelId != null ? String(state.socket.channelId).trim() : '';
+    const socketUserId = state.socket.userId != null ? String(state.socket.userId).trim() : '';
+    const broadcasterUserId = state.channelId != null ? String(state.channelId).trim() : '';
+    const fallbackUserId = socketUserId || broadcasterUserId;
+    const hasResolverHint = Boolean(chatroomId || socketChannelId || fallbackUserId);
+    if (!hasResolverHint) {
+        logKickWs('Waiting for channel identifiers before opening chat socket.');
+        state.socket.status = 'disconnected';
+        updateSocketState({ status: 'disconnected' });
+        return;
+    }
+
     if (!state.tokens?.access_token && !state.socket.chatroomId) {
         logKickWs('Chat socket requires Kick sign-in to resolve chatroom ID.', 'warning');
         state.socket.status = 'disconnected';
@@ -2494,9 +2509,9 @@ async function connectLocalSocket(force = false) {
     try {
         const payload = {
             slug: state.channelSlug,
-            chatroomId: state.socket.chatroomId || null,
-            channelId: state.socket.channelId || null,
-            userId: state.socket.userId || null,
+            chatroomId: chatroomId || null,
+            channelId: socketChannelId || null,
+            userId: fallbackUserId || null,
             accessToken: state.tokens?.access_token || null,
             clientId: state.clientId || null,
             userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
@@ -2533,6 +2548,7 @@ async function disconnectLocalSocket() {
     state.socket.connectionId = null;
     state.socket.status = 'disconnected';
     state.socket.lastError = '';
+    state.socket.lastChatEventAt = 0;
     kickWsEventLogCount = 0;
     kickWsLastEventLogAt = 0;
     logKickWs('Chat socket disconnected.');
@@ -2852,6 +2868,76 @@ async function apiFetch(path, options = {}, retry = true) {
         return res.json();
     }
     return res.text();
+}
+
+function getKickApiErrorStatus(error) {
+    const message = error?.message || '';
+    const match = /Kick API\s+(\d+):/i.exec(message);
+    if (!match) return null;
+    const code = Number(match[1]);
+    return Number.isFinite(code) ? code : null;
+}
+
+function unwrapKickChannelPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return [];
+    }
+    const result = [];
+    const pushIfObject = (value) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            result.push(value);
+        }
+    };
+    if (Array.isArray(payload.data)) {
+        payload.data.forEach(pushIfObject);
+    } else {
+        pushIfObject(payload.data);
+    }
+    pushIfObject(payload.channel);
+    if (!result.length) {
+        pushIfObject(payload);
+    }
+    return result;
+}
+
+function pickKickChannelBySlug(channels, slugLower) {
+    const list = Array.isArray(channels) ? channels : [];
+    if (!list.length) return null;
+    return list.find(item => normalizeChannel(item?.slug) === slugLower) || list[0] || null;
+}
+
+async function fetchKickChannelBySlug(slugInput) {
+    const slugLower = normalizeChannel(slugInput);
+    if (!slugLower) {
+        return null;
+    }
+    const encodedSlug = encodeURIComponent(slugLower);
+    const paths = [
+        `/channels/${encodedSlug}`,
+        `/public/v1/channels/${encodedSlug}`,
+        `/public/v1/channels?slug=${encodedSlug}`
+    ];
+    let lastError = null;
+    for (const path of paths) {
+        try {
+            const data = await apiFetch(path);
+            const channel = pickKickChannelBySlug(unwrapKickChannelPayload(data), slugLower);
+            if (channel && typeof channel === 'object') {
+                return channel;
+            }
+        } catch (err) {
+            lastError = err;
+            const status = getKickApiErrorStatus(err);
+            if (status === 400 || status === 404 || status === 405 || status === 501) {
+                continue;
+            }
+            throw err;
+        }
+    }
+    if (lastError) {
+        throw lastError;
+    }
+    return null;
 }
 
 function extractProfileFromTokens() {
@@ -3226,13 +3312,10 @@ async function resolveChannelId(force = false) {
     }
     const previousId = state.channelId;
     const previousSlug = state.lastResolvedSlug;
-    const params = new URLSearchParams({ slug: slugLower });
     log(`Resolving channel ID for slug: ${slugLower}`);
-    const data = await apiFetch(`/public/v1/channels?${params.toString()}`);
-    const entries = Array.isArray(data?.data) ? data.data : [];
-    const channel = entries.find(item => normalizeChannel(item.slug) === slugLower) || entries[0];
+    const channel = await fetchKickChannelBySlug(slugLower);
     if (!channel?.broadcaster_user_id) {
-        log(`Channel API response: ${JSON.stringify(data)}`, 'warning');
+        log(`Channel API response did not include broadcaster_user_id for slug: ${slugLower}`, 'warning');
         throw new Error('Unable to resolve channel user id.');
     }
     const resolvedChatroomId =
@@ -3249,6 +3332,9 @@ async function resolveChannelId(force = false) {
     state.channelId = channel.broadcaster_user_id;
     state.channelName = channel.slug || channel.channel_description || slugInput;
     state.lastResolvedSlug = slugLower;
+    if (!state.socket.userId && state.channelId != null) {
+        state.socket.userId = String(state.channelId);
+    }
     if (resolvedChatroomId != null) {
         state.socket.chatroomId = String(resolvedChatroomId);
     }
@@ -3272,7 +3358,10 @@ async function resolveChannelId(force = false) {
     // Replay any events that were queued before channel resolution
     replayPendingBridgeEvents();
     // Reconnect local socket now that chatroomId may be available
-    if (state.socket.chatroomId && state.socket.status !== 'connected') {
+    if (
+        (state.socket.chatroomId || state.socket.channelId || state.socket.userId || state.channelId) &&
+        state.socket.status !== 'connected'
+    ) {
         connectLocalSocket(true);
     }
     return state.channelId;
@@ -3451,9 +3540,6 @@ function connectBridge() {
     disconnectBridge();
     try {
         let bridgeUrl = state.bridgeUrl;
-        if (isElectronEnvironment()) {
-            bridgeUrl = appendBridgeParam(bridgeUrl, 'noChat', '1');
-        }
         if (state.channelId) {
             bridgeUrl = appendBridgeParam(bridgeUrl, 'channel', String(state.channelId));
         }
@@ -3835,6 +3921,9 @@ function shouldIgnoreBridgeChatEvent(packet) {
     if (packet?.source === 'socket') return false;
     if (!supportsLocalSocket()) return false;
     if (state.socket?.status !== 'connected') return false;
+    const lastSocketChatAt = Number(state.socket?.lastChatEventAt || 0);
+    if (!lastSocketChatAt) return false;
+    if (Date.now() - lastSocketChatAt > SOCKET_CHAT_ACTIVITY_WINDOW_MS) return false;
     return true;
 }
 
