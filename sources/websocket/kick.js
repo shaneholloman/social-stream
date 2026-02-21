@@ -3396,16 +3396,16 @@ async function maybeAutoStart(force = false) {
     state.autoStart.running = true;
     state.autoStart.pendingForce = false;
     try {
-        if (state.bridge.status === 'disconnected' || !state.bridge.source) {
-            connectBridge();
-        }
-
         let channelId;
         try {
             channelId = await resolveChannelId();
         } catch (err) {
             log(err.message, 'error');
             return;
+        }
+
+        if (state.bridge.status === 'disconnected' || !state.bridge.source) {
+            connectBridge();
         }
 
         const eventTypes = await fetchEventTypes();
@@ -3450,9 +3450,13 @@ function connectBridge() {
     }
     disconnectBridge();
     try {
-        const bridgeUrl = isElectronEnvironment()
-            ? appendBridgeParam(state.bridgeUrl, 'noChat', '1')
-            : state.bridgeUrl;
+        let bridgeUrl = state.bridgeUrl;
+        if (isElectronEnvironment()) {
+            bridgeUrl = appendBridgeParam(bridgeUrl, 'noChat', '1');
+        }
+        if (state.channelId) {
+            bridgeUrl = appendBridgeParam(bridgeUrl, 'channel', String(state.channelId));
+        }
         const source = new EventSource(bridgeUrl, { withCredentials: false });
         state.bridge.source = source;
         state.bridge.status = 'connecting';
@@ -4916,10 +4920,18 @@ function appendChatFeedMessage(message, plainText = '') {
             : (typeof message.chatmessage === 'string'
                 ? message.chatmessage.replace(/<[^>]+>/g, '')
                 : '');
-    if (isTextOnlyMode()) {
-        body.textContent = plainTextMessage || '';
-    } else if (message.chatmessage) {
-        body.innerHTML = message.chatmessage;
+    // The local chat feed always renders rich content (emotes as images)
+    // regardless of the extension's text-only mode setting.
+    const chatHtml = message.chatmessage || '';
+    const richHtml = chatHtml
+        ? chatHtml.replace(/\[emote:(\d+):([^\]]+)\]/g, (m, id, n) => {
+            const safeId = id.replace(/[^0-9]/g, '');
+            if (!safeId) return m;
+            return `<img src="https://files.kick.com/emotes/${safeId}/fullsize" alt="${n}" title="${n}" class="regular-emote"/>`;
+        })
+        : '';
+    if (richHtml) {
+        body.innerHTML = richHtml;
     } else {
         body.textContent = plainTextMessage || '';
     }
