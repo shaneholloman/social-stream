@@ -915,7 +915,7 @@
                             <td><strong>Viewer count</strong></td>
                             <td><code>viewer_update</code></td>
                             <td><code>viewer_update</code></td>
-                            <td><code>viewer_update</code> (DOM only)</td>
+                            <td><code>viewer_update</code></td>
                         </tr>
                         <tr>
                             <td><strong>Follower count</strong></td>
@@ -960,12 +960,87 @@
                 </ul>
             </section>
 
+            <section class="section-summary" id="repository-audit">
+                <h2>Repository Audit Snapshot (All Sources)</h2>
+                <p>Static scan scope: <code>sources/*.js</code> and <code>sources/websocket/*.js</code>. Snapshot file: <a href="event-audit.json"><code>docs/event-audit.json</code></a>.</p>
+                <table class="field-table summary-table">
+                    <thead>
+                        <tr>
+                            <th>Metric</th>
+                            <th>Result</th>
+                            <th>Why It Matters</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Files scanned</td>
+                            <td><code>150</code></td>
+                            <td>Coverage includes all root capture scripts plus all websocket capture scripts.</td>
+                        </tr>
+                        <tr>
+                            <td>Files writing <code>hasDonation</code></td>
+                            <td><code>132</code></td>
+                            <td>Most sources expose donation/cheer/tip value even when no explicit event marker is set.</td>
+                        </tr>
+                        <tr>
+                            <td>Donation field but no event marker</td>
+                            <td><code>89</code></td>
+                            <td>Expected baseline: many adapters intentionally set <code>hasDonation</code> without setting <code>data.event</code>.</td>
+                        </tr>
+                        <tr>
+                            <td>Files with delete forwarding</td>
+                            <td><code>5</code></td>
+                            <td>Delete parity is not universal; moderation overlays should not assume all platforms emit delete payloads.</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Tracked Mismatches and Voids</h3>
+                <table class="field-table summary-table">
+                    <thead>
+                        <tr>
+                            <th>Pair/Area</th>
+                            <th>Observed Mismatch / Void</th>
+                            <th>Impact</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>sources/twitch.js</code> vs <code>sources/websocket/twitch.js</code></td>
+                            <td>DOM uses legacy system markers (<code>reward</code>, <code>giftpurchase</code>, <code>sponsorship</code>, boolean <code>true</code>, <code>knock</code>) while websocket uses EventSub-style names (<code>new_subscriber</code>, <code>resub</code>, <code>subscription_gift</code>, <code>raid</code>, etc.). Websocket path currently does not emit delete payloads.</td>
+                            <td>Trigger rules can diverge during migration unless they key off both vocabularies or normalize upstream.</td>
+                        </tr>
+                        <tr>
+                            <td><code>sources/kick.js</code> vs <code>sources/websocket/kick.js</code></td>
+                            <td>DOM chat emits lightweight event markers (<code>gift</code>, <code>reward</code>, sometimes boolean <code>true</code>). Websocket adds channel-level events (<code>new_follower</code>, <code>new_subscriber</code>, <code>resub</code>, <code>subscription_gift</code>, <code>donation</code>, <code>stream_online</code>/<code>stream_offline</code>, <code>follower_update</code>).</td>
+                            <td>Websocket mode is richer; automation built around DOM-only event names should be reviewed when switching transports.</td>
+                        </tr>
+                        <tr>
+                            <td><code>sources/youtube.js</code> vs <code>sources/websocket/youtube.js</code></td>
+                            <td><code>websocket/youtube.js</code> is a relay shim; event vocabulary and donation/membership shaping come from the injected YouTube capture layer, not from this wrapper file itself.</td>
+                            <td>Code audits must inspect both layers to validate emitted payload shape.</td>
+                        </tr>
+                        <tr>
+                            <td><code>sources/websocket/youtube_streaming.js</code></td>
+                            <td>Streaming mode relays shared normalizer output (membership-family names such as <code>membership</code>, <code>membership_upgrade</code>, <code>membership_milestone</code>, <code>membership_gift</code>) which differs from legacy YouTube naming (<code>sponsorship</code>, <code>giftpurchase</code>, <code>giftredemption</code>, etc.).</td>
+                            <td>Streaming and legacy YouTube captures are not yet event-name equivalent; downstream triggers should account for both until unified.</td>
+                        </tr>
+                        <tr>
+                            <td>All source scripts</td>
+                            <td><code>89</code> files populate <code>hasDonation</code> but do not set <code>data.event</code>.</td>
+                            <td>This is generally correct behavior; donation rendering should key off <code>hasDonation</code>, with <code>data.event</code> reserved for explicit system/event semantics.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
             <section class="usage-notes">
                 <h2>Using This Reference</h2>
                 <ul>
                     <li>When adding a new event, reuse existing vocabulary (<code>subscription_gift</code>, <code>viewer_update</code>, etc.) whenever possible. If a deviation is unavoidable, document it here along with the rationale.</li>
                     <li>Keep <code>data.meta</code> predictable: prefer flat keys, never overload strings with mixed data, and always include units (<code>currency</code>, <code>bits</code>, <code>duration</code>).</li>
                     <li>Update <code>AGENTS.md</code> and this page in the same pull request so future contributors know which surface produces the event.</li>
+                    <li>When source behavior changes, regenerate/update <code>docs/event-audit.json</code> so mismatches and voids stay trackable.</li>
                     <li>Stream events are always captured. To hide events in the dock overlay, add <code>&amp;hideevents</code> to your dock.html URL.</li>
                     <li>For YouTube, Twitch, and Kick, enable <strong>WebSocket mode</strong> in extension settings for full event support (followers, subscriptions, raids, etc.).</li>
                 </ul>

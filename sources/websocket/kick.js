@@ -132,6 +132,11 @@ const EVENT_LOG_LIMIT = 100;
 const CHAT_SCROLL_THRESHOLD_PX = 48;
 const AVATAR_LOOKUP_TIMEOUT_MS = 650;
 const SOCKET_CHAT_ACTIVITY_WINDOW_MS = 45000;
+const PROFILE_CACHE_STORAGE_KEY = 'kickProfileCache';
+const PROFILE_CACHE_STORAGE_VERSION = 2;
+const PROFILE_CACHE_SAVE_DEBOUNCE_MS = 1500;
+const PROFILE_CACHE_MAX_ENTRIES = 1200;
+const PROFILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const state = {
     clientId: '',
@@ -194,6 +199,7 @@ let cachedEventTypes = null;
 let cachedEventTypesFetchedAt = 0;
 let eventTypesUnavailableUntil = 0;
 let preferredKickChannelLookupPath = '';
+let profileCachePersistTimer = null;
 
 // Queue for events that arrive before channelId is resolved
 const pendingBridgeEvents = [];
@@ -491,19 +497,16 @@ function resolveProfileIdentifiers(...sources) {
         }
         if (!userId) {
             const idCandidates = [
-                source.id,
-                source.user_id,
-                source.userId,
-                source.broadcaster_user_id,
-                source.broadcasterUserId,
-                source.identity?.id,
                 source.user?.id,
                 source.user?.user_id,
                 source.profile?.id,
                 source.account?.id,
+                source.identity?.id,
+                source.id,
+                source.user_id,
+                source.userId,
                 source.sub,
-                source.channel?.id,
-                source.channel?.user_id
+                source.channel?.id
             ];
             for (const candidate of idCandidates) {
                 if (candidate == null) {
@@ -560,7 +563,133 @@ function getCachedProfile(ids, options = {}) {
     if (!ids) {
         return undefined;
     }
+    if (ids.username) {
+        const byUsername = getProfileCacheEntry(state.profileCache, { username: ids.username }, options);
+        if (byUsername !== undefined) {
+            return byUsername;
+        }
+    }
     return getProfileCacheEntry(state.profileCache, ids, options);
+}
+
+function serializeKickProfileCacheEntries() {
+    const now = Date.now();
+    const entries = [];
+    state.profileCache.forEach((entry, key) => {
+        if (!key || typeof key !== 'string') {
+            return;
+        }
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+        const timestamp = Number(entry.timestamp);
+        if (!Number.isFinite(timestamp)) {
+            return;
+        }
+        if (now - timestamp > PROFILE_CACHE_MAX_AGE_MS) {
+            return;
+        }
+        const hasProfile = entry.hasProfile === true && entry.profile && typeof entry.profile === 'object';
+        entries.push([
+            key,
+            {
+                timestamp,
+                hasProfile,
+                profile: hasProfile ? entry.profile : null
+            }
+        ]);
+    });
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    if (entries.length > PROFILE_CACHE_MAX_ENTRIES) {
+        return entries.slice(entries.length - PROFILE_CACHE_MAX_ENTRIES);
+    }
+    return entries;
+}
+
+function persistKickProfileCache() {
+    try {
+        const payload = {
+            version: PROFILE_CACHE_STORAGE_VERSION,
+            savedAt: Date.now(),
+            entries: serializeKickProfileCacheEntries()
+        };
+        localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (error) {
+        console.warn('[KickWs] Failed to persist profile cache.', error);
+    }
+}
+
+function scheduleKickProfileCachePersist() {
+    if (profileCachePersistTimer) {
+        clearTimeout(profileCachePersistTimer);
+    }
+    profileCachePersistTimer = setTimeout(() => {
+        profileCachePersistTimer = null;
+        persistKickProfileCache();
+    }, PROFILE_CACHE_SAVE_DEBOUNCE_MS);
+}
+
+function loadKickProfileCache() {
+    try {
+        const raw = localStorage.getItem(PROFILE_CACHE_STORAGE_KEY);
+        if (!raw) {
+            return;
+        }
+        const parsed = JSON.parse(raw);
+        if (
+            parsed &&
+            typeof parsed === 'object' &&
+            Object.prototype.hasOwnProperty.call(parsed, 'version') &&
+            parsed.version !== PROFILE_CACHE_STORAGE_VERSION
+        ) {
+            localStorage.removeItem(PROFILE_CACHE_STORAGE_KEY);
+            return;
+        }
+        const entries = Array.isArray(parsed?.entries)
+            ? parsed.entries
+            : (Array.isArray(parsed) ? parsed : []);
+        if (!entries.length) {
+            return;
+        }
+        const now = Date.now();
+        let loaded = 0;
+        entries.forEach((entry) => {
+            if (!Array.isArray(entry) || entry.length < 2) {
+                return;
+            }
+            const key = entry[0];
+            const value = entry[1];
+            if (typeof key !== 'string' || !value || typeof value !== 'object') {
+                return;
+            }
+            const timestamp = Number(value.timestamp);
+            if (!Number.isFinite(timestamp)) {
+                return;
+            }
+            if (now - timestamp > PROFILE_CACHE_MAX_AGE_MS) {
+                return;
+            }
+            const hasProfile = value.hasProfile === true && value.profile && typeof value.profile === 'object';
+            state.profileCache.set(key, {
+                profile: hasProfile ? value.profile : null,
+                hasProfile,
+                timestamp
+            });
+            loaded += 1;
+        });
+        while (state.profileCache.size > PROFILE_CACHE_MAX_ENTRIES) {
+            const oldestKey = state.profileCache.keys().next().value;
+            if (oldestKey === undefined) {
+                break;
+            }
+            state.profileCache.delete(oldestKey);
+        }
+        if (loaded > 0) {
+            logKickWs(`Loaded ${loaded} cached Kick profiles from storage.`);
+        }
+    } catch (error) {
+        console.warn('[KickWs] Failed to load profile cache.', error);
+    }
 }
 
 function rememberProfile(profile, ...sources) {
@@ -572,6 +701,7 @@ function rememberProfile(profile, ...sources) {
         return;
     }
     storeProfileCacheEntry(state.profileCache, ids, profile);
+    scheduleKickProfileCachePersist();
 }
 
 function rememberProfileMiss(...sources) {
@@ -580,6 +710,7 @@ function rememberProfileMiss(...sources) {
         return;
     }
     storeProfileCacheEntry(state.profileCache, ids, null);
+    scheduleKickProfileCachePersist();
 }
 
 function normalizeKickSiteBase(value) {
@@ -714,7 +845,8 @@ function updateChatFeedAvatar({ messageIds, userId, username }, avatarUrl) {
 }
 
 function queueAvatarLookup(ids, username, messageId) {
-    const userKey = ids?.userId ? `id:${ids.userId}` : (username ? `name:${normalizeChannel(username)}` : '');
+    const normalizedUsername = username ? normalizeChannel(username) : '';
+    const userKey = normalizedUsername ? `name:${normalizedUsername}` : (ids?.userId ? `id:${ids.userId}` : '');
     if (!userKey || !username) {
         return null;
     }
@@ -731,17 +863,22 @@ function queueAvatarLookup(ids, username, messageId) {
         pendingMessageIds.add(String(messageId));
     }
 
-    const promise = fetchKickProfile(username)
-        .then((profile) => {
-            const avatar = extractKickAvatar(profile);
-            if (avatar) {
-                const normalizedAvatar = normalizeImage(avatar);
-                rememberProfile({ avatar: normalizedAvatar }, ids, { username });
+    const promise = (async () => {
+        const profile = await fetchKickProfile(username);
+        const avatarFromChannelProfile = extractKickAvatar(profile);
+        if (avatarFromChannelProfile) {
+            return normalizeImage(avatarFromChannelProfile);
+        }
+        return '';
+    })()
+        .then((resolvedAvatar) => {
+            if (resolvedAvatar) {
+                rememberProfile({ avatar: resolvedAvatar }, ids, { username });
                 updateChatFeedAvatar(
                     { messageIds: pendingMessageIds, userId: ids?.userId, username },
-                    normalizedAvatar
+                    resolvedAvatar
                 );
-                return normalizedAvatar;
+                return resolvedAvatar;
             }
             rememberProfileMiss(ids, { username });
             return '';
@@ -5658,6 +5795,7 @@ async function bootstrap() {
     applyKickCoreFallbacks();
     try {
         initElements();
+        loadKickProfileCache();
         initExtensionBridge();
         updateBridgeState();
         loadConfig();
@@ -5683,6 +5821,11 @@ async function bootstrap() {
             sendLiteMessage('kick-lite-ready', { status: getLiteStatusSnapshot() });
         }
         window.addEventListener('beforeunload', () => {
+            if (profileCachePersistTimer) {
+                clearTimeout(profileCachePersistTimer);
+                profileCachePersistTimer = null;
+                persistKickProfileCache();
+            }
             disconnectLocalSocket();
         });
     } catch (error) {
