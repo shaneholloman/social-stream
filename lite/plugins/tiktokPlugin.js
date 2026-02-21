@@ -12,15 +12,12 @@ const INCLUDE_FOLLOWS_KEY = 'tiktok.includeFollows';
 const INCLUDE_LIKES_KEY = 'tiktok.includeLikes';
 
 const SOCKET_IO_SOURCES = [
-  './vendor/socket.io.min.js',
-  'https://cdn.socket.io/4.7.2/socket.io.min.js'
+  './vendor/socket.io.min.js'
 ];
 
 const CONNECTOR_SOURCES = [
   './vendor/TikTokIOConnection.js?v=20240211',
-  './vendor/TikTokIOConnection.js',
-  'https://raw.githubusercontent.com/zerodytrash/TikTok-Chat-Reader/main/public/connection.js',
-  'https://cdn.jsdelivr.net/gh/zerodytrash/TikTok-Chat-Reader@latest/public/connection.js'
+  './vendor/TikTokIOConnection.js'
 ];
 
 function normalizeUniqueId(value) {
@@ -38,6 +35,24 @@ function normalizeServerUrl(value) {
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function normalizeScriptOverride(value) {
+  const raw = (value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  if (/^(?:\/|\.\/|\.\.\/)/.test(raw)) {
+    return raw;
+  }
+  try {
+    const parsed = new URL(raw, window.location.href);
+    const protocol = (parsed.protocol || '').toLowerCase();
+    if (protocol === 'http:' || protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (err) {}
+  return '';
 }
 
 function mapBadges(badges) {
@@ -166,7 +181,9 @@ export class TikTokPlugin extends BasePlugin {
     scriptInput.autocomplete = 'off';
     scriptInput.value = storage.get(SCRIPT_URL_KEY, '');
     scriptInput.addEventListener('change', () => {
-      storage.set(SCRIPT_URL_KEY, scriptInput.value.trim());
+      const normalized = normalizeScriptOverride(scriptInput.value);
+      scriptInput.value = normalized;
+      storage.set(SCRIPT_URL_KEY, normalized);
       this.connectorLoaded = false;
     });
     scriptRow.append(scriptLabel, scriptInput);
@@ -403,9 +420,19 @@ export class TikTokPlugin extends BasePlugin {
     }
     storage.set(SERVER_URL_KEY, serverUrl);
 
-    const scriptOverride = (this.scriptInput ? this.scriptInput.value : storage.get(SCRIPT_URL_KEY, '') || '').trim();
+    const scriptOverrideRaw = (this.scriptInput ? this.scriptInput.value : storage.get(SCRIPT_URL_KEY, '') || '').trim();
+    const scriptOverride = normalizeScriptOverride(scriptOverrideRaw);
+    if (scriptOverrideRaw && !scriptOverride) {
+      this.reportError(new Error('Custom connector script URL must be a relative path or HTTP(S) URL.'));
+      return;
+    }
+    if (this.scriptInput) {
+      this.scriptInput.value = scriptOverride;
+    }
     if (scriptOverride) {
       storage.set(SCRIPT_URL_KEY, scriptOverride);
+    } else {
+      storage.remove(SCRIPT_URL_KEY);
     }
 
     this.refreshStatus();

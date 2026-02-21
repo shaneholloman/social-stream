@@ -1106,6 +1106,22 @@ function replaceEmotesWithImages(text) {
     });
 }
 
+function replaceKickInlineEmotes(text) {
+    if (typeof text !== 'string' || !text) {
+        return text;
+    }
+    if (isTextOnlyMode()) {
+        return text;
+    }
+    return text.replace(/\[emote:(\d+):([^\]]+)\]/g, (match, id, name) => {
+        const safeId = id.replace(/[^0-9]/g, '');
+        if (!safeId) return escapeHtml(match);
+        const safeName = escapeHtml(name);
+        const url = `https://files.kick.com/emotes/${safeId}/fullsize`;
+        return `<img src="${escapeAttribute(url)}" alt="${safeName}" title="${safeName}" class="regular-emote"/>`;
+    });
+}
+
 function pickFirstString(candidates, fallback = '') {
     for (const value of candidates || []) {
         if (typeof value === 'string' && value.trim()) {
@@ -1238,7 +1254,7 @@ function renderKickFragmentHtml(fragment) {
         return '';
     }
     if (typeof fragment === 'string') {
-        return replaceEmotesWithImages(escapeHtml(fragment));
+        return replaceEmotesWithImages(replaceKickInlineEmotes(escapeHtml(fragment)));
     }
     if (typeof fragment.html === 'string' && !isTextOnlyMode()) {
         return fragment.html;
@@ -1295,7 +1311,7 @@ function renderKickFragmentHtml(fragment) {
         ],
         ''
     );
-    return replaceEmotesWithImages(escapeHtml(fallback));
+    return replaceEmotesWithImages(replaceKickInlineEmotes(escapeHtml(fallback)));
 }
 
 function collectMessageFragments(message) {
@@ -1327,7 +1343,7 @@ function renderKickMessageHtml(message, fallbackText) {
         }
     }
     const safeFallback = escapeHtml(typeof fallbackText === 'string' ? fallbackText : '');
-    return replaceEmotesWithImages(safeFallback);
+    return replaceEmotesWithImages(replaceKickInlineEmotes(safeFallback));
 }
 
 function consumeThirdPartyPayload(request) {
@@ -1610,6 +1626,8 @@ function setChannelSlug(value, options = {}) {
     if (changed) {
         state.channelSlug = slug;
         state.channelId = null;
+        state.socket.chatroomId = null;
+        state.socket.channelId = null;
         state.lastResolvedSlug = '';
         state.autoStart.lastSlug = '';
         resetKickViewerHeartbeatState();
@@ -1666,6 +1684,9 @@ function loadConfig() {
         }
         if (cfg.chatType) {
             state.chat.type = normalizeKickChatType(cfg.chatType);
+        }
+        if (cfg.chatroomId) {
+            state.socket.chatroomId = String(cfg.chatroomId).trim();
         }
     } catch (err) {
         console.error('Failed to load Kick config', err);
@@ -1777,6 +1798,7 @@ function persistConfig() {
         bridgeUrl: state.bridgeUrl,
         customEvents: state.customEvents,
         chatType: state.chat?.type || 'user',
+        chatroomId: state.socket.chatroomId || '',
         siteApiBase: state.socket.siteApiBase || '',
         siteApiProxyBase: state.socket.siteApiProxyBase || '',
         allowProxy: state.socket.allowProxy !== false
@@ -3233,6 +3255,15 @@ async function resolveChannelId(force = false) {
     if (resolvedSocketChannelId != null) {
         state.socket.channelId = String(resolvedSocketChannelId);
     }
+    const initialViewerCount = extractKickViewerCount(channel);
+    if (initialViewerCount != null) {
+        emitKickViewerUpdate(initialViewerCount);
+        const liveFlag = extractKickLiveFlag(channel);
+        if (typeof liveFlag === 'boolean') {
+            kickViewerHeartbeat.isLive = liveFlag;
+        }
+    }
+    persistConfig();
     log(`Resolved channel: ${state.channelName} (ID: ${state.channelId})`);
     updateInputsFromState();
     if (force || state.channelId !== previousId || previousSlug !== slugLower) {
@@ -3240,6 +3271,10 @@ async function resolveChannelId(force = false) {
     }
     // Replay any events that were queued before channel resolution
     replayPendingBridgeEvents();
+    // Reconnect local socket now that chatroomId may be available
+    if (state.socket.chatroomId && state.socket.status !== 'connected') {
+        connectLocalSocket(true);
+    }
     return state.channelId;
 }
 
@@ -5026,7 +5061,6 @@ async function bootstrap() {
         bindEvents();
         initLocalSocketBridge();
         updateSocketState();
-        connectLocalSocket();
         if (state.tokens?.access_token) {
             scheduleTokenRefresh();
             await loadAuthenticatedProfile();
@@ -5034,6 +5068,7 @@ async function bootstrap() {
             await listSubscriptions();
         }
         await handleAuthCallback();
+        connectLocalSocket();
         notifyLiteStatus('ready');
         if (isLiteEmbedded()) {
             sendLiteMessage('kick-lite-ready', { status: getLiteStatusSnapshot() });
