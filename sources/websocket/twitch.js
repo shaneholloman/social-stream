@@ -2262,10 +2262,10 @@ async function ensureChatClientInstance() {
 	async function getViewerCount(channelName) {
 		const token = getStoredToken();
 		if (!token) return;
-		
+
 		// Clean channel name (remove # if present)
 		channelName = channelName.replace(/^#/, '');
-		
+
 		try {
 			const response = await fetchWithTimeout(
 				`https://api.twitch.tv/helix/streams?user_login=${channelName}`,
@@ -2275,26 +2275,24 @@ async function ensureChatClientInstance() {
 					'Authorization': `Bearer ${token}`
 				}
 			);
-			
+
 			const data = await response.json();
-			console.log(data);
 			if (data.data && data.data[0]) {
-				const currentViewers = data.data[0].viewer_count;
-				lastKnownViewers = currentViewers;
-				console.log({
-					type: 'twitch',
-					event: 'viewer_update',
-					meta: lastKnownViewers
-				});
-				pushMessage({
-					type: 'twitch',
-					event: 'viewer_update',
-					meta: lastKnownViewers
-				});
+				lastKnownViewers = data.data[0].viewer_count;
+			} else if (lastKnownViewers === null) {
+				lastKnownViewers = 0;
 			}
 		} catch (error) {
 			console.error('Error fetching viewer count:', error);
+			if (lastKnownViewers === null) {
+				lastKnownViewers = 0;
+			}
 		}
+		pushMessage({
+			type: 'twitch',
+			event: 'viewer_update',
+			meta: lastKnownViewers
+		});
 	}
 
 	// Function to fetch followers

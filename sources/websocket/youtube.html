@@ -217,6 +217,7 @@ try {
     let pollInterval;
     let channelStatsInterval; // Separate interval for channel stats
     let fetchTimeout; // Track fetch timeout to clear on disconnect
+    let lastKnownViewers = null;
     var lastMessageTime = null;
     var liveChatId = null;
     var nextPageToken = null;
@@ -2153,15 +2154,23 @@ function enableBackgroundKeepAlive() {
             if (data.items && data.items.length > 0) {
                 const stats = data.items[0];
                 if (stats.liveStreamingDetails && stats.liveStreamingDetails.concurrentViewers) {
-                    updateStats('viewer_update', { meta: stats.liveStreamingDetails.concurrentViewers });
+                    lastKnownViewers = stats.liveStreamingDetails.concurrentViewers;
+                } else if (lastKnownViewers === null) {
+                    lastKnownViewers = 0;
                 }
                 if (stats.statistics && stats.statistics.likeCount) {
                     updateStats('likes_update', { meta: stats.statistics.likeCount });
                 }
+            } else if (lastKnownViewers === null) {
+                lastKnownViewers = 0;
             }
         } catch (error) {
             console.error('Error fetching stream stats:', error);
+            if (lastKnownViewers === null) {
+                lastKnownViewers = 0;
+            }
         }
+        updateStats('viewer_update', { meta: lastKnownViewers });
     }
     async function getSubscriberCount(channelIdForSubs) {
         const token = getStoredToken();
@@ -2205,6 +2214,7 @@ function enableBackgroundKeepAlive() {
 		pollInterval = null;
 		channelStatsInterval = null;
 		fetchTimeout = null;
+		lastKnownViewers = null;
 		
 		// Track disconnection time and video ID
 		if (liveChatId && currentStream) {
@@ -2428,10 +2438,11 @@ function enableBackgroundKeepAlive() {
             document.getElementById('textarea').appendChild(connectMessageDiv);
             if (streamInfoToUse) {
                 if (streamInfoToUse.liveStreamingDetails && streamInfoToUse.liveStreamingDetails.concurrentViewers) {
-                    updateStats('viewer_update', { meta: streamInfoToUse.liveStreamingDetails.concurrentViewers });
+                    lastKnownViewers = streamInfoToUse.liveStreamingDetails.concurrentViewers;
                 } else {
-                     document.getElementById('viewer-count').textContent = 'N/A';
+                    lastKnownViewers = 0;
                 }
+                updateStats('viewer_update', { meta: lastKnownViewers });
                 if (streamInfoToUse.statistics && streamInfoToUse.statistics.likeCount) {
                     updateStats('likes_update', { meta: streamInfoToUse.statistics.likeCount });
                 } else {
