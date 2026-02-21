@@ -125,50 +125,101 @@ var FFZ = false;
 var currentVideoId = null;
 var currentChannelId = null;
 
-function requestEmotesForVideo(videoId, channelId) {
-	if (!settings || !chrome.runtime || !chrome.runtime.id) return;
-	
-	// Store current IDs
-	currentVideoId = videoId;
-	currentChannelId = channelId;
-	
-	// Reset emotes when video changes
-	EMOTELIST = false;
-	BTTV = false;
-	SEVENTV = false;
-	FFZ = false;
-	
-	if (settings.bttv) {
-		chrome.runtime.sendMessage(chrome.runtime.id, { 
-			getBTTV: true,
-			url: "https://youtube.com/?v="+videoId,
-			videoId: videoId,
-			channelId: channelId
-		}, function (response) {
+function syncThirdPartyEmotesForContext() {
+	if (!settings || typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+		return;
+	}
+
+	if (currentVideoId) {
+		requestEmotesForVideo(currentVideoId, currentChannelId);
+		return;
+	}
+
+	if (settings.bttv && !BTTV) {
+		chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true }, function (response) {
 			if (chrome.runtime.lastError) {
 				console.log('BTTV request error:', chrome.runtime.lastError.message);
 			}
 		});
 	}
-	if (settings.seventv) {
-		chrome.runtime.sendMessage(chrome.runtime.id, { 
-			getSEVENTV: true,
-			videoId: videoId,
-			url: "https://youtube.com/?v="+videoId,
-			channelId: channelId
-		}, function (response) {
+	if (settings.seventv && !SEVENTV) {
+		chrome.runtime.sendMessage(chrome.runtime.id, { getSEVENTV: true }, function (response) {
 			if (chrome.runtime.lastError) {
 				console.log('7TV request error:', chrome.runtime.lastError.message);
 			}
 		});
 	}
-	if (settings.ffz) {
-		chrome.runtime.sendMessage(chrome.runtime.id, { 
+	if (settings.ffz && !FFZ) {
+		chrome.runtime.sendMessage(chrome.runtime.id, { getFFZ: true }, function (response) {
+			if (chrome.runtime.lastError) {
+				console.log('FFZ request error:', chrome.runtime.lastError.message);
+			}
+		});
+	}
+}
+
+function requestEmotesForVideo(videoId, channelId, options = {}) {
+	if (!settings || typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) return;
+
+	const normalizedVideoId = videoId ? String(videoId) : null;
+	const normalizedChannelId = channelId ? String(channelId) : null;
+	const contextChanged =
+		normalizedVideoId !== currentVideoId ||
+		normalizedChannelId !== currentChannelId;
+	const force = !!options.force;
+	const shouldReset = contextChanged || force;
+
+	// Store current IDs
+	currentVideoId = normalizedVideoId;
+	currentChannelId = normalizedChannelId;
+
+	if (shouldReset) {
+		// Reset on context change (or forced refresh) even if all providers are currently disabled.
+		EMOTELIST = false;
+		BTTV = false;
+		SEVENTV = false;
+		FFZ = false;
+	}
+
+	const needsBttv = !!settings.bttv && (shouldReset || !BTTV);
+	const needsSeventv = !!settings.seventv && (shouldReset || !SEVENTV);
+	const needsFfz = !!settings.ffz && (shouldReset || !FFZ);
+
+	if (!needsBttv && !needsSeventv && !needsFfz) {
+		return;
+	}
+
+	if (needsBttv) {
+		chrome.runtime.sendMessage(chrome.runtime.id, {
+			getBTTV: true,
+			url: "https://youtube.com/?v=" + normalizedVideoId,
+			videoId: normalizedVideoId,
+			channelId: normalizedChannelId
+		}, function () {
+			if (chrome.runtime.lastError) {
+				console.log('BTTV request error:', chrome.runtime.lastError.message);
+			}
+		});
+	}
+	if (needsSeventv) {
+		chrome.runtime.sendMessage(chrome.runtime.id, {
+			getSEVENTV: true,
+			videoId: normalizedVideoId,
+			url: "https://youtube.com/?v=" + normalizedVideoId,
+			channelId: normalizedChannelId
+		}, function () {
+			if (chrome.runtime.lastError) {
+				console.log('7TV request error:', chrome.runtime.lastError.message);
+			}
+		});
+	}
+	if (needsFfz) {
+		chrome.runtime.sendMessage(chrome.runtime.id, {
 			getFFZ: true,
-			videoId: videoId,
-			url: "https://youtube.com/?v="+videoId,
-			channelId: channelId
-		}, function (response) {
+			videoId: normalizedVideoId,
+			url: "https://youtube.com/?v=" + normalizedVideoId,
+			channelId: normalizedChannelId
+		}, function () {
 			if (chrome.runtime.lastError) {
 				console.log('FFZ request error:', chrome.runtime.lastError.message);
 			}
@@ -352,28 +403,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 				}));
 				
 				sendResponse(true);
-				
-				if (settings.bttv && !BTTV) {
-					chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true }, function (response) {
-						if (chrome.runtime.lastError) {
-							console.log('BTTV request error:', chrome.runtime.lastError.message);
-						}
-					});
-				}
-				if (settings.seventv && !SEVENTV) {
-					chrome.runtime.sendMessage(chrome.runtime.id,  { getSEVENTV: true }, function (response) {
-						if (chrome.runtime.lastError) {
-							console.log('7TV request error:', chrome.runtime.lastError.message);
-						}
-					});
-				}
-				if (settings.ffz && !FFZ) {
-					chrome.runtime.sendMessage(chrome.runtime.id,  { getFFZ: true }, function (response) {
-						if (chrome.runtime.lastError) {
-							console.log('FFZ request error:', chrome.runtime.lastError.message);
-						}
-					});
-				}
+				syncThirdPartyEmotesForContext();
 				return;
 			}
 			if ("SEVENTV" in request) {
@@ -428,28 +458,7 @@ try {
 				detail: { settings: settings },
 				bubbles: true
 			}));
-
-			if (settings.bttv && !BTTV) {
-				chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true }, function (response) {
-					if (chrome.runtime.lastError) {
-						console.log('BTTV request error:', chrome.runtime.lastError.message);
-					}
-				});
-			}
-			if (settings.seventv && !SEVENTV) {
-				chrome.runtime.sendMessage(chrome.runtime.id, { getSEVENTV: true }, function (response) {
-					if (chrome.runtime.lastError) {
-						console.log('7TV request error:', chrome.runtime.lastError.message);
-					}
-				});
-			}
-			if (settings.ffz && !FFZ) {
-				chrome.runtime.sendMessage(chrome.runtime.id, { getFFZ: true }, function (response) {
-					if (chrome.runtime.lastError) {
-						console.log('FFZ request error:', chrome.runtime.lastError.message);
-					}
-				});
-			}
+			syncThirdPartyEmotesForContext();
 		}
 		if ("state" in response) {
 			isExtensionOn = response.state;
