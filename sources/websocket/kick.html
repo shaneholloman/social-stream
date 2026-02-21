@@ -33,9 +33,8 @@
                 <span id="viewer-count" class="status-chip warning">Viewers: -</span>
                 <span id="socket-state" class="status-chip warning">Chat socket disconnected</span>
                 <span id="bridge-state" class="status-chip danger">Bridge disconnected</span>
-                <span id="subscription-summary" class="status-chip warning">Subscriptions pending</span>
+                <span id="subscription-summary" class="status-chip warning">Subscriptions syncing</span>
             </div>
-            <p class="hint">Use <code>?username=&lt;slug&gt;</code> in the URL to monitor a specific channel.</p>
         </header>
 
         <div class="layout">
@@ -68,14 +67,12 @@
             </main>
 
             <aside class="sidebar">
-
                 <section class="panel">
-                    <h2>Helpful Tips</h2>
-                    <ul class="tips">
-                        <li>Tokens stay in this browser until sign out or storage clear.</li>
-                        <li>Reload to rebuild subscriptions if Kick has transient issues.</li>
-                        <li>Use URL channel override when testing moderator or partner channels.</li>
-                    </ul>
+                    <h2>Followers & Donations</h2>
+                    <p class="hint">Latest Kick alerts appear here.</p>
+                    <div id="alerts-feed" class="alerts-feed">
+                        <div id="alerts-feed-empty" class="alerts-feed-empty">No follower or donation alerts yet.</div>
+                    </div>
                 </section>
             </aside>
         </div>
