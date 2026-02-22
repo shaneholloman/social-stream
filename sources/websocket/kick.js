@@ -125,10 +125,23 @@ const DEFAULT_CONFIG = {
     bridgeUrl: 'https://kick-bridge.socialstream.ninja/events'
 };
 
+const PUSHER_KEY = '32cbd69e4b950bf97679';
+const PUSHER_WS_BASE = 'wss://ws-us2.pusher.com';
+const PUSHER_RECONNECT_DELAY_MS = 5000;
+const PUSHER_PING_INTERVAL_MS = 45000;
+
 const SUBSCRIPTION_RETRY_DELAY_MS = 10000;
-const CHAT_FEED_LIMIT = 200;
+const CHAT_FEED_LIMIT = 100;
+const ALERT_FEED_LIMIT = 100;
+const EVENT_LOG_LIMIT = 100;
 const CHAT_SCROLL_THRESHOLD_PX = 48;
 const AVATAR_LOOKUP_TIMEOUT_MS = 650;
+const SOCKET_CHAT_ACTIVITY_WINDOW_MS = 45000;
+const PROFILE_CACHE_STORAGE_KEY = 'kickProfileCache';
+const PROFILE_CACHE_STORAGE_VERSION = 2;
+const PROFILE_CACHE_SAVE_DEBOUNCE_MS = 1500;
+const PROFILE_CACHE_MAX_ENTRIES = 1200;
+const PROFILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const state = {
     clientId: '',
@@ -161,7 +174,8 @@ const state = {
         source: null,
         retryTimer: null,
         status: 'disconnected',
-        lastErrorLoggedAt: 0
+        lastErrorLoggedAt: 0,
+        chatDisabled: false
     },
     socket: {
         status: 'disconnected',
@@ -169,11 +183,16 @@ const state = {
         chatroomId: null,
         channelId: null,
         userId: null,
+        lastChatEventAt: 0,
         siteApiBase: '',
         siteApiProxyBase: '',
         allowProxy: true,
         lastError: '',
-        connecting: false
+        connecting: false,
+        pusherWs: null,
+        pusherStatus: 'disconnected',
+        pusherPingTimer: null,
+        pusherReconnectTimer: null
     },
     chat: {
         sending: false,
@@ -189,6 +208,8 @@ const EVENT_TYPES_UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
 let cachedEventTypes = null;
 let cachedEventTypesFetchedAt = 0;
 let eventTypesUnavailableUntil = 0;
+let preferredKickChannelLookupPath = '';
+let profileCachePersistTimer = null;
 
 // Queue for events that arrive before channelId is resolved
 const pendingBridgeEvents = [];
@@ -230,7 +251,10 @@ const kickViewerHeartbeat = {
     hadConnectedTransport: false,
     isLive: null,
     lastSentAt: 0,
-    lastPollErrorAt: 0
+    lastPollErrorAt: 0,
+    attemptSeq: 0,
+    lastAttemptAt: 0,
+    lastSuccessAt: 0
 };
 
 const LITE_MESSAGE_PREFIX = 'kick-lite-';
@@ -483,19 +507,16 @@ function resolveProfileIdentifiers(...sources) {
         }
         if (!userId) {
             const idCandidates = [
-                source.id,
-                source.user_id,
-                source.userId,
-                source.broadcaster_user_id,
-                source.broadcasterUserId,
-                source.identity?.id,
                 source.user?.id,
                 source.user?.user_id,
                 source.profile?.id,
                 source.account?.id,
+                source.identity?.id,
+                source.id,
+                source.user_id,
+                source.userId,
                 source.sub,
-                source.channel?.id,
-                source.channel?.user_id
+                source.channel?.id
             ];
             for (const candidate of idCandidates) {
                 if (candidate == null) {
@@ -552,7 +573,133 @@ function getCachedProfile(ids, options = {}) {
     if (!ids) {
         return undefined;
     }
+    if (ids.username) {
+        const byUsername = getProfileCacheEntry(state.profileCache, { username: ids.username }, options);
+        if (byUsername !== undefined) {
+            return byUsername;
+        }
+    }
     return getProfileCacheEntry(state.profileCache, ids, options);
+}
+
+function serializeKickProfileCacheEntries() {
+    const now = Date.now();
+    const entries = [];
+    state.profileCache.forEach((entry, key) => {
+        if (!key || typeof key !== 'string') {
+            return;
+        }
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+        const timestamp = Number(entry.timestamp);
+        if (!Number.isFinite(timestamp)) {
+            return;
+        }
+        if (now - timestamp > PROFILE_CACHE_MAX_AGE_MS) {
+            return;
+        }
+        const hasProfile = entry.hasProfile === true && entry.profile && typeof entry.profile === 'object';
+        entries.push([
+            key,
+            {
+                timestamp,
+                hasProfile,
+                profile: hasProfile ? entry.profile : null
+            }
+        ]);
+    });
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    if (entries.length > PROFILE_CACHE_MAX_ENTRIES) {
+        return entries.slice(entries.length - PROFILE_CACHE_MAX_ENTRIES);
+    }
+    return entries;
+}
+
+function persistKickProfileCache() {
+    try {
+        const payload = {
+            version: PROFILE_CACHE_STORAGE_VERSION,
+            savedAt: Date.now(),
+            entries: serializeKickProfileCacheEntries()
+        };
+        localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (error) {
+        console.warn('[KickWs] Failed to persist profile cache.', error);
+    }
+}
+
+function scheduleKickProfileCachePersist() {
+    if (profileCachePersistTimer) {
+        clearTimeout(profileCachePersistTimer);
+    }
+    profileCachePersistTimer = setTimeout(() => {
+        profileCachePersistTimer = null;
+        persistKickProfileCache();
+    }, PROFILE_CACHE_SAVE_DEBOUNCE_MS);
+}
+
+function loadKickProfileCache() {
+    try {
+        const raw = localStorage.getItem(PROFILE_CACHE_STORAGE_KEY);
+        if (!raw) {
+            return;
+        }
+        const parsed = JSON.parse(raw);
+        if (
+            parsed &&
+            typeof parsed === 'object' &&
+            Object.prototype.hasOwnProperty.call(parsed, 'version') &&
+            parsed.version !== PROFILE_CACHE_STORAGE_VERSION
+        ) {
+            localStorage.removeItem(PROFILE_CACHE_STORAGE_KEY);
+            return;
+        }
+        const entries = Array.isArray(parsed?.entries)
+            ? parsed.entries
+            : (Array.isArray(parsed) ? parsed : []);
+        if (!entries.length) {
+            return;
+        }
+        const now = Date.now();
+        let loaded = 0;
+        entries.forEach((entry) => {
+            if (!Array.isArray(entry) || entry.length < 2) {
+                return;
+            }
+            const key = entry[0];
+            const value = entry[1];
+            if (typeof key !== 'string' || !value || typeof value !== 'object') {
+                return;
+            }
+            const timestamp = Number(value.timestamp);
+            if (!Number.isFinite(timestamp)) {
+                return;
+            }
+            if (now - timestamp > PROFILE_CACHE_MAX_AGE_MS) {
+                return;
+            }
+            const hasProfile = value.hasProfile === true && value.profile && typeof value.profile === 'object';
+            state.profileCache.set(key, {
+                profile: hasProfile ? value.profile : null,
+                hasProfile,
+                timestamp
+            });
+            loaded += 1;
+        });
+        while (state.profileCache.size > PROFILE_CACHE_MAX_ENTRIES) {
+            const oldestKey = state.profileCache.keys().next().value;
+            if (oldestKey === undefined) {
+                break;
+            }
+            state.profileCache.delete(oldestKey);
+        }
+        if (loaded > 0) {
+            logKickWs(`Loaded ${loaded} cached Kick profiles from storage.`);
+        }
+    } catch (error) {
+        console.warn('[KickWs] Failed to load profile cache.', error);
+    }
 }
 
 function rememberProfile(profile, ...sources) {
@@ -564,6 +711,7 @@ function rememberProfile(profile, ...sources) {
         return;
     }
     storeProfileCacheEntry(state.profileCache, ids, profile);
+    scheduleKickProfileCachePersist();
 }
 
 function rememberProfileMiss(...sources) {
@@ -572,6 +720,7 @@ function rememberProfileMiss(...sources) {
         return;
     }
     storeProfileCacheEntry(state.profileCache, ids, null);
+    scheduleKickProfileCachePersist();
 }
 
 function normalizeKickSiteBase(value) {
@@ -706,7 +855,8 @@ function updateChatFeedAvatar({ messageIds, userId, username }, avatarUrl) {
 }
 
 function queueAvatarLookup(ids, username, messageId) {
-    const userKey = ids?.userId ? `id:${ids.userId}` : (username ? `name:${normalizeChannel(username)}` : '');
+    const normalizedUsername = username ? normalizeChannel(username) : '';
+    const userKey = normalizedUsername ? `name:${normalizedUsername}` : (ids?.userId ? `id:${ids.userId}` : '');
     if (!userKey || !username) {
         return null;
     }
@@ -723,17 +873,22 @@ function queueAvatarLookup(ids, username, messageId) {
         pendingMessageIds.add(String(messageId));
     }
 
-    const promise = fetchKickProfile(username)
-        .then((profile) => {
-            const avatar = extractKickAvatar(profile);
-            if (avatar) {
-                const normalizedAvatar = normalizeImage(avatar);
-                rememberProfile({ avatar: normalizedAvatar }, ids, { username });
+    const promise = (async () => {
+        const profile = await fetchKickProfile(username);
+        const avatarFromChannelProfile = extractKickAvatar(profile);
+        if (avatarFromChannelProfile) {
+            return normalizeImage(avatarFromChannelProfile);
+        }
+        return '';
+    })()
+        .then((resolvedAvatar) => {
+            if (resolvedAvatar) {
+                rememberProfile({ avatar: resolvedAvatar }, ids, { username });
                 updateChatFeedAvatar(
                     { messageIds: pendingMessageIds, userId: ids?.userId, username },
-                    normalizedAvatar
+                    resolvedAvatar
                 );
-                return normalizedAvatar;
+                return resolvedAvatar;
             }
             rememberProfileMiss(ids, { username });
             return '';
@@ -1588,6 +1743,8 @@ function initElements() {
         eventLog: q('event-log'),
         chatFeed: q('chat-feed'),
         chatFeedEmpty: q('chat-feed-empty'),
+        alertsFeed: q('alerts-feed'),
+        alertsFeedEmpty: q('alerts-feed-empty'),
         socketState: q('socket-state'),
         bridgeState: q('bridge-state'),
         subscriptionSummary: q('subscription-summary'),
@@ -1633,6 +1790,7 @@ function setChannelSlug(value, options = {}) {
         resetKickViewerHeartbeatState();
         resetThirdPartyEmoteCache();
         resetChatFeed();
+        resetAlertsFeed();
     } else {
         state.channelSlug = slug; // Preserve original casing.
     }
@@ -1819,6 +1977,7 @@ function persistTokens() {
 function signOut() {
     disconnectBridge();
     void disconnectLocalSocket();
+    resetAlertsFeed();
     resetKickViewerHeartbeatState();
     // Clear tokens
     state.tokens = null;
@@ -1988,12 +2147,24 @@ function updateAuthStatus() {
         els.authState.textContent = authed ? 'Signed in' : 'Not signed in';
     }
     els.authState.className = authed ? 'status-chip' : 'status-chip warning';
+    // Hide auth-dependent status chips when not signed in
+    if (els.subscriptionSummary) {
+        els.subscriptionSummary.style.display = authed ? '' : 'none';
+    }
+    if (els.bridgeState) {
+        els.bridgeState.style.display = authed ? '' : 'none';
+    }
     // Show/hide sign in and sign out buttons based on auth state
     if (els.startAuth) {
         els.startAuth.style.display = authed ? 'none' : '';
     }
     if (els.signOut) {
         els.signOut.style.display = authed ? '' : 'none';
+    }
+    const authMethodSelector = document.getElementById('auth-method-selector');
+    if (authMethodSelector) {
+        const showSelector = !authed && isElectronEnvironment();
+        authMethodSelector.classList.toggle('hidden', !showSelector);
     }
     const status = authed ? 'authorized' : 'signin_required';
     if (status !== lastAuthNotifyStatus) {
@@ -2014,7 +2185,6 @@ function bindEvents() {
     const authMethodSelector = document.getElementById('auth-method-selector');
     const isElectron = isElectronEnvironment();
     if (authMethodSelector && isElectron) {
-        authMethodSelector.classList.remove('hidden');
         // Load saved preference
         const savedMethod = localStorage.getItem('kickAuthMethod') || 'external';
         const radios = authMethodSelector.querySelectorAll('input[name="kick-auth-method"]');
@@ -2212,8 +2382,13 @@ function shouldRunKickViewerHeartbeat() {
     if (!isKickViewerTransportConnected()) {
         return false;
     }
-    // Explicit offline status pauses heartbeat until we get a live/unknown state again.
-    return kickViewerHeartbeat.isLive !== false;
+    // Keep polling even when we believe the channel is offline so viewer state
+    // can recover for channels where live-status events are not available.
+    return true;
+}
+
+function logKickViewerDebug(message, level = 'info') {
+    logKickWs(`[Viewer] ${message}`, level);
 }
 
 function updateKickViewerCountDisplay(count) {
@@ -2246,33 +2421,120 @@ function emitKickViewerUpdate(count) {
 
 async function fetchKickViewerSnapshot() {
     const slugInput = state.channelSlug?.trim();
-    if (!slugInput || !state.tokens?.access_token) {
+    if (!slugInput) {
+        logKickViewerDebug('Snapshot skipped: missing channel slug.', 'warning');
         return null;
     }
-    const slugLower = normalizeChannel(slugInput);
-    if (!slugLower) {
-        return null;
+    const hasAuth = !!state.tokens?.access_token;
+    let fallbackSnapshot = null;
+
+    // --- Authenticated paths (official API via apiFetch) ---
+    if (hasAuth) {
+        const slugLower = normalizeChannel(slugInput);
+        if (slugLower) {
+            try {
+                const channel = await fetchKickChannelBySlug(slugLower, { debugContext: 'viewer channel lookup' });
+                if (channel && typeof channel === 'object') {
+                    const viewerCount = extractKickViewerCount(channel);
+                    const isLive = extractKickLiveFlag(channel);
+                    if (viewerCount != null || typeof isLive === 'boolean') {
+                        logKickViewerDebug(
+                            `Snapshot via channel @${slugLower}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
+                        );
+                        return { viewerCount, isLive };
+                    }
+                    logKickViewerDebug(`Channel snapshot for @${slugLower} had no viewer/live fields.`, 'warning');
+                }
+            } catch (err) {
+                const status = getKickApiErrorStatus(err);
+                if (!(status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501)) {
+                    throw err;
+                }
+                logKickViewerDebug(
+                    `Channel snapshot failed for @${slugLower}: status=${status || 'unknown'} error=${err?.message || err}.`,
+                    'warning'
+                );
+            }
+        }
+        const broadcasterUserId = normalizeKickNumericId(state.channelId);
+        if (broadcasterUserId != null) {
+            try {
+                const livestream = await fetchKickLivestreamByBroadcasterId(broadcasterUserId);
+                if (livestream && typeof livestream === 'object') {
+                    const viewerCount = extractKickViewerCount(livestream);
+                    const isLive = extractKickLiveFlag(livestream);
+                    logKickViewerDebug(
+                        `Snapshot via livestream id=${broadcasterUserId}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
+                    );
+                    return { viewerCount, isLive };
+                }
+                fallbackSnapshot = { viewerCount: 0, isLive: null };
+                logKickViewerDebug(`Livestream snapshot empty for broadcaster id=${broadcasterUserId}; using fallback snapshot.`, 'warning');
+            } catch (err) {
+                const status = getKickApiErrorStatus(err);
+                if (status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501) {
+                    logKickViewerDebug(
+                        `Livestream snapshot failed for id=${broadcasterUserId}: status=${status || 'unknown'} error=${err?.message || err}.`,
+                        'warning'
+                    );
+                } else {
+                    throw err;
+                }
+            }
+        }
     }
-    const params = new URLSearchParams({ slug: slugLower });
-    const data = await apiFetch(`/public/v1/channels?${params.toString()}`);
-    const entries = Array.isArray(data?.data) ? data.data : [];
-    const channel = entries.find(item => normalizeChannel(item?.slug) === slugLower) || entries[0];
-    if (!channel || typeof channel !== 'object') {
-        return null;
+
+    // --- Unauthenticated fallback: bridge lookup with viewer data ---
+    if (!fallbackSnapshot) {
+        const slugLower = normalizeChannel(slugInput);
+        if (slugLower) {
+            try {
+                const base = getBridgeBaseUrl();
+                const resp = await fetch(
+                    `${base}/kick/lookup?slug=${encodeURIComponent(slugLower)}&include_viewer=1`
+                );
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const viewerCount = typeof data?.viewer_count === 'number' ? data.viewer_count : null;
+                    const isLive = typeof data?.is_live === 'boolean' ? data.is_live : null;
+                    if (viewerCount != null || isLive != null) {
+                        logKickViewerDebug(
+                            `Snapshot via bridge @${slugLower}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${isLive != null ? isLive : 'null'}.`
+                        );
+                        return { viewerCount, isLive };
+                    }
+                }
+            } catch (err) {
+                logKickViewerDebug(`Bridge viewer lookup failed: ${err?.message || err}`, 'warning');
+            }
+        }
     }
-    return {
-        viewerCount: extractKickViewerCount(channel),
-        isLive: extractKickLiveFlag(channel)
-    };
+
+    if (!fallbackSnapshot) {
+        logKickViewerDebug(`No viewer snapshot available for @${slugInput}.`, 'warning');
+    }
+    return fallbackSnapshot;
 }
 
 async function sendKickViewerHeartbeat(reason = 'interval') {
+    const slug = (state.channelSlug || '').trim() || '(none)';
+    const transportConnected = isKickViewerTransportConnected();
     if (!shouldRunKickViewerHeartbeat()) {
+        logKickViewerDebug(
+            `Heartbeat skipped (${reason}): slug=${slug}, transportConnected=${transportConnected}, socket=${state.socket?.status || 'unknown'}, bridge=${state.bridge?.status || 'unknown'}.`
+        );
         return;
     }
     if (kickViewerHeartbeat.pollInFlight) {
+        logKickViewerDebug(`Heartbeat skipped (${reason}): poll already in flight.`, 'warning');
         return;
     }
+    kickViewerHeartbeat.attemptSeq += 1;
+    kickViewerHeartbeat.lastAttemptAt = Date.now();
+    const attemptId = kickViewerHeartbeat.attemptSeq;
+    logKickViewerDebug(
+        `Heartbeat attempt #${attemptId} start (${reason}): slug=${slug}, channelId=${state.channelId || 'null'}, hasKnown=${kickViewerHeartbeat.hasKnownCount}, lastKnown=${kickViewerHeartbeat.lastKnownCount}.`
+    );
     kickViewerHeartbeat.pollInFlight = true;
     try {
         let nextViewerCount = null;
@@ -2286,19 +2548,37 @@ async function sendKickViewerHeartbeat(reason = 'interval') {
             } else if (kickViewerHeartbeat.isLive === false) {
                 nextViewerCount = 0;
             }
+            logKickViewerDebug(
+                `Heartbeat attempt #${attemptId} snapshot: viewers=${snapshot.viewerCount != null ? snapshot.viewerCount : 'null'}, live=${typeof snapshot.isLive === 'boolean' ? snapshot.isLive : 'null'}.`
+            );
+        } else {
+            logKickViewerDebug(`Heartbeat attempt #${attemptId} snapshot: none returned.`, 'warning');
         }
         if (nextViewerCount == null) {
-            nextViewerCount = kickViewerHeartbeat.hasKnownCount ? kickViewerHeartbeat.lastKnownCount : 0;
+            if (kickViewerHeartbeat.hasKnownCount) {
+                nextViewerCount = kickViewerHeartbeat.lastKnownCount;
+                logKickViewerDebug(`Heartbeat attempt #${attemptId} using cached viewers=${nextViewerCount}.`);
+            } else {
+                logKickViewerDebug(`Heartbeat attempt #${attemptId} has no viewer count yet; waiting for first successful snapshot.`, 'warning');
+                return;
+            }
         }
         emitKickViewerUpdate(nextViewerCount);
+        kickViewerHeartbeat.lastSuccessAt = Date.now();
+        logKickViewerDebug(`Heartbeat attempt #${attemptId} emitted viewers=${nextViewerCount}.`);
     } catch (err) {
         const now = Date.now();
         if (!kickViewerHeartbeat.lastPollErrorAt || now - kickViewerHeartbeat.lastPollErrorAt > 120000) {
             kickViewerHeartbeat.lastPollErrorAt = now;
             logKickWs(`Viewer heartbeat fallback (${reason}): ${err?.message || err}`, 'warning');
         }
-        const fallbackCount = kickViewerHeartbeat.hasKnownCount ? kickViewerHeartbeat.lastKnownCount : 0;
-        emitKickViewerUpdate(fallbackCount);
+        logKickViewerDebug(`Heartbeat attempt #${attemptId} failed: ${err?.message || err}`, 'warning');
+        if (kickViewerHeartbeat.hasKnownCount) {
+            emitKickViewerUpdate(kickViewerHeartbeat.lastKnownCount);
+            logKickViewerDebug(`Heartbeat attempt #${attemptId} emitted cached viewers=${kickViewerHeartbeat.lastKnownCount}.`, 'warning');
+        } else {
+            logKickViewerDebug(`Heartbeat attempt #${attemptId} has no cached viewers after failure.`, 'warning');
+        }
     } finally {
         kickViewerHeartbeat.pollInFlight = false;
         if (!shouldRunKickViewerHeartbeat()) {
@@ -2315,6 +2595,7 @@ function syncKickViewerHeartbeat(emitZeroOnStop = false) {
     const shouldRun = shouldRunKickViewerHeartbeat();
     if (shouldRun) {
         if (!kickViewerHeartbeat.intervalId) {
+            logKickViewerDebug(`Starting viewer heartbeat interval (${KICK_VIEWER_HEARTBEAT_INTERVAL_MS}ms).`);
             kickViewerHeartbeat.intervalId = setInterval(() => {
                 void sendKickViewerHeartbeat('interval');
             }, KICK_VIEWER_HEARTBEAT_INTERVAL_MS);
@@ -2323,6 +2604,7 @@ function syncKickViewerHeartbeat(emitZeroOnStop = false) {
             !kickViewerHeartbeat.lastSentAt ||
             (Date.now() - kickViewerHeartbeat.lastSentAt) >= KICK_VIEWER_HEARTBEAT_INTERVAL_MS
         ) {
+            logKickViewerDebug('Requesting immediate viewer heartbeat run.');
             void sendKickViewerHeartbeat('start');
         }
         return;
@@ -2331,6 +2613,7 @@ function syncKickViewerHeartbeat(emitZeroOnStop = false) {
     if (kickViewerHeartbeat.intervalId) {
         clearInterval(kickViewerHeartbeat.intervalId);
         kickViewerHeartbeat.intervalId = null;
+        logKickViewerDebug('Stopped viewer heartbeat interval.');
     }
 
     if (emitZeroOnStop && !transportConnected) {
@@ -2345,6 +2628,7 @@ function syncKickViewerHeartbeat(emitZeroOnStop = false) {
             );
         if (shouldEmitDisconnectZero) {
             emitKickViewerUpdate(0);
+            logKickViewerDebug('Emitted viewers=0 due to transport disconnect.');
         }
         kickViewerHeartbeat.hadConnectedTransport = false;
         // Disconnect means unknown state; allow heartbeat to resume on reconnect.
@@ -2364,34 +2648,43 @@ function resetKickViewerHeartbeatState() {
     kickViewerHeartbeat.isLive = null;
     kickViewerHeartbeat.lastSentAt = 0;
     kickViewerHeartbeat.lastPollErrorAt = 0;
+    kickViewerHeartbeat.attemptSeq = 0;
+    kickViewerHeartbeat.lastAttemptAt = 0;
+    kickViewerHeartbeat.lastSuccessAt = 0;
     updateKickViewerCountDisplay(null);
 }
 
 function updateSocketState(payload = {}) {
     syncKickViewerHeartbeat(true);
     if (!els.socketState) return;
-    if (!supportsLocalSocket()) {
-        // Hide socket status in browser - it's only relevant for desktop app
-        els.socketState.style.display = 'none';
-        return;
-    }
     els.socketState.style.display = '';
     const status = state.socket?.status || 'disconnected';
+    const pusherUp = state.socket.pusherStatus === 'connected';
+    const localUp = supportsLocalSocket() && status === 'connected' && !pusherUp;
+    const bridgeChat = state.bridge.status === 'connected' && !state.bridge.chatDisabled;
+    let transport = '';
+    if (pusherUp) transport = 'Pusher';
+    else if (localUp) transport = 'Electron';
+    else if (bridgeChat) transport = 'Bridge';
     let label = 'Chat socket disconnected';
     let className = 'status-chip danger';
     if (status === 'connected') {
-        label = 'Chat socket connected';
+        label = transport ? `Chat: ${transport}` : 'Chat socket connected';
         className = 'status-chip';
     } else if (status === 'connecting') {
         label = 'Chat socket connecting';
         className = 'status-chip warning';
     } else if (status === 'error') {
-        const detail = payload.error || state.socket?.lastError || '';
-        label = detail ? `Chat socket error` : 'Chat socket error';
+        label = 'Chat socket error';
         className = 'status-chip danger';
     } else if (status === 'disconnected') {
-        label = 'Chat socket disconnected';
-        className = 'status-chip danger';
+        if (bridgeChat) {
+            label = 'Chat: Bridge';
+            className = 'status-chip';
+        } else {
+            label = 'Chat socket disconnected';
+            className = 'status-chip danger';
+        }
     }
     els.socketState.textContent = label;
     els.socketState.className = className;
@@ -2417,21 +2710,30 @@ function handleLocalSocketStatus(payload) {
         state.socket.connectionId = payload.connectionId;
     }
     state.socket.status = payload.status || state.socket.status || 'disconnected';
-    const rawError = payload.error || payload.reason || state.socket.lastError || '';
+    const rawError = payload.error ?? payload.reason ?? '';
     const errorText = (rawError && typeof rawError === 'object')
         ? (rawError.message || JSON.stringify(rawError))
         : rawError;
-    state.socket.lastError = errorText;
+    const isWaitingIdentifiersError = typeof errorText === 'string' && errorText.trim() === 'waiting_identifiers';
+    if (state.socket.status === 'connected' || state.socket.status === 'connecting' || isWaitingIdentifiersError) {
+        state.socket.lastError = '';
+    } else if (errorText) {
+        state.socket.lastError = errorText;
+    }
     if (payload.chatroomId != null) state.socket.chatroomId = payload.chatroomId;
     if (payload.channelId != null) state.socket.channelId = payload.channelId;
     if (payload.userId != null) state.socket.userId = payload.userId;
-    const detail = errorText || '';
+    const detail = state.socket.lastError || '';
     if (state.socket.status !== previousStatus || (detail && detail !== previousError)) {
         const suffix = detail ? `: ${detail}` : '';
         const level = state.socket.status === 'error' ? 'error' : (detail ? 'warning' : 'info');
         logKickWs(`Status ${state.socket.status}${suffix}`, level);
     }
     updateSocketState(payload);
+    if (state.socket.status === 'connected' && previousStatus !== 'connected') {
+        logKickViewerDebug('Socket connected, requesting immediate viewer snapshot.');
+        void sendKickViewerHeartbeat('socket_connected');
+    }
 }
 
 function handleLocalSocketEvent(packet) {
@@ -2441,7 +2743,10 @@ function handleLocalSocketEvent(packet) {
     }
     const now = Date.now();
     const type = packet.type || packet.body?.event || 'event';
-    if (kickWsEventLogCount < 5 || now - kickWsLastEventLogAt > 15000) {
+    if (type === 'chat.message.sent') {
+        state.socket.lastChatEventAt = now;
+    }
+    if (type !== 'chat.message.sent' && (kickWsEventLogCount < 5 || now - kickWsLastEventLogAt > 15000)) {
         kickWsEventLogCount += 1;
         kickWsLastEventLogAt = now;
         logKickWs(`Event received: ${type}.`);
@@ -2472,9 +2777,30 @@ function initLocalSocketBridge() {
 
 async function connectLocalSocket(force = false) {
     if (!supportsLocalSocket()) return;
+    // Our Pusher handles chat — don't start ninjafy's duplicate WebSocket
+    if (state.socket.pusherWs || state.socket.pusherStatus === 'connecting') return;
     if (!state.channelSlug) return;
     if (!force && state.socket.status === 'connected') return;
     if (state.socket.connecting) return;
+
+    const chatroomId = state.socket.chatroomId != null ? String(state.socket.chatroomId).trim() : '';
+    const socketChannelId = state.socket.channelId != null ? String(state.socket.channelId).trim() : '';
+    const socketUserId = state.socket.userId != null ? String(state.socket.userId).trim() : '';
+    const broadcasterUserId = state.channelId != null ? String(state.channelId).trim() : '';
+    const fallbackUserId = socketUserId || broadcasterUserId;
+    const hasResolverHint = Boolean(chatroomId || socketChannelId || fallbackUserId);
+    if (!hasResolverHint) {
+        if (state.socket.lastError !== 'waiting_identifiers') {
+            logKickWs('Waiting for channel identifiers before opening chat socket.');
+        }
+        state.socket.status = 'disconnected';
+        state.socket.lastError = 'waiting_identifiers';
+        updateSocketState({ status: 'disconnected' });
+        return;
+    }
+    if (state.socket.lastError === 'waiting_identifiers') {
+        state.socket.lastError = '';
+    }
 
     if (!state.tokens?.access_token && !state.socket.chatroomId) {
         logKickWs('Chat socket requires Kick sign-in to resolve chatroom ID.', 'warning');
@@ -2494,9 +2820,9 @@ async function connectLocalSocket(force = false) {
     try {
         const payload = {
             slug: state.channelSlug,
-            chatroomId: state.socket.chatroomId || null,
-            channelId: state.socket.channelId || null,
-            userId: state.socket.userId || null,
+            chatroomId: chatroomId || null,
+            channelId: socketChannelId || null,
+            userId: fallbackUserId || null,
             accessToken: state.tokens?.access_token || null,
             clientId: state.clientId || null,
             userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
@@ -2533,12 +2859,272 @@ async function disconnectLocalSocket() {
     state.socket.connectionId = null;
     state.socket.status = 'disconnected';
     state.socket.lastError = '';
+    state.socket.lastChatEventAt = 0;
     kickWsEventLogCount = 0;
     kickWsLastEventLogAt = 0;
     logKickWs('Chat socket disconnected.');
     updateSocketState({ status: 'disconnected' });
     try {
         await window.ninjafy.stopKickWebSocket({ connectionId });
+    } catch (_) {}
+}
+
+// ── Pusher WebSocket (browser-direct chat) ──────────────────────────
+
+function sendPusherFrame(event, data) {
+    if (!state.socket.pusherWs || state.socket.pusherWs.readyState !== WebSocket.OPEN) return;
+    state.socket.pusherWs.send(JSON.stringify({ event, data }));
+}
+
+function disconnectPusherSocket() {
+    if (state.socket.pusherPingTimer) {
+        clearInterval(state.socket.pusherPingTimer);
+        state.socket.pusherPingTimer = null;
+    }
+    if (state.socket.pusherReconnectTimer) {
+        clearTimeout(state.socket.pusherReconnectTimer);
+        state.socket.pusherReconnectTimer = null;
+    }
+    if (state.socket.pusherWs) {
+        try { state.socket.pusherWs.close(); } catch (_) {}
+        state.socket.pusherWs = null;
+    }
+    state.socket.pusherStatus = 'disconnected';
+}
+
+function schedulePusherReconnect() {
+    if (state.socket.pusherReconnectTimer) return;
+    state.socket.pusherReconnectTimer = setTimeout(() => {
+        state.socket.pusherReconnectTimer = null;
+        connectPusherSocket();
+    }, PUSHER_RECONNECT_DELAY_MS);
+}
+
+function mapPusherEventToPacket(eventName, data) {
+    if (eventName === 'App\\Events\\ChatMessageEvent') {
+        return { type: 'chat.message.sent', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\ChatMessageDeletedEvent' || eventName === 'App\\Events\\MessageDeletedEvent') {
+        return { type: 'chat.message.deleted', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\GiftedSubscriptionsEvent' || eventName === 'App\\Events\\GiftPurchaseEvent') {
+        return { type: 'channel.subscription.gifts', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\SubscriptionEvent' || eventName === 'App\\Events\\ChannelSubscriptionEvent') {
+        return { type: 'channel.subscription.new', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\UserBannedEvent') {
+        return { type: 'chat.user.banned', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\StreamHostEvent') {
+        return { type: 'livestream.status.updated', body: data, source: 'socket' };
+    }
+    return { type: eventName, body: data, source: 'socket' };
+}
+
+function handlePusherMessage(event) {
+    if (!event?.data) return;
+    let payload;
+    try {
+        payload = JSON.parse(event.data);
+    } catch (_) {
+        return;
+    }
+    const eventName = payload?.event;
+    if (!eventName) return;
+
+    if (eventName === 'pusher:connection_established') {
+        let connectionData = {};
+        try { connectionData = JSON.parse(payload.data || '{}'); } catch (_) {}
+        state.socket.pusherStatus = 'connected';
+        state.socket.status = 'connected';
+        updateSocketState({ status: 'connected' });
+        log('Pusher chat socket connected.');
+        const channels = [];
+        if (state.socket.chatroomId) {
+            channels.push(`chatrooms.${state.socket.chatroomId}.v2`);
+            channels.push(`chatrooms.${state.socket.chatroomId}`);
+        }
+        if (state.socket.channelId) {
+            channels.push(`channel.${state.socket.channelId}`);
+        }
+        for (const channel of channels) {
+            sendPusherFrame('pusher:subscribe', { auth: '', channel });
+        }
+        if (state.socket.pusherPingTimer) clearInterval(state.socket.pusherPingTimer);
+        const timeout = connectionData.activity_timeout || 60;
+        state.socket.pusherPingTimer = setInterval(() => {
+            sendPusherFrame('pusher:ping', {});
+        }, Math.min(timeout * 1000 * 0.75, PUSHER_PING_INTERVAL_MS));
+        // Pusher is now handling chat — reconnect bridge with noChat if needed
+        syncBridgeChatMode();
+        return;
+    }
+
+    if (eventName === 'pusher_internal:subscription_succeeded') {
+        const channelName = payload.channel || '';
+        log(`Pusher subscribed to: ${channelName}`);
+        return;
+    }
+
+    if (eventName === 'pusher:ping') {
+        sendPusherFrame('pusher:pong', {});
+        return;
+    }
+
+    if (eventName === 'pusher:pong') return;
+
+    if (eventName === 'pusher:error') {
+        log(`Pusher error: ${payload?.data?.message || 'Unknown'}`, 'warning');
+        return;
+    }
+
+    let data = payload.data;
+    if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch (_) {}
+    }
+
+    const packet = mapPusherEventToPacket(eventName, data);
+    if (packet) {
+        handleLocalSocketEvent(packet);
+    }
+}
+
+function connectPusherSocket() {
+    if (state.socket.pusherStatus === 'connected' || state.socket.pusherStatus === 'connecting') return;
+    const chatroomId = state.socket.chatroomId;
+    if (!chatroomId) {
+        log('Pusher: no chatroomId available, cannot connect chat.', 'warning');
+        return;
+    }
+    disconnectPusherSocket();
+    const url = `${PUSHER_WS_BASE}/app/${PUSHER_KEY}?protocol=7&client=js&version=8.4.0&flash=false`;
+    state.socket.pusherStatus = 'connecting';
+    state.socket.status = 'connecting';
+    updateSocketState({ status: 'connecting' });
+    log(`Connecting Pusher chat socket for chatroom ${chatroomId}...`);
+    try {
+        state.socket.pusherWs = new WebSocket(url);
+    } catch (err) {
+        log(`Pusher WebSocket failed: ${err?.message || err}`, 'error');
+        state.socket.pusherStatus = 'disconnected';
+        state.socket.status = 'disconnected';
+        updateSocketState({ status: 'error', error: err?.message });
+        schedulePusherReconnect();
+        return;
+    }
+    state.socket.pusherWs.addEventListener('message', handlePusherMessage);
+    state.socket.pusherWs.addEventListener('close', (event) => {
+        log(`Pusher socket closed (code: ${event?.code || 'unknown'}).`);
+        state.socket.pusherStatus = 'disconnected';
+        state.socket.status = 'disconnected';
+        updateSocketState({ status: 'disconnected' });
+        schedulePusherReconnect();
+        // Pusher down — reconnect bridge with chat enabled as fallback
+        syncBridgeChatMode();
+    });
+    state.socket.pusherWs.addEventListener('error', () => {
+        log('Pusher socket error.', 'warning');
+    });
+}
+
+// ── Channel lookup for Pusher chat ──────────────────────────────────
+
+async function resolveChannelForPusher() {
+    if (state.socket.chatroomId) return;
+    const slug = state.channelSlug?.trim();
+    if (!slug) return;
+
+    // 1. If signed in, resolve channel metadata via official API (broadcaster_user_id, slug, etc)
+    if (state.tokens?.access_token) {
+        try {
+            await resolveChannelId();
+        } catch (err) {
+            log(`Channel resolve for Pusher failed: ${err?.message || err}`, 'warning');
+        }
+        if (state.socket.chatroomId) return;
+    }
+
+    // 2. Try bridge cache (fast, no auth needed)
+    try {
+        const base = getBridgeBaseUrl();
+        const lookupResp = await fetch(`${base}/kick/lookup?slug=${encodeURIComponent(slug)}`);
+        if (lookupResp.ok) {
+            const data = await lookupResp.json();
+            if (data.chatroom_id) {
+                state.socket.chatroomId = String(data.chatroom_id);
+                if (data.broadcaster_user_id && !state.channelId) {
+                    state.channelId = data.broadcaster_user_id;
+                    state.channelName = data.slug || slug;
+                    state.lastResolvedSlug = normalizeChannel(slug);
+                }
+                log(`Resolved chatroom ${data.chatroom_id} for ${slug} (bridge cache, source: ${data.chatroom_source || 'unknown'}).`);
+                return;
+            }
+            if (data.broadcaster_user_id && !state.channelId) {
+                state.channelId = data.broadcaster_user_id;
+                state.channelName = data.slug || slug;
+                state.lastResolvedSlug = normalizeChannel(slug);
+            }
+        }
+    } catch (err) {
+        log(`Bridge lookup failed: ${err?.message || err}`, 'warning');
+    }
+
+    // 3. Try legacy kick.com/api/v2 directly (works same-origin on kick.com, may fail elsewhere)
+    try {
+        const legacyResp = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`);
+        if (legacyResp.ok) {
+            const data = await legacyResp.json();
+            const chatroomId = data?.chatroom?.id ?? data?.chatroom_id;
+            if (chatroomId) {
+                state.socket.chatroomId = String(chatroomId);
+                const broadcasterId = data?.user_id ?? data?.broadcaster_user_id;
+                if (broadcasterId && !state.channelId) {
+                    state.channelId = broadcasterId;
+                    state.channelName = data?.slug || slug;
+                    state.lastResolvedSlug = normalizeChannel(slug);
+                }
+                log(`Resolved chatroom ${chatroomId} for ${slug} (legacy API direct).`);
+                // Save to bridge cache if signed in
+                postChatroomToCache(slug, chatroomId, broadcasterId);
+                return;
+            }
+        }
+    } catch (_) {
+        // Cloudflare block or CORS — expected, not an error
+    }
+
+    log('Could not resolve chatroomId. Sign in or pass ?chatroom_id= URL param.', 'warning');
+}
+
+function postChatroomToCache(slug, chatroomId, broadcasterUserId) {
+    if (!slug || !chatroomId || !broadcasterUserId) return;
+    const token = state.tokens?.access_token;
+    if (!token) return;
+    try {
+        const base = getBridgeBaseUrl();
+        const body = {
+            slug: slug,
+            chatroom_id: Number(chatroomId),
+            broadcaster_user_id: Number(broadcasterUserId)
+        };
+        fetch(`${base}/kick/chatroom-cache`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(body)
+        }).then(resp => {
+            if (resp.ok) {
+                log(`Cached chatroom ${chatroomId} for ${slug} on bridge.`);
+            } else if (resp.status === 409) {
+                log(`Bridge cache for ${slug} already locked or mismatched.`);
+            } else {
+                log(`Bridge cache POST returned ${resp.status}.`, 'warning');
+            }
+        }).catch(() => {});
     } catch (_) {}
 }
 
@@ -2634,6 +3220,7 @@ async function startExternalAuthFlow() {
             await loadAuthenticatedProfile();
             await listSubscriptions();
             await maybeAutoStart(true);
+            connectPusherSocket();
             connectLocalSocket(true);
         } catch (err) {
             console.error(err);
@@ -2680,6 +3267,7 @@ async function handleAuthCallback() {
         await loadAuthenticatedProfile();
         await listSubscriptions();
         await maybeAutoStart(true);
+        connectPusherSocket();
         connectLocalSocket(true);
     } catch (err) {
         console.error(err);
@@ -2854,6 +3442,204 @@ async function apiFetch(path, options = {}, retry = true) {
     return res.text();
 }
 
+function getKickApiErrorStatus(error) {
+    const message = error?.message || '';
+    const match = /Kick API\s+(\d+):/i.exec(message);
+    if (!match) return null;
+    const code = Number(match[1]);
+    return Number.isFinite(code) ? code : null;
+}
+
+function unwrapKickChannelPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return [];
+    }
+    const result = [];
+    const pushIfObject = (value) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            result.push(value);
+        }
+    };
+    if (Array.isArray(payload.data)) {
+        payload.data.forEach(pushIfObject);
+    } else {
+        pushIfObject(payload.data);
+    }
+    pushIfObject(payload.channel);
+    if (!result.length) {
+        pushIfObject(payload);
+    }
+    return result;
+}
+
+function unwrapKickLivestreamPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return [];
+    }
+    const result = [];
+    const pushIfObject = (value) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            result.push(value);
+        }
+    };
+    if (Array.isArray(payload.data)) {
+        payload.data.forEach(pushIfObject);
+    } else {
+        pushIfObject(payload.data);
+    }
+    pushIfObject(payload.livestream);
+    pushIfObject(payload.stream);
+    if (!result.length) {
+        pushIfObject(payload);
+    }
+    return result;
+}
+
+function normalizeKickNumericId(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, Math.floor(value));
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (/^\d+$/.test(trimmed)) {
+            const parsed = parseInt(trimmed, 10);
+            if (Number.isFinite(parsed)) {
+                return parsed;
+            }
+        }
+    }
+    return null;
+}
+
+function pickKickChannelBySlug(channels, slugLower) {
+    const list = Array.isArray(channels) ? channels : [];
+    if (!list.length) return null;
+    return list.find(item => normalizeChannel(item?.slug) === slugLower) || list[0] || null;
+}
+
+async function fetchKickLivestreamByBroadcasterId(broadcasterUserIdInput) {
+    const broadcasterUserId = normalizeKickNumericId(broadcasterUserIdInput);
+    if (broadcasterUserId == null) {
+        logKickViewerDebug('Livestream lookup skipped: broadcaster user id is missing/invalid.', 'warning');
+        return null;
+    }
+    const queryId = encodeURIComponent(String(broadcasterUserId));
+    const paths = [
+        `/public/v1/livestreams?broadcaster_user_id[]=${queryId}`,
+        `/livestreams?broadcaster_user_id[]=${queryId}`
+    ];
+    let lastError = null;
+    for (const path of paths) {
+        try {
+            logKickViewerDebug(`Livestream lookup request: ${path}`);
+            const data = await apiFetch(path);
+            const livestreams = unwrapKickLivestreamPayload(data);
+            if (!livestreams.length) {
+                logKickViewerDebug(`Livestream lookup returned no rows via ${path}.`);
+                return null;
+            }
+            logKickViewerDebug(`Livestream lookup succeeded via ${path} with ${livestreams.length} row(s).`);
+            return (
+                livestreams.find(item => {
+                    const itemId = normalizeKickNumericId(
+                        item?.broadcaster_user_id ??
+                        item?.user_id ??
+                        item?.channel?.broadcaster_user_id
+                    );
+                    return itemId === broadcasterUserId;
+                }) ||
+                livestreams[0] ||
+                null
+            );
+        } catch (err) {
+            lastError = err;
+            const status = getKickApiErrorStatus(err);
+            if (status === 400 || status === 404 || status === 405 || status === 501) {
+                logKickViewerDebug(`Livestream lookup path failed (${path}): status=${status}.`, 'warning');
+                continue;
+            }
+            logKickViewerDebug(`Livestream lookup path failed (${path}): ${err?.message || err}`, 'warning');
+            throw err;
+        }
+    }
+    if (lastError) {
+        throw lastError;
+    }
+    return null;
+}
+
+async function fetchKickChannelBySlug(slugInput, options = {}) {
+    const debugContext = typeof options?.debugContext === 'string' ? options.debugContext.trim() : '';
+    const slugLower = normalizeChannel(slugInput);
+    if (!slugLower) {
+        return null;
+    }
+    const encodedSlug = encodeURIComponent(slugLower);
+    const fallbackPaths = [
+        `/public/v1/channels?slug=${encodedSlug}`,
+        `/channels/${encodedSlug}`,
+        `/public/v1/channels/${encodedSlug}`
+    ];
+    const paths = [];
+    if (preferredKickChannelLookupPath) {
+        paths.push(preferredKickChannelLookupPath.replace('{slug}', encodedSlug));
+    }
+    for (const path of fallbackPaths) {
+        if (!paths.includes(path)) {
+            paths.push(path);
+        }
+    }
+    let lastError = null;
+    for (const path of paths) {
+        try {
+            if (debugContext) {
+                logKickViewerDebug(`${debugContext}: request ${path}`);
+            }
+            const data = await apiFetch(path);
+            const channel = pickKickChannelBySlug(unwrapKickChannelPayload(data), slugLower);
+            if (channel && typeof channel === 'object') {
+                if (path.includes('?slug=')) {
+                    preferredKickChannelLookupPath = '/public/v1/channels?slug={slug}';
+                } else if (path.includes('/public/v1/channels/')) {
+                    preferredKickChannelLookupPath = '/public/v1/channels/{slug}';
+                } else if (path.includes('/channels/')) {
+                    preferredKickChannelLookupPath = '/channels/{slug}';
+                }
+                if (debugContext) {
+                    logKickViewerDebug(`${debugContext}: success via ${path}`);
+                }
+                return channel;
+            }
+        } catch (err) {
+            lastError = err;
+            const status = getKickApiErrorStatus(err);
+            if (status === 400 || status === 404 || status === 405 || status === 501) {
+                if (debugContext) {
+                    logKickViewerDebug(`${debugContext}: path failed ${path} status=${status}`, 'warning');
+                }
+                if (
+                    preferredKickChannelLookupPath &&
+                    path === preferredKickChannelLookupPath.replace('{slug}', encodedSlug)
+                ) {
+                    preferredKickChannelLookupPath = '';
+                }
+                continue;
+            }
+            if (debugContext) {
+                logKickViewerDebug(`${debugContext}: path failed ${path} error=${err?.message || err}`, 'warning');
+            }
+            throw err;
+        }
+    }
+    if (lastError) {
+        throw lastError;
+    }
+    if (debugContext) {
+        logKickViewerDebug(`${debugContext}: no channel payload found for @${slugLower}.`, 'warning');
+    }
+    return null;
+}
+
 function extractProfileFromTokens() {
     const tokens = state.tokens || {};
     if (!tokens) return null;
@@ -2977,12 +3763,7 @@ async function loadAuthenticatedProfile() {
             {
                 path: '/public/v1/users',
                 notFoundMessage:
-                    'Kick user details endpoint is still rolling out for this app. Trying the legacy profile endpoint.'
-            },
-            {
-                path: '/public/v1/me',
-                notFoundMessage:
-                    'Kick profile details are still rolling out on the API. Continuing with sign-in information.'
+                    'Kick user details endpoint is still rolling out for this app. Continuing with sign-in information.'
             }
         ];
         for (const endpoint of endpoints) {
@@ -3226,13 +4007,10 @@ async function resolveChannelId(force = false) {
     }
     const previousId = state.channelId;
     const previousSlug = state.lastResolvedSlug;
-    const params = new URLSearchParams({ slug: slugLower });
     log(`Resolving channel ID for slug: ${slugLower}`);
-    const data = await apiFetch(`/public/v1/channels?${params.toString()}`);
-    const entries = Array.isArray(data?.data) ? data.data : [];
-    const channel = entries.find(item => normalizeChannel(item.slug) === slugLower) || entries[0];
+    const channel = await fetchKickChannelBySlug(slugLower);
     if (!channel?.broadcaster_user_id) {
-        log(`Channel API response: ${JSON.stringify(data)}`, 'warning');
+        log(`Channel API response did not include broadcaster_user_id for slug: ${slugLower}`, 'warning');
         throw new Error('Unable to resolve channel user id.');
     }
     const resolvedChatroomId =
@@ -3249,19 +4027,26 @@ async function resolveChannelId(force = false) {
     state.channelId = channel.broadcaster_user_id;
     state.channelName = channel.slug || channel.channel_description || slugInput;
     state.lastResolvedSlug = slugLower;
+    if (!state.socket.userId && state.channelId != null) {
+        state.socket.userId = String(state.channelId);
+    }
     if (resolvedChatroomId != null) {
         state.socket.chatroomId = String(resolvedChatroomId);
+        postChatroomToCache(slugLower, resolvedChatroomId, channel.broadcaster_user_id);
     }
     if (resolvedSocketChannelId != null) {
         state.socket.channelId = String(resolvedSocketChannelId);
     }
     const initialViewerCount = extractKickViewerCount(channel);
     if (initialViewerCount != null) {
+        logKickViewerDebug(`Channel resolve included viewer_count=${initialViewerCount}.`);
         emitKickViewerUpdate(initialViewerCount);
         const liveFlag = extractKickLiveFlag(channel);
         if (typeof liveFlag === 'boolean') {
             kickViewerHeartbeat.isLive = liveFlag;
         }
+    } else {
+        logKickViewerDebug('Channel resolve did not include viewer_count; waiting for heartbeat snapshot.', 'warning');
     }
     persistConfig();
     log(`Resolved channel: ${state.channelName} (ID: ${state.channelId})`);
@@ -3271,10 +4056,17 @@ async function resolveChannelId(force = false) {
     }
     // Replay any events that were queued before channel resolution
     replayPendingBridgeEvents();
-    // Reconnect local socket now that chatroomId may be available
-    if (state.socket.chatroomId && state.socket.status !== 'connected') {
+    // Connect Pusher chat socket now that chatroomId may be available
+    connectPusherSocket();
+    // Reconnect local socket if ninjafy is available
+    if (
+        supportsLocalSocket() &&
+        (state.socket.chatroomId || state.socket.channelId || state.socket.userId || state.channelId) &&
+        state.socket.status !== 'connected'
+    ) {
         connectLocalSocket(true);
     }
+    void sendKickViewerHeartbeat('channel_resolved');
     return state.channelId;
 }
 
@@ -3346,7 +4138,7 @@ function renderSubscriptions(items) {
     const summary = els.subscriptionSummary;
 
     if (!list.length) {
-        summary.textContent = 'Subscriptions pending';
+        summary.textContent = 'Subscriptions syncing';
         summary.className = 'status-chip warning';
         summary.title = 'No subscriptions detected yet. They will be created automatically after sign-in.';
         return;
@@ -3360,9 +4152,27 @@ function renderSubscriptions(items) {
             summary.title = `${relevant.length} subscription(s) registered for this channel.`;
             return;
         }
-        summary.textContent = 'Waiting for Kick';
+        if (channelIdKey && list.length) {
+            const attachedBroadcasterIds = Array.from(
+                new Set(
+                    list
+                        .map(item => String(item?.broadcaster_user_id || '').trim())
+                        .filter(Boolean)
+                )
+            );
+            const targetSlug = (state.channelSlug || '').trim();
+            summary.textContent = targetSlug
+                ? `No access to @${targetSlug} subscription feed`
+                : 'No access to this channel subscription feed';
+            summary.className = 'status-chip warning';
+            summary.title = attachedBroadcasterIds.length
+                ? `Webhook subscriptions are currently attached to broadcaster ID(s): ${attachedBroadcasterIds.join(', ')}. Chat can still work here.`
+                : 'No channel-scoped subscriptions found for this target yet.';
+            return;
+        }
+        summary.textContent = 'Subscriptions syncing';
         summary.className = 'status-chip warning';
-        summary.title = 'Kick returned webhooks, but none are tied to this channel yet. This usually resolves once Kick finishes provisioning.';
+        summary.title = 'Kick has not confirmed channel-scoped subscriptions yet. This usually resolves shortly.';
         return;
     }
 
@@ -3396,16 +4206,16 @@ async function maybeAutoStart(force = false) {
     state.autoStart.running = true;
     state.autoStart.pendingForce = false;
     try {
-        if (state.bridge.status === 'disconnected' || !state.bridge.source) {
-            connectBridge();
-        }
-
         let channelId;
         try {
             channelId = await resolveChannelId();
         } catch (err) {
             log(err.message, 'error');
             return;
+        }
+
+        if (state.bridge.status === 'disconnected' || !state.bridge.source) {
+            connectBridge();
         }
 
         const eventTypes = await fetchEventTypes();
@@ -3442,17 +4252,43 @@ async function maybeAutoStart(force = false) {
     }
 }
 
+function syncBridgeChatMode() {
+    if (!state.tokens?.access_token) return;
+    const pusherActive = state.socket.pusherStatus === 'connected';
+    const bridgeChatDisabled = state.bridge.chatDisabled;
+    // If Pusher just connected and bridge has chat enabled, reconnect with noChat
+    // If Pusher just disconnected and bridge has chat disabled, reconnect with chat
+    if (pusherActive && !bridgeChatDisabled && state.bridge.status === 'connected') {
+        log('Pusher connected — reconnecting bridge with noChat.');
+        connectBridge();
+    } else if (!pusherActive && bridgeChatDisabled && state.bridge.status === 'connected') {
+        log('Pusher disconnected — reconnecting bridge with chat fallback.');
+        connectBridge();
+    }
+}
+
 function connectBridge() {
+    if (!state.tokens?.access_token) {
+        log('Bridge requires sign-in.', 'info');
+        return;
+    }
     state.bridgeUrl = state.bridgeUrl || DEFAULT_CONFIG.bridgeUrl;
     if (!state.bridgeUrl) {
         log('Unable to determine Kick bridge URL.', 'error');
         return;
     }
     disconnectBridge();
+    const pusherActive = state.socket.pusherStatus === 'connected';
     try {
-        const bridgeUrl = isElectronEnvironment()
-            ? appendBridgeParam(state.bridgeUrl, 'noChat', '1')
-            : state.bridgeUrl;
+        let bridgeUrl = state.bridgeUrl;
+        if (state.channelId) {
+            bridgeUrl = appendBridgeParam(bridgeUrl, 'channel', String(state.channelId));
+        }
+        if (pusherActive) {
+            bridgeUrl = appendBridgeParam(bridgeUrl, 'noChat', '1');
+            log('Bridge connected with noChat (Pusher handles chat).');
+        }
+        state.bridge.chatDisabled = pusherActive;
         const source = new EventSource(bridgeUrl, { withCredentials: false });
         state.bridge.source = source;
         state.bridge.status = 'connecting';
@@ -3674,6 +4510,10 @@ function bridgeEventMatchesCurrentChannel(packet) {
     if (!packet || typeof packet !== 'object') {
         return true;
     }
+    // Pusher socket events are already scoped to the correct chatroom channel
+    if (packet.source === 'socket') {
+        return true;
+    }
     const expectedId = state.channelId != null ? String(state.channelId).trim() : '';
     const expectedSlug = normalizeChannel(state.channelSlug);
     if (!expectedId && !expectedSlug) {
@@ -3750,7 +4590,7 @@ function processBridgeEvent(packet, isReplay = false) {
     const type = packet.type || body?.event || 'unknown';
     const bridgeMeta = createBridgeMeta(packet);
     const sourceLabel = packet.source === 'socket' ? 'Socket' : 'Bridge';
-    if (!isReplay) {
+    if (!isReplay && type !== 'chat.message.sent') {
         log(`${sourceLabel} event received: ${type} (channelId: ${state.channelId}, slug: ${state.channelSlug})`);
     }
     const challenge = packet.challenge || body?.challenge;
@@ -3777,6 +4617,14 @@ function processBridgeEvent(packet, isReplay = false) {
         void forwardChatMessage(body, bridgeMeta);
         return;
     }
+    if (
+        type === 'chat.message.deleted' ||
+        type === 'chat.message.removed' ||
+        /chat\..*(deleted|removed|delete)/i.test(type)
+    ) {
+        forwardDeletedMessage(body, bridgeMeta);
+        return;
+    }
     if (type === 'channel.followed') {
         forwardFollower(body, bridgeMeta);
         return;
@@ -3785,7 +4633,7 @@ function processBridgeEvent(packet, isReplay = false) {
         forwardSubscription(type, body, bridgeMeta);
         return;
     }
-    if (/support|donat|tip/i.test(type)) {
+    if (/support|donat|tip|kick/i.test(type)) {
         forwardSupportEvent(type, body, bridgeMeta);
         return;
     }
@@ -3798,12 +4646,14 @@ function processBridgeEvent(packet, isReplay = false) {
 
 function handleBridgeEvent(packet) {
     if (!packet) return;
-    // If channelId is not yet resolved and we have a slug, queue the event
-    if (state.channelId == null && state.channelSlug) {
+    // Socket-sourced events are already scoped to the correct chatroom — skip queue
+    if (state.channelId == null && state.channelSlug && packet.source !== 'socket') {
         const type = packet.type || packet.body?.event || 'unknown';
         if (pendingBridgeEvents.length < MAX_PENDING_EVENTS) {
             pendingBridgeEvents.push(packet);
-            log(`Queued ${type} event (waiting for channel resolution)`);
+            if (type !== 'chat.message.sent') {
+                log(`Queued ${type} event (waiting for channel resolution)`);
+            }
         }
         return;
     }
@@ -3829,8 +4679,11 @@ function shouldIgnoreBridgeChatEvent(packet) {
     if (type !== 'chat.message.sent') return false;
     // Don't ignore events that came from the socket itself
     if (packet?.source === 'socket') return false;
-    if (!supportsLocalSocket()) return false;
+    if (!supportsLocalSocket() && state.socket.pusherStatus !== 'connected') return false;
     if (state.socket?.status !== 'connected') return false;
+    const lastSocketChatAt = Number(state.socket?.lastChatEventAt || 0);
+    if (!lastSocketChatAt) return false;
+    if (Date.now() - lastSocketChatAt > SOCKET_CHAT_ACTIVITY_WINDOW_MS) return false;
     return true;
 }
 
@@ -3919,7 +4772,6 @@ async function forwardChatMessage(evt, bridgeMeta) {
             payload.message_type ||
             payload.event_type ||
             'chat';
-        const normalizedEvent = eventNameForType(rawEventType);
         const chatmessageHtml = renderKickMessageHtml(message, content);
         const membership = actorProfile.membership || pickFirstString(
             [
@@ -3944,6 +4796,7 @@ async function forwardChatMessage(evt, bridgeMeta) {
             ));
         const channelBranding = resolveChannelBranding();
         const donationLabel = extractChatDonationLabel(message, payload);
+        const normalizedEvent = mapKickChatEventToSocialStream(rawEventType, content, donationLabel);
         const replyDetails = extractReplyDetails(message, payload);
         const textOnlyMode = Boolean(isTextOnlyMode());
         const allowReplies = !settings.excludeReplyingTo && (chatmessageHtml || content);
@@ -3993,14 +4846,12 @@ async function forwardChatMessage(evt, bridgeMeta) {
                 messagePayload.chatmessage = `<i><small>${safeReply}:&nbsp;</small></i> ${chatmessageHtml}`;
             }
         }
-        // Chat messages should not be flagged as events; only propagate data.event for actual system-level items.
-        if (normalizedEvent && normalizedEvent !== 'message') {
+        // Only include event for actual non-chat/system cases.
+        if (normalizedEvent) {
             messagePayload.event = normalizedEvent;
         }
         pushMessage(messagePayload);
         appendChatFeedMessage(messagePayload, content);
-        const prefix = bridgeMeta?.verified === false ? '[CHAT ⚠]' : '[CHAT]';
-        log(`${prefix} ${chatname}: ${content || '[no text]'}`);
     } catch (err) {
         console.error('Failed to handle Kick chat message', err);
     }
@@ -4031,6 +4882,41 @@ function resolveChannelBranding() {
         sourceName,
         sourceImg
     };
+}
+
+function mapKickChatEventToSocialStream(rawType, plainMessage = '', donationLabel = '') {
+    const typeLower = typeof rawType === 'string' ? rawType.trim().toLowerCase() : '';
+    const textLower = typeof plainMessage === 'string' ? plainMessage.trim().toLowerCase() : '';
+
+    // Match the legacy DOM source semantics first.
+    if (textLower.startsWith('has redeemed ') || /redeem|reward/.test(typeLower)) {
+        return 'reward';
+    }
+    if (/gift/.test(typeLower)) {
+        return 'gift';
+    }
+
+    // Chat payloads should not leak Kick-native type names as `data.event`.
+    if (
+        !typeLower ||
+        typeLower === 'chat' ||
+        typeLower === 'message' ||
+        typeLower === 'chatroom_message' ||
+        typeLower === 'chat.message.sent' ||
+        typeLower === 'user' ||
+        typeLower === 'bot'
+    ) {
+        return '';
+    }
+
+    // Keep donation parsing compatible with legacy payload expectations.
+    if (donationLabel && /donat|tip|support|kick/.test(typeLower)) {
+        return 'gift';
+    }
+
+    // Legacy DOM source emits `true` for generic non-chat system notices.
+    // Preserve that behavior for migration parity.
+    return true;
 }
 
 function extractChatDonationLabel(...sources) {
@@ -4265,6 +5151,59 @@ function extractReplyDetails(message, payload) {
     return null;
 }
 
+function forwardDeletedMessage(evt, bridgeMeta) {
+    const messageId = pickFirstString(
+        [
+            evt?.message_id,
+            evt?.messageId,
+            evt?.id,
+            evt?.message?.id,
+            evt?.data?.message_id,
+            evt?.data?.messageId,
+            evt?.data?.id
+        ],
+        ''
+    );
+    if (!messageId) {
+        log('Delete event received without message ID.', 'warning');
+        return;
+    }
+
+    const actorSources = [
+        evt?.sender,
+        evt?.user,
+        evt?.profile,
+        evt?.message?.sender,
+        evt
+    ];
+    const { profile: actorProfile } = gatherProfileState(...actorSources);
+    const chatname =
+        actorProfile.displayName ||
+        pickDisplayName([
+            evt?.sender?.display_name,
+            evt?.sender?.username,
+            evt?.user?.display_name,
+            evt?.user?.username,
+            evt?.profile?.display_name,
+            evt?.profile?.username,
+            evt?.message?.sender?.display_name,
+            evt?.message?.sender?.username
+        ]) ||
+        '';
+
+    const payload = {
+        type: 'kick',
+        id: String(messageId)
+    };
+    if (chatname) {
+        payload.chatname = chatname;
+    }
+    pushDeleteMessage(payload);
+
+    const prefix = bridgeMeta?.verified === false ? '[DELETE !]' : '[DELETE]';
+    log(`${prefix} message removed${chatname ? ` by ${chatname}` : ''}`);
+}
+
 function forwardFollower(evt, bridgeMeta) {
     const followerSources = [
         evt?.follower,
@@ -4303,6 +5242,12 @@ function forwardFollower(evt, bridgeMeta) {
         chatname: follower || '',
         chatmessage: escapeHtml(chatmessage),
         chatimg: chatimg || ''
+    });
+    appendAlertsFeedEntry({
+        kind: 'follower',
+        actor: follower || 'New follower',
+        message: 'started following',
+        avatar: chatimg || ''
     });
 
     const followerCountCandidates = [
@@ -4536,6 +5481,12 @@ function forwardSupportEvent(eventType, evt, bridgeMeta) {
         chatimg: chatimg || '',
         meta
     });
+    appendAlertsFeedEntry({
+        kind: 'donation',
+        actor: chatname,
+        message: chatmessage,
+        avatar: chatimg || ''
+    });
     const noteLabel = note ? ` – ${note}` : '';
     const prefix = bridgeMeta?.verified === false ? '[TIP ⚠]' : '[TIP]';
     log(`${prefix} ${supporter}${amountLabel ? ` • ${amountLabel}` : ''}${noteLabel}`);
@@ -4697,6 +5648,34 @@ function pushMessage(data) {
     }
 }
 
+function pushDeleteMessage(data) {
+    // Try chrome.runtime.sendMessage first, with fallback to ninjafy
+    if (typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+        try {
+            chrome.runtime.sendMessage(chrome.runtime.id, { delete: data }, function() {});
+            return;
+        } catch (e) {
+            // Fall through to ninjafy
+        }
+    }
+    // Fallback to ninjafy.sendMessage for Electron
+    if (window.ninjafy && window.ninjafy.sendMessage) {
+        try {
+            window.ninjafy.sendMessage(null, { delete: data }, null, window.__SSAPP_TAB_ID__);
+            return;
+        } catch (e) {
+            console.error('Error sending delete message:', e);
+        }
+    }
+    if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+        try {
+            window.parent.postMessage({ delete: data }, '*');
+        } catch (e) {
+            console.error('Error sending delete message to host:', e);
+        }
+    }
+}
+
 function log(msg, level = 'info') {
     if (!els.eventLog) return;
     const line = document.createElement('div');
@@ -4713,6 +5692,13 @@ function log(msg, level = 'info') {
     }
     line.appendChild(span);
     els.eventLog.appendChild(line);
+    const entries = els.eventLog.querySelectorAll('.log-line');
+    if (entries.length > EVENT_LOG_LIMIT) {
+        const removeCount = entries.length - EVENT_LOG_LIMIT;
+        for (let i = 0; i < removeCount; i += 1) {
+            entries[i].remove();
+        }
+    }
     els.eventLog.scrollTop = els.eventLog.scrollHeight;
 }
 
@@ -4749,6 +5735,96 @@ function resetChatFeed() {
     const entries = els.chatFeed.querySelectorAll('.chat-line');
     entries.forEach(entry => entry.remove());
     ensureChatFeedEmptyVisible(true);
+}
+
+function shouldStickAlertsFeed() {
+    if (!els.alertsFeed) return false;
+    const { scrollTop, scrollHeight, clientHeight } = els.alertsFeed;
+    return scrollHeight - (scrollTop + clientHeight) <= CHAT_SCROLL_THRESHOLD_PX;
+}
+
+function ensureAlertsFeedEmptyVisible(visible) {
+    if (!els.alertsFeedEmpty) return;
+    els.alertsFeedEmpty.style.display = visible ? '' : 'none';
+    if (visible && els.alertsFeed && !els.alertsFeed.contains(els.alertsFeedEmpty)) {
+        els.alertsFeed.appendChild(els.alertsFeedEmpty);
+    }
+}
+
+function resetAlertsFeed() {
+    if (!els.alertsFeed) return;
+    const entries = els.alertsFeed.querySelectorAll('.alerts-line');
+    entries.forEach(entry => entry.remove());
+    ensureAlertsFeedEmptyVisible(true);
+}
+
+function appendAlertsFeedEntry({ kind = 'event', actor = '', message = '', avatar = '' } = {}) {
+    if (!els.alertsFeed) return;
+    const stick = shouldStickAlertsFeed();
+    ensureAlertsFeedEmptyVisible(false);
+
+    const line = document.createElement('div');
+    line.className = `alerts-line ${kind}`;
+
+    const left = document.createElement('div');
+    left.className = 'alerts-left';
+
+    const avatarNode = document.createElement('div');
+    avatarNode.className = 'alerts-avatar';
+    const avatarUrl = typeof avatar === 'string' ? avatar.trim() : '';
+    if (avatarUrl) {
+        const img = document.createElement('img');
+        img.src = avatarUrl;
+        img.alt = actor ? `${actor} avatar` : '';
+        img.loading = 'lazy';
+        avatarNode.appendChild(img);
+    } else {
+        avatarNode.textContent = extractInitialFromName(actor || kind);
+    }
+    left.appendChild(avatarNode);
+
+    const textWrap = document.createElement('div');
+    textWrap.className = 'alerts-text';
+
+    const top = document.createElement('div');
+    top.className = 'alerts-top';
+
+    const tag = document.createElement('span');
+    tag.className = 'alerts-kind';
+    tag.textContent = kind === 'donation' ? 'DONATION' : (kind === 'follower' ? 'FOLLOW' : 'EVENT');
+    top.appendChild(tag);
+
+    const time = document.createElement('time');
+    time.textContent = new Date().toLocaleTimeString();
+    top.appendChild(time);
+
+    textWrap.appendChild(top);
+
+    const body = document.createElement('div');
+    body.className = 'alerts-message';
+    const actorText = (actor || '').trim();
+    if (actorText && message) {
+        body.textContent = `${actorText} - ${message}`;
+    } else {
+        body.textContent = message || actorText || 'New event';
+    }
+    textWrap.appendChild(body);
+
+    left.appendChild(textWrap);
+    line.appendChild(left);
+    els.alertsFeed.appendChild(line);
+
+    const entries = els.alertsFeed.querySelectorAll('.alerts-line');
+    if (entries.length > ALERT_FEED_LIMIT) {
+        const removeCount = entries.length - ALERT_FEED_LIMIT;
+        for (let i = 0; i < removeCount; i += 1) {
+            entries[i].remove();
+        }
+    }
+
+    if (stick) {
+        els.alertsFeed.scrollTop = els.alertsFeed.scrollHeight;
+    }
 }
 
 function sanitizeCssColor(value) {
@@ -4916,10 +5992,18 @@ function appendChatFeedMessage(message, plainText = '') {
             : (typeof message.chatmessage === 'string'
                 ? message.chatmessage.replace(/<[^>]+>/g, '')
                 : '');
-    if (isTextOnlyMode()) {
-        body.textContent = plainTextMessage || '';
-    } else if (message.chatmessage) {
-        body.innerHTML = message.chatmessage;
+    // The local chat feed always renders rich content (emotes as images)
+    // regardless of the extension's text-only mode setting.
+    const chatHtml = message.chatmessage || '';
+    const richHtml = chatHtml
+        ? chatHtml.replace(/\[emote:(\d+):([^\]]+)\]/g, (m, id, n) => {
+            const safeId = id.replace(/[^0-9]/g, '');
+            if (!safeId) return m;
+            return `<img src="https://files.kick.com/emotes/${safeId}/fullsize" alt="${n}" title="${n}" class="regular-emote"/>`;
+        })
+        : '';
+    if (richHtml) {
+        body.innerHTML = richHtml;
     } else {
         body.textContent = plainTextMessage || '';
     }
@@ -5049,6 +6133,7 @@ async function bootstrap() {
     applyKickCoreFallbacks();
     try {
         initElements();
+        loadKickProfileCache();
         initExtensionBridge();
         updateBridgeState();
         loadConfig();
@@ -5061,6 +6146,12 @@ async function bootstrap() {
         bindEvents();
         initLocalSocketBridge();
         updateSocketState();
+        // Connect Pusher chat immediately (no auth needed)
+        if (state.channelSlug && !state.socket.chatroomId) {
+            await resolveChannelForPusher();
+        }
+        connectPusherSocket();
+        // Auth-dependent: subscriptions, bridge events, sending messages
         if (state.tokens?.access_token) {
             scheduleTokenRefresh();
             await loadAuthenticatedProfile();
@@ -5074,6 +6165,12 @@ async function bootstrap() {
             sendLiteMessage('kick-lite-ready', { status: getLiteStatusSnapshot() });
         }
         window.addEventListener('beforeunload', () => {
+            if (profileCachePersistTimer) {
+                clearTimeout(profileCachePersistTimer);
+                profileCachePersistTimer = null;
+                persistKickProfileCache();
+            }
+            disconnectPusherSocket();
             disconnectLocalSocket();
         });
     } catch (error) {
@@ -5082,10 +6179,13 @@ async function bootstrap() {
     }
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootstrap);
-} else {
-    bootstrap();
+if (!window.__kickWsBootstrapped) {
+    window.__kickWsBootstrapped = true;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+        bootstrap();
+    }
 }
 
 // Handle messages from preload-mock.js which uses window.postMessage instead of chrome.runtime
