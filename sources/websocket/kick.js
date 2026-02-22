@@ -2633,21 +2633,32 @@ function updateSocketState(payload = {}) {
     if (!els.socketState) return;
     els.socketState.style.display = '';
     const status = state.socket?.status || 'disconnected';
+    const pusherUp = state.socket.pusherStatus === 'connected';
+    const localUp = supportsLocalSocket() && status === 'connected' && !pusherUp;
+    const bridgeChat = state.bridge.status === 'connected' && !state.bridge.chatDisabled;
+    let transport = '';
+    if (pusherUp) transport = 'Pusher';
+    else if (localUp) transport = 'Electron';
+    else if (bridgeChat) transport = 'Bridge';
     let label = 'Chat socket disconnected';
     let className = 'status-chip danger';
     if (status === 'connected') {
-        label = 'Chat socket connected';
+        label = transport ? `Chat: ${transport}` : 'Chat socket connected';
         className = 'status-chip';
     } else if (status === 'connecting') {
         label = 'Chat socket connecting';
         className = 'status-chip warning';
     } else if (status === 'error') {
-        const detail = payload.error || state.socket?.lastError || '';
-        label = detail ? `Chat socket error` : 'Chat socket error';
+        label = 'Chat socket error';
         className = 'status-chip danger';
     } else if (status === 'disconnected') {
-        label = 'Chat socket disconnected';
-        className = 'status-chip danger';
+        if (bridgeChat) {
+            label = 'Chat: Bridge';
+            className = 'status-chip';
+        } else {
+            label = 'Chat socket disconnected';
+            className = 'status-chip danger';
+        }
     }
     els.socketState.textContent = label;
     els.socketState.className = className;
@@ -2740,6 +2751,8 @@ function initLocalSocketBridge() {
 
 async function connectLocalSocket(force = false) {
     if (!supportsLocalSocket()) return;
+    // Our Pusher handles chat — don't start ninjafy's duplicate WebSocket
+    if (state.socket.pusherWs || state.socket.pusherStatus === 'connecting') return;
     if (!state.channelSlug) return;
     if (!force && state.socket.status === 'connected') return;
     if (state.socket.connecting) return;
@@ -2995,22 +3008,23 @@ async function resolveChannelForPusher() {
     if (state.socket.chatroomId) return;
     const slug = state.channelSlug?.trim();
     if (!slug) return;
-    // If we have auth tokens, use the standard API resolver
+
+    // 1. If signed in, resolve channel metadata via official API (broadcaster_user_id, slug, etc)
     if (state.tokens?.access_token) {
         try {
             await resolveChannelId();
         } catch (err) {
             log(`Channel resolve for Pusher failed: ${err?.message || err}`, 'warning');
         }
-        return;
+        if (state.socket.chatroomId) return;
     }
-    // No auth — ask bridge server for cached chatroom lookup
+
+    // 2. Try bridge cache (fast, no auth needed)
     try {
         const base = getBridgeBaseUrl();
-        const url = `${base}/kick/lookup?slug=${encodeURIComponent(slug)}`;
-        const resp = await fetch(url);
-        if (resp.ok) {
-            const data = await resp.json();
+        const lookupResp = await fetch(`${base}/kick/lookup?slug=${encodeURIComponent(slug)}`);
+        if (lookupResp.ok) {
+            const data = await lookupResp.json();
             if (data.chatroom_id) {
                 state.socket.chatroomId = String(data.chatroom_id);
                 if (data.broadcaster_user_id && !state.channelId) {
@@ -3018,7 +3032,7 @@ async function resolveChannelForPusher() {
                     state.channelName = data.slug || slug;
                     state.lastResolvedSlug = normalizeChannel(slug);
                 }
-                log(`Resolved chatroom ${data.chatroom_id} for ${slug} (bridge lookup, source: ${data.chatroom_source || 'unknown'}).`);
+                log(`Resolved chatroom ${data.chatroom_id} for ${slug} (bridge cache, source: ${data.chatroom_source || 'unknown'}).`);
                 return;
             }
             if (data.broadcaster_user_id && !state.channelId) {
@@ -3026,29 +3040,61 @@ async function resolveChannelForPusher() {
                 state.channelName = data.slug || slug;
                 state.lastResolvedSlug = normalizeChannel(slug);
             }
-            log(`Bridge lookup found broadcaster ${data.broadcaster_user_id} but no chatroom_id yet. Sign in to populate cache.`, 'warning');
-            return;
         }
-        log(`Bridge lookup returned ${resp.status}.`, 'warning');
     } catch (err) {
         log(`Bridge lookup failed: ${err?.message || err}`, 'warning');
     }
+
+    // 3. Try legacy kick.com/api/v2 directly (works same-origin on kick.com, may fail elsewhere)
+    try {
+        const legacyResp = await fetch(`https://kick.com/api/v2/channels/${encodeURIComponent(slug)}`);
+        if (legacyResp.ok) {
+            const data = await legacyResp.json();
+            const chatroomId = data?.chatroom?.id ?? data?.chatroom_id;
+            if (chatroomId) {
+                state.socket.chatroomId = String(chatroomId);
+                const broadcasterId = data?.user_id ?? data?.broadcaster_user_id;
+                if (broadcasterId && !state.channelId) {
+                    state.channelId = broadcasterId;
+                    state.channelName = data?.slug || slug;
+                    state.lastResolvedSlug = normalizeChannel(slug);
+                }
+                log(`Resolved chatroom ${chatroomId} for ${slug} (legacy API direct).`);
+                // Save to bridge cache if signed in
+                postChatroomToCache(slug, chatroomId, broadcasterId);
+                return;
+            }
+        }
+    } catch (_) {
+        // Cloudflare block or CORS — expected, not an error
+    }
+
     log('Could not resolve chatroomId. Sign in or pass ?chatroom_id= URL param.', 'warning');
 }
 
 function postChatroomToCache(slug, chatroomId, broadcasterUserId) {
-    if (!slug || !chatroomId) return;
+    if (!slug || !chatroomId || !broadcasterUserId) return;
+    const token = state.tokens?.access_token;
+    if (!token) return;
     try {
         const base = getBridgeBaseUrl();
-        const body = { slug: slug, chatroom_id: Number(chatroomId) };
-        if (broadcasterUserId) body.broadcaster_user_id = Number(broadcasterUserId);
+        const body = {
+            slug: slug,
+            chatroom_id: Number(chatroomId),
+            broadcaster_user_id: Number(broadcasterUserId)
+        };
         fetch(`${base}/kick/chatroom-cache`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
             body: JSON.stringify(body)
         }).then(resp => {
             if (resp.ok) {
                 log(`Cached chatroom ${chatroomId} for ${slug} on bridge.`);
+            } else if (resp.status === 409) {
+                log(`Bridge cache for ${slug} already locked or mismatched.`);
             } else {
                 log(`Bridge cache POST returned ${resp.status}.`, 'warning');
             }

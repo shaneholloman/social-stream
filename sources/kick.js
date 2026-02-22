@@ -455,7 +455,7 @@
 			}
 
 			const data = await response.json();
-			
+
 			if (data.livestream) {
 				return data.livestream.viewer_count || 0;
 			}
