@@ -316,10 +316,10 @@ class EventFlowEditor {
             },
             {
                 id: 'legacy',
-                name: '📦 Legacy/Other',
+                name: '📦 Advanced',
                 expanded: false,
                 triggers: [
-                    { id: 'eventType', name: '📣 Event Type (Legacy)' },
+                    { id: 'eventType', name: '📣 Event Type (Advanced)' },
                     { id: 'customJs', name: 'Custom Code' }
                 ]
             }
