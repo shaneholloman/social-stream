@@ -2147,6 +2147,13 @@ function updateAuthStatus() {
         els.authState.textContent = authed ? 'Signed in' : 'Not signed in';
     }
     els.authState.className = authed ? 'status-chip' : 'status-chip warning';
+    // Hide auth-dependent status chips when not signed in
+    if (els.subscriptionSummary) {
+        els.subscriptionSummary.style.display = authed ? '' : 'none';
+    }
+    if (els.bridgeState) {
+        els.bridgeState.style.display = authed ? '' : 'none';
+    }
     // Show/hide sign in and sign out buttons based on auth state
     if (els.startAuth) {
         els.startAuth.style.display = authed ? 'none' : '';
@@ -2418,74 +2425,93 @@ async function fetchKickViewerSnapshot() {
         logKickViewerDebug('Snapshot skipped: missing channel slug.', 'warning');
         return null;
     }
-    if (!state.tokens?.access_token) {
-        logKickViewerDebug(`Snapshot skipped for @${slugInput}: missing access token.`, 'warning');
-        return null;
-    }
+    const hasAuth = !!state.tokens?.access_token;
     let fallbackSnapshot = null;
-    const slugLower = normalizeChannel(slugInput);
-    if (slugLower) {
-        try {
-            const channel = await fetchKickChannelBySlug(slugLower, { debugContext: 'viewer channel lookup' });
-            if (channel && typeof channel === 'object') {
-                const viewerCount = extractKickViewerCount(channel);
-                const isLive = extractKickLiveFlag(channel);
-                if (viewerCount != null || typeof isLive === 'boolean') {
+
+    // --- Authenticated paths (official API via apiFetch) ---
+    if (hasAuth) {
+        const slugLower = normalizeChannel(slugInput);
+        if (slugLower) {
+            try {
+                const channel = await fetchKickChannelBySlug(slugLower, { debugContext: 'viewer channel lookup' });
+                if (channel && typeof channel === 'object') {
+                    const viewerCount = extractKickViewerCount(channel);
+                    const isLive = extractKickLiveFlag(channel);
+                    if (viewerCount != null || typeof isLive === 'boolean') {
+                        logKickViewerDebug(
+                            `Snapshot via channel @${slugLower}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
+                        );
+                        return { viewerCount, isLive };
+                    }
+                    logKickViewerDebug(`Channel snapshot for @${slugLower} had no viewer/live fields.`, 'warning');
+                }
+            } catch (err) {
+                const status = getKickApiErrorStatus(err);
+                if (!(status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501)) {
+                    throw err;
+                }
+                logKickViewerDebug(
+                    `Channel snapshot failed for @${slugLower}: status=${status || 'unknown'} error=${err?.message || err}.`,
+                    'warning'
+                );
+            }
+        }
+        const broadcasterUserId = normalizeKickNumericId(state.channelId);
+        if (broadcasterUserId != null) {
+            try {
+                const livestream = await fetchKickLivestreamByBroadcasterId(broadcasterUserId);
+                if (livestream && typeof livestream === 'object') {
+                    const viewerCount = extractKickViewerCount(livestream);
+                    const isLive = extractKickLiveFlag(livestream);
                     logKickViewerDebug(
-                        `Snapshot via channel @${slugLower}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
+                        `Snapshot via livestream id=${broadcasterUserId}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
                     );
                     return { viewerCount, isLive };
                 }
-                logKickViewerDebug(`Channel snapshot for @${slugLower} had no viewer/live fields.`, 'warning');
-            }
-        } catch (err) {
-            const status = getKickApiErrorStatus(err);
-            if (!(status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501)) {
-                throw err;
-            }
-            logKickViewerDebug(
-                `Channel snapshot failed for @${slugLower}: status=${status || 'unknown'} error=${err?.message || err}.`,
-                'warning'
-            );
-        }
-    }
-    const broadcasterUserId = normalizeKickNumericId(state.channelId);
-    if (broadcasterUserId != null) {
-        try {
-            const livestream = await fetchKickLivestreamByBroadcasterId(broadcasterUserId);
-            if (livestream && typeof livestream === 'object') {
-                const viewerCount = extractKickViewerCount(livestream);
-                const isLive = extractKickLiveFlag(livestream);
-                logKickViewerDebug(
-                    `Snapshot via livestream id=${broadcasterUserId}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${typeof isLive === 'boolean' ? isLive : 'null'}.`
-                );
-                return {
-                    viewerCount,
-                    isLive
-                };
-            }
-            // Livestream endpoint can return empty when offline; keep this as a fallback
-            // but still try slug-based channel lookup for the most accurate viewer count.
-            fallbackSnapshot = {
-                viewerCount: 0,
-                isLive: null
-            };
-            logKickViewerDebug(`Livestream snapshot empty for broadcaster id=${broadcasterUserId}; using fallback snapshot.`, 'warning');
-        } catch (err) {
-            const status = getKickApiErrorStatus(err);
-            if (status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501) {
-                // Continue to slug-based lookup instead of forcing heartbeat to emit 0.
-                logKickViewerDebug(
-                    `Livestream snapshot failed for id=${broadcasterUserId}: status=${status || 'unknown'} error=${err?.message || err}.`,
-                    'warning'
-                );
-            } else {
-                throw err;
+                fallbackSnapshot = { viewerCount: 0, isLive: null };
+                logKickViewerDebug(`Livestream snapshot empty for broadcaster id=${broadcasterUserId}; using fallback snapshot.`, 'warning');
+            } catch (err) {
+                const status = getKickApiErrorStatus(err);
+                if (status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 501) {
+                    logKickViewerDebug(
+                        `Livestream snapshot failed for id=${broadcasterUserId}: status=${status || 'unknown'} error=${err?.message || err}.`,
+                        'warning'
+                    );
+                } else {
+                    throw err;
+                }
             }
         }
     }
+
+    // --- Unauthenticated fallback: bridge lookup with viewer data ---
     if (!fallbackSnapshot) {
-        logKickViewerDebug(`No viewer snapshot available for @${slugInput} (channel and livestream lookups returned nothing).`, 'warning');
+        const slugLower = normalizeChannel(slugInput);
+        if (slugLower) {
+            try {
+                const base = getBridgeBaseUrl();
+                const resp = await fetch(
+                    `${base}/kick/lookup?slug=${encodeURIComponent(slugLower)}&include_viewer=1`
+                );
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const viewerCount = typeof data?.viewer_count === 'number' ? data.viewer_count : null;
+                    const isLive = typeof data?.is_live === 'boolean' ? data.is_live : null;
+                    if (viewerCount != null || isLive != null) {
+                        logKickViewerDebug(
+                            `Snapshot via bridge @${slugLower}: viewers=${viewerCount != null ? viewerCount : 'null'}, live=${isLive != null ? isLive : 'null'}.`
+                        );
+                        return { viewerCount, isLive };
+                    }
+                }
+            } catch (err) {
+                logKickViewerDebug(`Bridge viewer lookup failed: ${err?.message || err}`, 'warning');
+            }
+        }
+    }
+
+    if (!fallbackSnapshot) {
+        logKickViewerDebug(`No viewer snapshot available for @${slugInput}.`, 'warning');
     }
     return fallbackSnapshot;
 }
