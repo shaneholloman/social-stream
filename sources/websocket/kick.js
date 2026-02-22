@@ -125,6 +125,11 @@ const DEFAULT_CONFIG = {
     bridgeUrl: 'https://kick-bridge.socialstream.ninja/events'
 };
 
+const PUSHER_KEY = '32cbd69e4b950bf97679';
+const PUSHER_WS_BASE = 'wss://ws-us2.pusher.com';
+const PUSHER_RECONNECT_DELAY_MS = 5000;
+const PUSHER_PING_INTERVAL_MS = 45000;
+
 const SUBSCRIPTION_RETRY_DELAY_MS = 10000;
 const CHAT_FEED_LIMIT = 100;
 const ALERT_FEED_LIMIT = 100;
@@ -169,7 +174,8 @@ const state = {
         source: null,
         retryTimer: null,
         status: 'disconnected',
-        lastErrorLoggedAt: 0
+        lastErrorLoggedAt: 0,
+        chatDisabled: false
     },
     socket: {
         status: 'disconnected',
@@ -182,7 +188,11 @@ const state = {
         siteApiProxyBase: '',
         allowProxy: true,
         lastError: '',
-        connecting: false
+        connecting: false,
+        pusherWs: null,
+        pusherStatus: 'disconnected',
+        pusherPingTimer: null,
+        pusherReconnectTimer: null
     },
     chat: {
         sending: false,
@@ -2621,11 +2631,6 @@ function resetKickViewerHeartbeatState() {
 function updateSocketState(payload = {}) {
     syncKickViewerHeartbeat(true);
     if (!els.socketState) return;
-    if (!supportsLocalSocket()) {
-        // Hide socket status in browser - it's only relevant for desktop app
-        els.socketState.style.display = 'none';
-        return;
-    }
     els.socketState.style.display = '';
     const status = state.socket?.status || 'disconnected';
     let label = 'Chat socket disconnected';
@@ -2825,6 +2830,232 @@ async function disconnectLocalSocket() {
     } catch (_) {}
 }
 
+// ── Pusher WebSocket (browser-direct chat) ──────────────────────────
+
+function sendPusherFrame(event, data) {
+    if (!state.socket.pusherWs || state.socket.pusherWs.readyState !== WebSocket.OPEN) return;
+    state.socket.pusherWs.send(JSON.stringify({ event, data }));
+}
+
+function disconnectPusherSocket() {
+    if (state.socket.pusherPingTimer) {
+        clearInterval(state.socket.pusherPingTimer);
+        state.socket.pusherPingTimer = null;
+    }
+    if (state.socket.pusherReconnectTimer) {
+        clearTimeout(state.socket.pusherReconnectTimer);
+        state.socket.pusherReconnectTimer = null;
+    }
+    if (state.socket.pusherWs) {
+        try { state.socket.pusherWs.close(); } catch (_) {}
+        state.socket.pusherWs = null;
+    }
+    state.socket.pusherStatus = 'disconnected';
+}
+
+function schedulePusherReconnect() {
+    if (state.socket.pusherReconnectTimer) return;
+    state.socket.pusherReconnectTimer = setTimeout(() => {
+        state.socket.pusherReconnectTimer = null;
+        connectPusherSocket();
+    }, PUSHER_RECONNECT_DELAY_MS);
+}
+
+function mapPusherEventToPacket(eventName, data) {
+    if (eventName === 'App\\Events\\ChatMessageEvent') {
+        return { type: 'chat.message.sent', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\ChatMessageDeletedEvent' || eventName === 'App\\Events\\MessageDeletedEvent') {
+        return { type: 'chat.message.deleted', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\GiftedSubscriptionsEvent' || eventName === 'App\\Events\\GiftPurchaseEvent') {
+        return { type: 'channel.subscription.gifts', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\SubscriptionEvent' || eventName === 'App\\Events\\ChannelSubscriptionEvent') {
+        return { type: 'channel.subscription.new', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\UserBannedEvent') {
+        return { type: 'chat.user.banned', body: data, source: 'socket' };
+    }
+    if (eventName === 'App\\Events\\StreamHostEvent') {
+        return { type: 'livestream.status.updated', body: data, source: 'socket' };
+    }
+    return { type: eventName, body: data, source: 'socket' };
+}
+
+function handlePusherMessage(event) {
+    if (!event?.data) return;
+    let payload;
+    try {
+        payload = JSON.parse(event.data);
+    } catch (_) {
+        return;
+    }
+    const eventName = payload?.event;
+    if (!eventName) return;
+
+    if (eventName === 'pusher:connection_established') {
+        let connectionData = {};
+        try { connectionData = JSON.parse(payload.data || '{}'); } catch (_) {}
+        state.socket.pusherStatus = 'connected';
+        state.socket.status = 'connected';
+        updateSocketState({ status: 'connected' });
+        log('Pusher chat socket connected.');
+        const channels = [];
+        if (state.socket.chatroomId) {
+            channels.push(`chatrooms.${state.socket.chatroomId}.v2`);
+            channels.push(`chatrooms.${state.socket.chatroomId}`);
+        }
+        if (state.socket.channelId) {
+            channels.push(`channel.${state.socket.channelId}`);
+        }
+        for (const channel of channels) {
+            sendPusherFrame('pusher:subscribe', { auth: '', channel });
+        }
+        if (state.socket.pusherPingTimer) clearInterval(state.socket.pusherPingTimer);
+        const timeout = connectionData.activity_timeout || 60;
+        state.socket.pusherPingTimer = setInterval(() => {
+            sendPusherFrame('pusher:ping', {});
+        }, Math.min(timeout * 1000 * 0.75, PUSHER_PING_INTERVAL_MS));
+        // Pusher is now handling chat — reconnect bridge with noChat if needed
+        syncBridgeChatMode();
+        return;
+    }
+
+    if (eventName === 'pusher_internal:subscription_succeeded') {
+        const channelName = payload.channel || '';
+        log(`Pusher subscribed to: ${channelName}`);
+        return;
+    }
+
+    if (eventName === 'pusher:ping') {
+        sendPusherFrame('pusher:pong', {});
+        return;
+    }
+
+    if (eventName === 'pusher:pong') return;
+
+    if (eventName === 'pusher:error') {
+        log(`Pusher error: ${payload?.data?.message || 'Unknown'}`, 'warning');
+        return;
+    }
+
+    let data = payload.data;
+    if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch (_) {}
+    }
+
+    const packet = mapPusherEventToPacket(eventName, data);
+    if (packet) {
+        handleLocalSocketEvent(packet);
+    }
+}
+
+function connectPusherSocket() {
+    if (state.socket.pusherStatus === 'connected' || state.socket.pusherStatus === 'connecting') return;
+    const chatroomId = state.socket.chatroomId;
+    if (!chatroomId) {
+        log('Pusher: no chatroomId available, cannot connect chat.', 'warning');
+        return;
+    }
+    disconnectPusherSocket();
+    const url = `${PUSHER_WS_BASE}/app/${PUSHER_KEY}?protocol=7&client=js&version=8.4.0&flash=false`;
+    state.socket.pusherStatus = 'connecting';
+    state.socket.status = 'connecting';
+    updateSocketState({ status: 'connecting' });
+    log(`Connecting Pusher chat socket for chatroom ${chatroomId}...`);
+    try {
+        state.socket.pusherWs = new WebSocket(url);
+    } catch (err) {
+        log(`Pusher WebSocket failed: ${err?.message || err}`, 'error');
+        state.socket.pusherStatus = 'disconnected';
+        state.socket.status = 'disconnected';
+        updateSocketState({ status: 'error', error: err?.message });
+        schedulePusherReconnect();
+        return;
+    }
+    state.socket.pusherWs.addEventListener('message', handlePusherMessage);
+    state.socket.pusherWs.addEventListener('close', (event) => {
+        log(`Pusher socket closed (code: ${event?.code || 'unknown'}).`);
+        state.socket.pusherStatus = 'disconnected';
+        state.socket.status = 'disconnected';
+        updateSocketState({ status: 'disconnected' });
+        schedulePusherReconnect();
+        // Pusher down — reconnect bridge with chat enabled as fallback
+        syncBridgeChatMode();
+    });
+    state.socket.pusherWs.addEventListener('error', () => {
+        log('Pusher socket error.', 'warning');
+    });
+}
+
+// ── Channel lookup for Pusher chat ──────────────────────────────────
+
+async function resolveChannelForPusher() {
+    if (state.socket.chatroomId) return;
+    const slug = state.channelSlug?.trim();
+    if (!slug) return;
+    // If we have auth tokens, use the standard API resolver
+    if (state.tokens?.access_token) {
+        try {
+            await resolveChannelId();
+        } catch (err) {
+            log(`Channel resolve for Pusher failed: ${err?.message || err}`, 'warning');
+        }
+        return;
+    }
+    // No auth — ask bridge server for cached chatroom lookup
+    try {
+        const base = getBridgeBaseUrl();
+        const url = `${base}/kick/lookup?slug=${encodeURIComponent(slug)}`;
+        const resp = await fetch(url);
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.chatroom_id) {
+                state.socket.chatroomId = String(data.chatroom_id);
+                if (data.broadcaster_user_id && !state.channelId) {
+                    state.channelId = data.broadcaster_user_id;
+                    state.channelName = data.slug || slug;
+                    state.lastResolvedSlug = normalizeChannel(slug);
+                }
+                log(`Resolved chatroom ${data.chatroom_id} for ${slug} (bridge lookup, source: ${data.chatroom_source || 'unknown'}).`);
+                return;
+            }
+            if (data.broadcaster_user_id && !state.channelId) {
+                state.channelId = data.broadcaster_user_id;
+                state.channelName = data.slug || slug;
+                state.lastResolvedSlug = normalizeChannel(slug);
+            }
+            log(`Bridge lookup found broadcaster ${data.broadcaster_user_id} but no chatroom_id yet. Sign in to populate cache.`, 'warning');
+            return;
+        }
+        log(`Bridge lookup returned ${resp.status}.`, 'warning');
+    } catch (err) {
+        log(`Bridge lookup failed: ${err?.message || err}`, 'warning');
+    }
+    log('Could not resolve chatroomId. Sign in or pass ?chatroom_id= URL param.', 'warning');
+}
+
+function postChatroomToCache(slug, chatroomId, broadcasterUserId) {
+    if (!slug || !chatroomId) return;
+    try {
+        const base = getBridgeBaseUrl();
+        const body = { slug: slug, chatroom_id: Number(chatroomId) };
+        if (broadcasterUserId) body.broadcaster_user_id = Number(broadcasterUserId);
+        fetch(`${base}/kick/chatroom-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(resp => {
+            if (resp.ok) {
+                log(`Cached chatroom ${chatroomId} for ${slug} on bridge.`);
+            } else {
+                log(`Bridge cache POST returned ${resp.status}.`, 'warning');
+            }
+        }).catch(() => {});
+    } catch (_) {}
+}
+
 async function startAuthFlow() {
     logKickWs('Sign-in clicked.');
 
@@ -2917,6 +3148,7 @@ async function startExternalAuthFlow() {
             await loadAuthenticatedProfile();
             await listSubscriptions();
             await maybeAutoStart(true);
+            connectPusherSocket();
             connectLocalSocket(true);
         } catch (err) {
             console.error(err);
@@ -2963,6 +3195,7 @@ async function handleAuthCallback() {
         await loadAuthenticatedProfile();
         await listSubscriptions();
         await maybeAutoStart(true);
+        connectPusherSocket();
         connectLocalSocket(true);
     } catch (err) {
         console.error(err);
@@ -3727,6 +3960,7 @@ async function resolveChannelId(force = false) {
     }
     if (resolvedChatroomId != null) {
         state.socket.chatroomId = String(resolvedChatroomId);
+        postChatroomToCache(slugLower, resolvedChatroomId, channel.broadcaster_user_id);
     }
     if (resolvedSocketChannelId != null) {
         state.socket.channelId = String(resolvedSocketChannelId);
@@ -3750,8 +3984,11 @@ async function resolveChannelId(force = false) {
     }
     // Replay any events that were queued before channel resolution
     replayPendingBridgeEvents();
-    // Reconnect local socket now that chatroomId may be available
+    // Connect Pusher chat socket now that chatroomId may be available
+    connectPusherSocket();
+    // Reconnect local socket if ninjafy is available
     if (
+        supportsLocalSocket() &&
         (state.socket.chatroomId || state.socket.channelId || state.socket.userId || state.channelId) &&
         state.socket.status !== 'connected'
     ) {
@@ -3943,18 +4180,43 @@ async function maybeAutoStart(force = false) {
     }
 }
 
+function syncBridgeChatMode() {
+    if (!state.tokens?.access_token) return;
+    const pusherActive = state.socket.pusherStatus === 'connected';
+    const bridgeChatDisabled = state.bridge.chatDisabled;
+    // If Pusher just connected and bridge has chat enabled, reconnect with noChat
+    // If Pusher just disconnected and bridge has chat disabled, reconnect with chat
+    if (pusherActive && !bridgeChatDisabled && state.bridge.status === 'connected') {
+        log('Pusher connected — reconnecting bridge with noChat.');
+        connectBridge();
+    } else if (!pusherActive && bridgeChatDisabled && state.bridge.status === 'connected') {
+        log('Pusher disconnected — reconnecting bridge with chat fallback.');
+        connectBridge();
+    }
+}
+
 function connectBridge() {
+    if (!state.tokens?.access_token) {
+        log('Bridge requires sign-in.', 'info');
+        return;
+    }
     state.bridgeUrl = state.bridgeUrl || DEFAULT_CONFIG.bridgeUrl;
     if (!state.bridgeUrl) {
         log('Unable to determine Kick bridge URL.', 'error');
         return;
     }
     disconnectBridge();
+    const pusherActive = state.socket.pusherStatus === 'connected';
     try {
         let bridgeUrl = state.bridgeUrl;
         if (state.channelId) {
             bridgeUrl = appendBridgeParam(bridgeUrl, 'channel', String(state.channelId));
         }
+        if (pusherActive) {
+            bridgeUrl = appendBridgeParam(bridgeUrl, 'noChat', '1');
+            log('Bridge connected with noChat (Pusher handles chat).');
+        }
+        state.bridge.chatDisabled = pusherActive;
         const source = new EventSource(bridgeUrl, { withCredentials: false });
         state.bridge.source = source;
         state.bridge.status = 'connecting';
@@ -4176,6 +4438,10 @@ function bridgeEventMatchesCurrentChannel(packet) {
     if (!packet || typeof packet !== 'object') {
         return true;
     }
+    // Pusher socket events are already scoped to the correct chatroom channel
+    if (packet.source === 'socket') {
+        return true;
+    }
     const expectedId = state.channelId != null ? String(state.channelId).trim() : '';
     const expectedSlug = normalizeChannel(state.channelSlug);
     if (!expectedId && !expectedSlug) {
@@ -4308,8 +4574,8 @@ function processBridgeEvent(packet, isReplay = false) {
 
 function handleBridgeEvent(packet) {
     if (!packet) return;
-    // If channelId is not yet resolved and we have a slug, queue the event
-    if (state.channelId == null && state.channelSlug) {
+    // Socket-sourced events are already scoped to the correct chatroom — skip queue
+    if (state.channelId == null && state.channelSlug && packet.source !== 'socket') {
         const type = packet.type || packet.body?.event || 'unknown';
         if (pendingBridgeEvents.length < MAX_PENDING_EVENTS) {
             pendingBridgeEvents.push(packet);
@@ -4341,7 +4607,7 @@ function shouldIgnoreBridgeChatEvent(packet) {
     if (type !== 'chat.message.sent') return false;
     // Don't ignore events that came from the socket itself
     if (packet?.source === 'socket') return false;
-    if (!supportsLocalSocket()) return false;
+    if (!supportsLocalSocket() && state.socket.pusherStatus !== 'connected') return false;
     if (state.socket?.status !== 'connected') return false;
     const lastSocketChatAt = Number(state.socket?.lastChatEventAt || 0);
     if (!lastSocketChatAt) return false;
@@ -5808,6 +6074,12 @@ async function bootstrap() {
         bindEvents();
         initLocalSocketBridge();
         updateSocketState();
+        // Connect Pusher chat immediately (no auth needed)
+        if (state.channelSlug && !state.socket.chatroomId) {
+            await resolveChannelForPusher();
+        }
+        connectPusherSocket();
+        // Auth-dependent: subscriptions, bridge events, sending messages
         if (state.tokens?.access_token) {
             scheduleTokenRefresh();
             await loadAuthenticatedProfile();
@@ -5826,6 +6098,7 @@ async function bootstrap() {
                 profileCachePersistTimer = null;
                 persistKickProfileCache();
             }
+            disconnectPusherSocket();
             disconnectLocalSocket();
         });
     } catch (error) {

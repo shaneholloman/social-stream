@@ -2906,8 +2906,7 @@ async function getKickUserIdByUsername(kickUsername) {
 	return null;
   }
 }
-  
-  
+
 async function getSEVENTVEmotes(url = false, type=null, channel=null, userID=false) {
 	var seventv = {};
 
