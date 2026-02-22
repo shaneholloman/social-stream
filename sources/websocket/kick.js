@@ -6179,10 +6179,13 @@ async function bootstrap() {
     }
 }
 
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootstrap);
-} else {
-    bootstrap();
+if (!window.__kickWsBootstrapped) {
+    window.__kickWsBootstrapped = true;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+        bootstrap();
+    }
 }
 
 // Handle messages from preload-mock.js which uses window.postMessage instead of chrome.runtime
