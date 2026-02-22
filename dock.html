@@ -3667,6 +3667,11 @@
 				document.body.classList.add("twoLines");
 			}
 
+			var hideUnknownAvatar = false;
+			if (urlParams.has("hideunknownavatar")) {
+				hideUnknownAvatar = true;
+			}
+
 			var splitMode = "";
 			if (urlParams.has("split")) {
 				splitMode = " splitMode";
@@ -5466,7 +5471,7 @@
 					chatimg = data.chatimg.replace("=s32-", "=s256-");
 					chatimg = chatimg.replace("=s64-", "=s256-");
 				} else {
-					chatimg = data.chatimg || "https://socialstream.ninja/sources/images/unknown.png";
+					chatimg = data.chatimg || (hideUnknownAvatar ? "" : "https://socialstream.ninja/sources/images/unknown.png");
 				}
 				return chatimg;
 			}
@@ -7937,14 +7942,19 @@
 				fallbackImageAnnouncement = false;
 			};
 
+			function isUnknownAvatarURL(src) {
+				if (!src) return false;
+				return src.indexOf("/sources/images/unknown.png") !== -1 || src.endsWith("/unknown.png") || src.endsWith("unknown.png");
+			}
+
 			function errorImage(ele) {
-				if (fallbackImage) {
-					ele.src = "./sources/images/unknown.png";
-					if (darkmode) {
-						ele.classList.add("invert");
-					}
-				} else {
+				if (hideUnknownAvatar || !fallbackImage || isUnknownAvatarURL(ele && ele.src ? ele.src : "")) {
 					ele.style.display = "none";
+					return;
+				}
+				ele.src = "./sources/images/unknown.png";
+				if (darkmode) {
+					ele.classList.add("invert");
 				}
 			}
 
@@ -9661,16 +9671,19 @@
 					}
 
 					var chatImg = data.chatimg;
+					if (hideUnknownAvatar && isUnknownAvatarURL(chatImg)) {
+						chatImg = "";
+					}
 					if (!chatImg && avatars) {
 						if (fallbackImageAnnouncement && !data.chatname && data.event){
 							chatImg = '<img id="img_' + data.id + '" src="./icons/announcement.png" class="icon ' + (darkmode ? "invert" : "") + ' hl-profile-pic" onerror="errorImage(this);" />';
-						} else if (fallbackImage) {
+						} else if (fallbackImage && !hideUnknownAvatar) {
 							chatImg = '<img id="img_' + data.id + '" src="./sources/images/unknown.png" class="icon ' + (darkmode ? "invert" : "") + ' hl-profile-pic" onerror="errorImage(this);" />';
 						} else {
 							chatImg = "";
 						}
 					} else if (avatars) {
-						if (data.type && data.type == "twitch" && avatars) {
+						if (data.type && data.type == "twitch" && avatars && !hideUnknownAvatar) {
 							chatImg = '<img id="img_' + data.id + '" src="./sources/images/unknown.png" class="fade-in-image ' + (darkmode ? "invert" : "") + ' icon hl-profile-pic" onerror="errorImage(this);" />';
 						} else {
 							chatImg = '<img id="img_' + data.id + '" src="' + chatImg + '" class="icon hl-profile-pic" onerror="errorImage(this);" />';

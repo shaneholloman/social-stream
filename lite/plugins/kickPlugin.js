@@ -25,6 +25,7 @@ const STORAGE_VERSION = 5;
 
 const DEFAULT_API_BASE = 'https://kick.com/api/v2';
 const DEFAULT_WS_BASE = 'wss://ws-us2.pusher.com';
+const BRIDGE_BASE_URL = 'https://kick-bridge.socialstream.ninja';
 const HISTORY_LIMIT = 400;
 const PUSHER_APP_KEY = '32cbd69e4b950bf97679';
 const CHANNEL_WHITESPACE_MESSAGE = 'Kick channel names cannot contain spaces. Enter the channel slug (e.g. "evarate").';
@@ -826,18 +827,38 @@ export class KickPlugin extends BasePlugin {
   }
 
   async fetchChannelMetadata(channel) {
-    const url = `${this.apiBase}/channels/${encodeURIComponent(channel)}`;
-    const data = await this.fetchJson(url);
-    if (!data) {
-      throw new Error('Kick channel lookup returned empty response. Provide the chatroom ID manually if needed.');
+    // 1. Try legacy kick.com API (works same-origin, Cloudflare may block elsewhere)
+    try {
+      const url = `${this.apiBase}/channels/${encodeURIComponent(channel)}`;
+      const data = await this.fetchJson(url);
+      if (data && !data.error) {
+        const chatroomId = this.extractChatroomId(data);
+        const channelId = this.extractChannelId(data);
+        const userId = this.extractUserId(data);
+        if (chatroomId) return { chatroomId, channelId, userId };
+      }
+    } catch (_) {
+      // Cloudflare block expected — fall through to bridge
     }
-    if (data.error) {
-      throw new Error(typeof data.error === 'string' ? data.error : 'Kick API returned an error for the channel lookup.');
+
+    // 2. Try bridge cache (no auth needed)
+    try {
+      const resp = await fetch(`${BRIDGE_BASE_URL}/kick/lookup?slug=${encodeURIComponent(channel)}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.chatroom_id) {
+          return {
+            chatroomId: String(data.chatroom_id),
+            channelId: data.broadcaster_user_id ? String(data.broadcaster_user_id) : null,
+            userId: data.broadcaster_user_id ? String(data.broadcaster_user_id) : null
+          };
+        }
+      }
+    } catch (_) {
+      // Bridge unreachable — fall through
     }
-    const chatroomId = this.extractChatroomId(data);
-    const channelId = this.extractChannelId(data);
-    const userId = this.extractUserId(data);
-    return { chatroomId, channelId, userId };
+
+    throw new Error('Unable to resolve Kick chatroom. Legacy API blocked and bridge cache empty. Provide chatroom ID manually.');
   }
 
   extractChannelId(payload) {
@@ -1393,6 +1414,7 @@ export class KickPlugin extends BasePlugin {
   }
 
   async lookupProfileData(ids) {
+    if (this._profileLookupBlocked) return null;
     const endpoints = this.buildProfileEndpoints(ids);
     for (let i = 0; i < endpoints.length; i += 1) {
       const endpoint = endpoints[i];
@@ -1403,7 +1425,12 @@ export class KickPlugin extends BasePlugin {
           return profile;
         }
       } catch (err) {
-        this.log(`Kick profile endpoint failed (${endpoint}): ${err?.message || err}`);
+        const msg = err?.message || String(err);
+        // Cloudflare returns HTML — stop spamming all endpoints
+        if (/did not return JSON|text\/html/i.test(msg)) {
+          this._profileLookupBlocked = true;
+          return null;
+        }
       }
     }
     return null;
@@ -1624,14 +1651,14 @@ export class KickPlugin extends BasePlugin {
       return;
     }
 
-    if (eventName === 'App\\Events\\GiftPurchaseEvent') {
-      if (data?.event === 'gift' || data?.gift) {
+    if (eventName === 'App\\Events\\GiftPurchaseEvent' || eventName === 'App\\Events\\GiftedSubscriptionsEvent') {
+      if (data?.event === 'gift' || data?.gift || eventName.includes('Gifted')) {
         this.emitMessage(data);
       }
       return;
     }
 
-    if (eventName === 'App\\Events\\ChannelSubscriptionEvent') {
+    if (eventName === 'App\\Events\\ChannelSubscriptionEvent' || eventName === 'App\\Events\\SubscriptionEvent') {
       this.emitMessage({
         id: data?.id || `kick-sub-${Date.now()}`,
         type: 'kick',
@@ -1644,7 +1671,7 @@ export class KickPlugin extends BasePlugin {
       return;
     }
 
-    if (eventName === 'App\\Events\\ChatMessageDeletedEvent') {
+    if (eventName === 'App\\Events\\ChatMessageDeletedEvent' || eventName === 'App\\Events\\MessageDeletedEvent') {
       const targetId = data?.message_id || data?.id;
       if (targetId && this.seenIds.has(targetId)) {
         this.messenger.emitMessage({ type: 'kick', id: `kick-${targetId}`, deleted: true });
@@ -1652,8 +1679,10 @@ export class KickPlugin extends BasePlugin {
       return;
     }
 
-    // Unhandled events can still be useful for debugging
-    this.log(`Unhandled Kick event: ${eventName}`);
+    if (eventName === 'App\\Events\\UserBannedEvent') {
+      // Banned user's messages should be treated as deleted
+      return;
+    }
   }
 
   handleWsClose(event) {

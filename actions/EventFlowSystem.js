@@ -20,6 +20,10 @@ class EventFlowSystem {
 		});
 		this.messageStore = options.messageStore || window.messageStore || {}; // Share message store from background.js
 		this.handleMessageStore = options.handleMessageStore || window.handleMessageStore || null; // Function to handle message storage
+		this.allowEvalCustomJs = (typeof options.allowEvalCustomJs === 'boolean')
+			? options.allowEvalCustomJs
+			: this.detectCustomJsEvalSupport();
+		this.customJsEvalWarningShown = false;
 		
 		// MIDI properties
 		this.midiEnabled = false;
@@ -57,6 +61,40 @@ class EventFlowSystem {
         
         this.initPromise = this.initDatabase();
     }
+
+	detectCustomJsEvalSupport() {
+		try {
+			if (typeof isSSAPP !== 'undefined' && isSSAPP) return true;
+			if (typeof window !== 'undefined' && (
+				window.ssapp === true ||
+				window.ninjafy ||
+				window.electronApi
+			)) return true;
+			if (typeof window !== 'undefined' && window.location && typeof window.location.search === 'string') {
+				const params = new URLSearchParams(window.location.search || '');
+				if (params.has('ssapp')) return true;
+			}
+		} catch (error) {
+			// ignore and continue to extension detection
+		}
+
+		// MV3 extension pages do not allow dynamic eval/new Function under default CSP.
+		try {
+			if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.getManifest === 'function') {
+				return false;
+			}
+		} catch (error) {
+			// If this check fails, fall through to default allow.
+		}
+
+		return true;
+	}
+
+	warnCustomJsEvalDisabled(scope = 'customJs') {
+		if (this.customJsEvalWarningShown) return;
+		this.customJsEvalWarningShown = true;
+		console.warn(`[EventFlowSystem] ${scope} is disabled in extension context due CSP (unsafe-eval not allowed). Use SSApp/Electron or a runtime addon.`);
+	}
 
     // Start periodic evaluation for time-based triggers (timeInterval/timeOfDay)
     startScheduler() {
@@ -1641,6 +1679,10 @@ class EventFlowSystem {
                 return false;
                 
             case 'customJs':
+                if (!this.allowEvalCustomJs) {
+                    this.warnCustomJsEvalDisabled('customJs trigger');
+                    return false;
+                }
                 try {
                     const evalFunction = new Function('message', config.code);
                     match = evalFunction(message);
@@ -2782,6 +2824,10 @@ class EventFlowSystem {
 				break;
                 
             case 'customJs':
+                if (!this.allowEvalCustomJs) {
+                    this.warnCustomJsEvalDisabled('customJs action');
+                    break;
+                }
                 try {
                     const evalFunction = new Function('message', 'result', config.code);
                     const customResult = evalFunction(message, { ...result });

@@ -316,10 +316,11 @@ class EventFlowEditor {
             },
             {
                 id: 'legacy',
-                name: '📦 Legacy/Other',
+                name: '📦 Advanced',
                 expanded: false,
                 triggers: [
-                    { id: 'eventType', name: '📣 Event Type (Legacy)' }
+                    { id: 'eventType', name: '📣 Event Type (Advanced)' },
+                    { id: 'customJs', name: 'Custom Code' }
                 ]
             }
         ];
@@ -354,6 +355,7 @@ class EventFlowEditor {
                 name: '🔌 Integrations',
                 expanded: true,
                 actions: [
+                    { id: 'customJs', name: 'Execute Custom Code' },
                     { id: 'webhook', name: '🌐 Call Webhook' },
                     { id: 'addPoints', name: '⬆️ Add Points' },
                     { id: 'spendPoints', name: '⬇️ Spend Points' }
@@ -560,9 +562,13 @@ class EventFlowEditor {
                                     </div>
                                     <div class="trigger-group-items" style="${group.expanded ? '' : 'display: none;'}">
                                         ${group.triggers.map(trigger => `
-                                            <div class="node-item trigger" data-nodetype="trigger" data-subtype="${trigger.id}" draggable="true">
-                                                ${trigger.name}
-                                            </div>
+                                            ${(() => {
+                                                const isDisabled = !this.isSSApp && trigger.id === 'customJs';
+                                                const label = isDisabled ? `${trigger.name} (Desktop only)` : trigger.name;
+                                                return `<div class="node-item trigger ${isDisabled ? 'disabled-node-item' : ''}" data-nodetype="trigger" data-subtype="${trigger.id}" data-disabled="${isDisabled ? 'true' : 'false'}" draggable="${isDisabled ? 'false' : 'true'}" title="${isDisabled ? 'Unavailable in extension mode due browser CSP (unsafe-eval blocked).' : ''}" style="${isDisabled ? 'opacity:0.55; cursor:not-allowed;' : ''}">
+                                                    ${label}
+                                                </div>`;
+                                            })()}
                                         `).join('')}
                                     </div>
                                 </div>
@@ -578,9 +584,13 @@ class EventFlowEditor {
                                     </div>
                                     <div class="action-group-items" style="${group.expanded ? '' : 'display: none;'}">
                                         ${group.actions.map(action => `
-                                            <div class="node-item action" data-nodetype="action" data-subtype="${action.id}" draggable="true">
-                                                ${action.name}
-                                            </div>
+                                            ${(() => {
+                                                const isDisabled = !this.isSSApp && action.id === 'customJs';
+                                                const label = isDisabled ? `${action.name} (Desktop only)` : action.name;
+                                                return `<div class="node-item action ${isDisabled ? 'disabled-node-item' : ''}" data-nodetype="action" data-subtype="${action.id}" data-disabled="${isDisabled ? 'true' : 'false'}" draggable="${isDisabled ? 'false' : 'true'}" title="${isDisabled ? 'Unavailable in extension mode due browser CSP (unsafe-eval blocked).' : ''}" style="${isDisabled ? 'opacity:0.55; cursor:not-allowed;' : ''}">
+                                                    ${label}
+                                                </div>`;
+                                            })()}
                                         `).join('')}
                                     </div>
                                 </div>
@@ -695,6 +705,13 @@ class EventFlowEditor {
 
         const triggerItems = document.querySelectorAll('#trigger-list .node-item');
         triggerItems.forEach(item => {
+            if (item.dataset.disabled === 'true') {
+                item.setAttribute('draggable', 'false');
+                item.addEventListener('click', () => {
+                    this.showNotification('Custom Code is available in SSApp desktop only.', 'warning');
+                });
+                return;
+            }
             item.addEventListener('dragstart', (e) => this.handleNodeDragStart(e, 'trigger', item.dataset.subtype)); // Changed to subtype
         });
 
@@ -725,6 +742,13 @@ class EventFlowEditor {
 
         const actionItems = document.querySelectorAll('#action-list .node-item');
         actionItems.forEach(item => {
+            if (item.dataset.disabled === 'true') {
+                item.setAttribute('draggable', 'false');
+                item.addEventListener('click', () => {
+                    this.showNotification('Custom Code is available in SSApp desktop only.', 'warning');
+                });
+                return;
+            }
             item.addEventListener('dragstart', (e) => this.handleNodeDragStart(e, 'action', item.dataset.subtype)); // Changed to subtype
         });
 
@@ -2419,6 +2443,7 @@ class EventFlowEditor {
                 case 'midiNoteOff': node.config = { deviceId: '', note: '', channel: 1 }; break;
                 case 'midiCC': node.config = { deviceId: '', controller: '', channel: 1 }; break;
                 case 'messageProperties': node.config = { requiredProperties: [], forbiddenProperties: [], requireAll: true, lastActivityFilter: { enabled: false, mode: 'within', amount: 10, unit: 'minutes' } }; break;
+                case 'customJs': node.config = { code: 'return (message.chatmessage || "").includes("test");' }; break;
             }
         } else if (type === 'action') {
             node.actionType = subtype;
@@ -2453,6 +2478,8 @@ class EventFlowEditor {
 					node.config = { amount: 100 }; break;
                 case 'spendPoints':
 					node.config = { amount: 100 }; break;
+                case 'customJs':
+					node.config = { code: 'message.chatmessage += " (edited)";\nreturn { modified: true, message };' }; break;
 				case 'playTenorGiphy':
 					node.config = { mediaUrl: 'https://giphy.com/embed/X9izlczKyCpmCSZu0l', mediaType: 'iframe', duration: 10000, width: 100, height: 100, x: 0, y: 0, randomX: false, randomY: false, useLayer: false, clearFirst: true };
 					break;
@@ -3637,6 +3664,9 @@ class EventFlowEditor {
 				break;
 			// --- Custom JS Trigger ---
 			case 'customJs': // Assuming 'customJs' can be a trigger, action, or logic type based on context
+				if (!this.isSSApp) {
+					html += `<div class="property-group"><div class="property-help" style="color:#f0ad4e;">Custom Code execution is disabled in extension mode due browser CSP restrictions. Use SSApp desktop.</div></div>`;
+				}
 				if (node.type === 'trigger') {
 					 html += `<div class="property-group"><label class="property-label">JavaScript Code</label><textarea class="property-input" id="prop-code" rows="10" spellcheck="false">${node.config.code || 'return message.chatmessage.includes("test");'}</textarea>
 							 <div class="property-help">Return true/false. \`message\` object is available.</div></div>`;

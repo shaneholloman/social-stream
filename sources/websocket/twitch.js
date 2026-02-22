@@ -331,6 +331,26 @@ try{
 	var FFZ = false;
 	var EMOTELIST = false;
 	var settings = {};
+
+	function syncThirdPartyEmotesForChannel(force = false) {
+		const activeChannel = (channel || "").replace(/^#/, "").trim();
+		if (!activeChannel) {
+			return;
+		}
+		if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+			return;
+		}
+		if (settings.bttv && (force || !BTTV)) {
+			chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true, type:"twitch", channel: activeChannel }, function () {});
+		}
+		if (settings.seventv && (force || !SEVENTV)) {
+			chrome.runtime.sendMessage(chrome.runtime.id, { getSEVENTV: true, type:"twitch", channel: activeChannel }, function () {});
+		}
+		if (settings.ffz && (force || !FFZ)) {
+			chrome.runtime.sendMessage(chrome.runtime.id, { getFFZ: true, type:"twitch", channel: activeChannel }, function () {});
+		}
+	}
+
 	function getTranslation(key, value = '') {
 		try {
 			if (settings.translation && settings.translation.innerHTML && key in settings.translation.innerHTML) {
@@ -423,6 +443,7 @@ try{
 		urlParams = new URLSearchParams(window.location.search);
 		hashParams = new URLSearchParams(window.location.hash.slice(1));
 		channel = urlParams.get("channel") || urlParams.get("username") || hashParams.get("channel") || localStorage.getItem("twitchChannel") || channel;
+		syncThirdPartyEmotesForChannel(true);
 		
 		// Set up event listeners
 		const signOutButton = document.getElementById('sign-out-button');
@@ -579,6 +600,7 @@ try{
 		} else if (hashMatch(/%40(\w+)/)){
 			channel = hashMatch(/%40(\w+)/) || channel;
 		}
+		syncThirdPartyEmotesForChannel(true);
 		token = hashMatch(/access_token=(\w+)/);
 		if (sessionStorage.twitchOAuthState == state) {
 			verifyAndUseToken(token);
@@ -1331,18 +1353,7 @@ async function ensureChatClientInstance() {
 				if ("settings" in request) {
 					settings = request.settings;
 					sendResponse(true);
-					
-					if (channel){
-						if (settings.bttv) {
-							chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true, type:"twitch", channel:channel }, function (response) {});
-						}
-						if (settings.seventv) {
-							chrome.runtime.sendMessage(chrome.runtime.id, { getSEVENTV: true, type:"twitch", channel:channel }, function (response) {});
-						}
-						if (settings.ffz) {
-							chrome.runtime.sendMessage(chrome.runtime.id, { getFFZ: true, type:"twitch", channel:channel }, function (response) {});
-						}
-					}
+					syncThirdPartyEmotesForChannel(false);
 					return;
 				}
 				if ("SEVENTV" in request) {
@@ -2108,6 +2119,7 @@ async function ensureChatClientInstance() {
 		if (channelName) {
 			localStorage.setItem('twitchChannel', channelName);
 			channel = channelName;
+			syncThirdPartyEmotesForChannel(true);
 			channelInput.value = '';
 			await connect();
 		}
@@ -2122,6 +2134,7 @@ async function ensureChatClientInstance() {
 				if (channelName) {
 					localStorage.setItem('twitchChannel', channelName);
 					channel = channelName;
+					syncThirdPartyEmotesForChannel(true);
 					channelInput.value = '';
 					await connect();
 				}
@@ -2212,24 +2225,7 @@ async function ensureChatClientInstance() {
 		response = response || {};
 		if ("settings" in response) {
 			settings = response.settings;
-			
-			if (channel){
-				if (settings.bttv && !BTTV) {
-					chrome.runtime.sendMessage(chrome.runtime.id, { getBTTV: true, type:"twitch", channel:channel  }, function (response) {
-						//	console.log(response);
-					});
-				}
-				if (settings.seventv && !SEVENTV) {
-					chrome.runtime.sendMessage(chrome.runtime.id, { getSEVENTV: true, type:"twitch", channel:channel  }, function (response) {
-						//	console.log(response);
-					});
-				}
-				if (settings.ffz && !FFZ) {
-					chrome.runtime.sendMessage(chrome.runtime.id, { getFFZ: true, type:"twitch", channel:channel  }, function (response) {
-						//	console.log(response);
-					});
-				}
-			}
+			syncThirdPartyEmotesForChannel(false);
 		}
 		if ("state" in response) {
 			isExtensionOn = response.state;
@@ -2266,10 +2262,10 @@ async function ensureChatClientInstance() {
 	async function getViewerCount(channelName) {
 		const token = getStoredToken();
 		if (!token) return;
-		
+
 		// Clean channel name (remove # if present)
 		channelName = channelName.replace(/^#/, '');
-		
+
 		try {
 			const response = await fetchWithTimeout(
 				`https://api.twitch.tv/helix/streams?user_login=${channelName}`,
@@ -2279,26 +2275,24 @@ async function ensureChatClientInstance() {
 					'Authorization': `Bearer ${token}`
 				}
 			);
-			
+
 			const data = await response.json();
-			console.log(data);
 			if (data.data && data.data[0]) {
-				const currentViewers = data.data[0].viewer_count;
-				lastKnownViewers = currentViewers;
-				console.log({
-					type: 'twitch',
-					event: 'viewer_update',
-					meta: lastKnownViewers
-				});
-				pushMessage({
-					type: 'twitch',
-					event: 'viewer_update',
-					meta: lastKnownViewers
-				});
+				lastKnownViewers = data.data[0].viewer_count;
+			} else if (lastKnownViewers === null) {
+				lastKnownViewers = 0;
 			}
 		} catch (error) {
 			console.error('Error fetching viewer count:', error);
+			if (lastKnownViewers === null) {
+				lastKnownViewers = 0;
+			}
 		}
+		pushMessage({
+			type: 'twitch',
+			event: 'viewer_update',
+			meta: lastKnownViewers
+		});
 	}
 
 	// Function to fetch followers
