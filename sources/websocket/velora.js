@@ -121,8 +121,88 @@ const state = {
 };
 
 const els = {};
+let backgroundKeepAliveInitialized = false;
 
 // ─── DOM helpers ──────────────────────────────────────────────────────────────
+
+function enableBackgroundKeepAlive() {
+    if (backgroundKeepAliveInitialized) {
+        return;
+    }
+    backgroundKeepAliveInitialized = true;
+
+    try {
+        const receiveChannelCallback = function (event) {
+            const channel = event.channel;
+            if (!channel) {
+                return;
+            }
+            channel.onmessage = function () {};
+            channel.onopen = function () {};
+            channel.onclose = function () {};
+            setInterval(function () {
+                try { channel.send('KEEPALIVE'); } catch (e) {}
+            }, 1000);
+        };
+        const errorHandle = function () {};
+        const localConnection = new RTCPeerConnection();
+        const remoteConnection = new RTCPeerConnection();
+        localConnection.onicecandidate = function (event) {
+            return !event.candidate || remoteConnection.addIceCandidate(event.candidate).catch(errorHandle);
+        };
+        remoteConnection.onicecandidate = function (event) {
+            return !event.candidate || localConnection.addIceCandidate(event.candidate).catch(errorHandle);
+        };
+        remoteConnection.ondatachannel = receiveChannelCallback;
+        localConnection.sendChannel = localConnection.createDataChannel('sendChannel');
+        localConnection.sendChannel.onopen = function () {
+            try { localConnection.sendChannel.send('CONNECTED'); } catch (e) {}
+        };
+        localConnection.createOffer()
+            .then(function (offer) { return localConnection.setLocalDescription(offer); })
+            .then(function () { return remoteConnection.setRemoteDescription(localConnection.localDescription); })
+            .then(function () { return remoteConnection.createAnswer(); })
+            .then(function (answer) { return remoteConnection.setLocalDescription(answer); })
+            .then(function () { return localConnection.setRemoteDescription(remoteConnection.localDescription); })
+            .catch(errorHandle);
+    } catch (e) {}
+
+    const preventBackgroundThrottling = function () {
+        try {
+            window.onblur = null;
+            window.blurred = false;
+            document.hasFocus = function () { return true; };
+            window.onFocus = function () { return true; };
+            Object.defineProperties(document, {
+                hidden: { value: false, configurable: true },
+                mozHidden: { value: false, configurable: true },
+                msHidden: { value: false, configurable: true },
+                webkitHidden: { value: false, configurable: true },
+                visibilityState: {
+                    get: function () { return 'visible'; },
+                    configurable: true
+                }
+            });
+        } catch (e) {}
+    };
+
+    [
+        'visibilitychange',
+        'webkitvisibilitychange',
+        'mozvisibilitychange',
+        'msvisibilitychange',
+        'blur'
+    ].forEach(function (eventName) {
+        window.addEventListener(eventName, function (event) {
+            try {
+                event.stopImmediatePropagation();
+                event.preventDefault();
+            } catch (e) {}
+        }, true);
+    });
+
+    setInterval(preventBackgroundThrottling, 200);
+}
 
 function q(id) {
     return document.getElementById(id);
@@ -1706,6 +1786,7 @@ try {
 } catch (e) {}
 
 async function init() {
+    enableBackgroundKeepAlive();
     initElements();
 
     state.requestedChannel = getRequestedChannel();

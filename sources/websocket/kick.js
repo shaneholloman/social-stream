@@ -150,6 +150,7 @@ const PROFILE_CACHE_MAX_ENTRIES = 1200;
 const PROFILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const KICK_WINDOW_BOUNDS_STORAGE_KEY = 'kickWindowBounds';
 const KICK_WINDOW_BOUNDS_SAVE_DEBOUNCE_MS = 250;
+const KICK_SOCKET_HEALTH_CHECK_MS = 60000;
 
 const state = {
     clientId: '',
@@ -205,6 +206,7 @@ const state = {
         pusherPingTimer: null,
         pusherReconnectTimer: null,
         pusherWatchdogTimer: null,
+        pusherHealthTimer: null,
         pusherLastActivityAt: 0,
         pusherActivityTimeoutMs: 0
     },
@@ -252,6 +254,82 @@ const extension = {
     }
 };
 
+function enableKickBackgroundKeepAlive() {
+    if (kickBackgroundKeepAliveInitialized) return;
+    kickBackgroundKeepAliveInitialized = true;
+
+    try {
+        const receiveChannelCallback = function (event) {
+            const channel = event.channel;
+            if (!channel) return;
+            channel.onmessage = function () {};
+            channel.onopen = function () {};
+            channel.onclose = function () {};
+            setInterval(function () {
+                try { channel.send('KEEPALIVE'); } catch (_) {}
+            }, 1000);
+        };
+        const errorHandle = function () {};
+        const localConnection = new RTCPeerConnection();
+        const remoteConnection = new RTCPeerConnection();
+        localConnection.onicecandidate = e => !e.candidate || remoteConnection.addIceCandidate(e.candidate).catch(errorHandle);
+        remoteConnection.onicecandidate = e => !e.candidate || localConnection.addIceCandidate(e.candidate).catch(errorHandle);
+        remoteConnection.ondatachannel = receiveChannelCallback;
+        localConnection.sendChannel = localConnection.createDataChannel('sendChannel');
+        localConnection.sendChannel.onopen = function () {
+            try { localConnection.sendChannel.send('CONNECTED'); } catch (_) {}
+        };
+        localConnection.createOffer()
+            .then(offer => localConnection.setLocalDescription(offer))
+            .then(() => remoteConnection.setRemoteDescription(localConnection.localDescription))
+            .then(() => remoteConnection.createAnswer())
+            .then(answer => remoteConnection.setLocalDescription(answer))
+            .then(() => localConnection.setRemoteDescription(remoteConnection.localDescription))
+            .then(() => {
+                logKickWs('Kick keep-alive channel established.');
+            })
+            .catch(errorHandle);
+    } catch (e) {
+        try { console.log('Kick keep-alive setup failed:', e); } catch (_) {}
+    }
+
+    const preventBackgroundThrottling = function () {
+        try {
+            window.onblur = null;
+            window.blurred = false;
+            document.hasFocus = () => true;
+            window.onFocus = () => true;
+            Object.defineProperties(document, {
+                hidden: { value: false, configurable: true },
+                mozHidden: { value: false, configurable: true },
+                msHidden: { value: false, configurable: true },
+                webkitHidden: { value: false, configurable: true },
+                visibilityState: {
+                    get: () => 'visible',
+                    configurable: true
+                }
+            });
+        } catch (_) {}
+    };
+
+    [
+        'visibilitychange',
+        'webkitvisibilitychange',
+        'mozvisibilitychange',
+        'msvisibilitychange',
+        'blur'
+    ].forEach(eventName => {
+        window.addEventListener(eventName, event => {
+            try {
+                event.stopImmediatePropagation();
+                event.preventDefault();
+            } catch (_) {}
+        }, true);
+    });
+
+    setInterval(preventBackgroundThrottling, 200);
+}
+
 const WSS_PLATFORM = 'kick';
 const KICK_VIEWER_HEARTBEAT_INTERVAL_MS = 30000;
 const KICK_VIEWER_DISCONNECT_EMIT_DEBOUNCE_MS = 1500;
@@ -262,6 +340,7 @@ let lastBridgeNotifyStatus = null;
 let lastAuthNotifyStatus = null;
 let lastSocketNotifyStatus = null;
 let socketBridgeInitialized = false;
+let kickBackgroundKeepAliveInitialized = false;
 let kickWsEventLogCount = 0;
 let kickWsLastEventLogAt = 0;
 const ignoredEventTypesLogged = new Set();
@@ -3264,9 +3343,31 @@ async function disconnectLocalSocket() {
 
 // ── Pusher WebSocket (browser-direct chat) ──────────────────────────
 
+function isPusherSocketOpen() {
+    return Boolean(
+        state.socket.pusherWs &&
+        state.socket.pusherWs.readyState === WebSocket.OPEN
+    );
+}
+
 function sendPusherFrame(event, data) {
-    if (!state.socket.pusherWs || state.socket.pusherWs.readyState !== WebSocket.OPEN) return;
-    state.socket.pusherWs.send(JSON.stringify({ event, data }));
+    if (!isPusherSocketOpen()) return false;
+    const ws = state.socket.pusherWs;
+    try {
+        ws.send(JSON.stringify({ event, data }));
+        return true;
+    } catch (err) {
+        log(`Pusher send failed: ${err?.message || err}`, 'warning');
+        setTimeout(() => {
+            if (state.socket.pusherWs === ws) {
+                recoverPusherSocket('send_failed', {
+                    status: 'error',
+                    error: 'Pusher send failed'
+                });
+            }
+        }, 0);
+        return false;
+    }
 }
 
 function clearPusherConnectTimer() {
@@ -3285,6 +3386,10 @@ function disconnectPusherSocket() {
     if (state.socket.pusherWatchdogTimer) {
         clearInterval(state.socket.pusherWatchdogTimer);
         state.socket.pusherWatchdogTimer = null;
+    }
+    if (state.socket.pusherHealthTimer) {
+        clearInterval(state.socket.pusherHealthTimer);
+        state.socket.pusherHealthTimer = null;
     }
     if (state.socket.pusherReconnectTimer) {
         clearTimeout(state.socket.pusherReconnectTimer);
@@ -3316,6 +3421,22 @@ function recoverPusherSocket(reason, options = {}) {
     updateSocketState(error ? { status, error } : { status });
     schedulePusherReconnect(reason);
     syncBridgeChatMode();
+}
+
+function startPusherHealthTimer() {
+    if (state.socket.pusherHealthTimer) {
+        clearInterval(state.socket.pusherHealthTimer);
+    }
+    state.socket.pusherHealthTimer = setInterval(() => {
+        if (!state.socket.pusherWs) return;
+        if (
+            state.socket.pusherStatus === 'connected' &&
+            state.socket.pusherWs.readyState !== WebSocket.OPEN
+        ) {
+            log('Pusher chat socket is no longer open. Reconnecting chat.', 'warning');
+            recoverPusherSocket('health_closed_socket');
+        }
+    }, KICK_SOCKET_HEALTH_CHECK_MS);
 }
 
 function notePusherActivity() {
@@ -3389,13 +3510,26 @@ function handlePusherMessage(event) {
         if (state.socket.channelId) {
             channels.push(`channel.${state.socket.channelId}`);
         }
+        let sentSubscription = false;
         for (const channel of channels) {
-            sendPusherFrame('pusher:subscribe', { auth: '', channel });
+            sentSubscription = sendPusherFrame('pusher:subscribe', { auth: '', channel }) || sentSubscription;
+        }
+        if (channels.length && !sentSubscription) {
+            recoverPusherSocket('subscribe_send_failed', {
+                status: 'error',
+                error: 'Pusher subscribe send failed'
+            });
+            return;
         }
         if (state.socket.pusherPingTimer) clearInterval(state.socket.pusherPingTimer);
         const timeout = connectionData.activity_timeout || 60;
         state.socket.pusherPingTimer = setInterval(() => {
-            sendPusherFrame('pusher:ping', {});
+            if (!sendPusherFrame('pusher:ping', {})) {
+                recoverPusherSocket('ping_send_failed', {
+                    status: 'error',
+                    error: 'Pusher ping send failed'
+                });
+            }
         }, Math.min(timeout * 1000 * 0.75, PUSHER_PING_INTERVAL_MS));
         startPusherWatchdog(timeout);
         // Pusher is now handling chat — reconnect bridge with noChat if needed
@@ -3410,14 +3544,26 @@ function handlePusherMessage(event) {
     }
 
     if (eventName === 'pusher:ping') {
-        sendPusherFrame('pusher:pong', {});
+        if (!sendPusherFrame('pusher:pong', {})) {
+            recoverPusherSocket('pong_send_failed', {
+                status: 'error',
+                error: 'Pusher pong send failed'
+            });
+        }
         return;
     }
 
     if (eventName === 'pusher:pong') return;
 
     if (eventName === 'pusher:error') {
-        log(`Pusher error: ${payload?.data?.message || 'Unknown'}`, 'warning');
+        const pusherError = typeof payload?.data === 'string'
+            ? payload.data
+            : (payload?.data?.message || 'Unknown');
+        log(`Pusher error: ${pusherError}`, 'warning');
+        recoverPusherSocket('pusher_error', {
+            status: 'error',
+            error: pusherError
+        });
         return;
     }
 
@@ -3433,7 +3579,14 @@ function handlePusherMessage(event) {
 }
 
 function connectPusherSocket() {
-    if (state.socket.pusherStatus === 'connected' || state.socket.pusherStatus === 'connecting') return;
+    if (state.socket.pusherStatus === 'connected') {
+        if (isPusherSocketOpen()) return;
+        disconnectPusherSocket();
+    } else if (state.socket.pusherStatus === 'connecting') {
+        const ws = state.socket.pusherWs;
+        if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+        disconnectPusherSocket();
+    }
     const chatroomId = state.socket.chatroomId;
     if (!chatroomId) {
         log('Pusher: no chatroomId available, cannot connect chat.', 'warning');
@@ -3456,6 +3609,7 @@ function connectPusherSocket() {
         return;
     }
     const ws = state.socket.pusherWs;
+    startPusherHealthTimer();
     state.socket.pusherConnectTimer = setTimeout(() => {
         if (state.socket.pusherWs !== ws || state.socket.pusherStatus !== 'connecting') return;
         log('Pusher chat socket connection timed out. Reconnecting chat.', 'warning');
@@ -7695,6 +7849,7 @@ async function createCodeChallenge(verifier) {
 
 async function bootstrap() {
     logKickWs('Bootstrap start.');
+    enableKickBackgroundKeepAlive();
     restoreKickWindowBounds();
     try {
         await kickCoreReady;
