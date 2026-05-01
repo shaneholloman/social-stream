@@ -437,7 +437,7 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 				
 				// Send all settings to the page
 				window.dispatchEvent(new CustomEvent('settingsChanged', {
-					detail: settings,
+					detail: { settings: settings },
 					bubbles: true
 				}));
 				
@@ -549,5 +549,14 @@ window.addEventListener('message', function(event) {
 			detail: { message: request.message },
 			bubbles: true
 		}));
+		return;
+	}
+	if ("settings" in request) {
+		settings = request.settings;
+		window.dispatchEvent(new CustomEvent('settingsChanged', {
+			detail: { settings: settings },
+			bubbles: true
+		}));
+		syncThirdPartyEmotesForContext();
 	}
 });
