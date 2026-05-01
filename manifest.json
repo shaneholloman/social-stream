@@ -209,6 +209,12 @@
 			"matches": ["https://vpzone.tv/*", "https://www.vpzone.tv/*"]
 		},
 		{
+			"js": ["./sources/inject/vpzone-ws.js"],
+			"matches": ["https://vpzone.tv/*", "https://www.vpzone.tv/*"],
+			"run_at": "document_start",
+			"world": "MAIN"
+		},
+		{
 			"js": ["./sources/mixlr.js"],
 			"matches": ["https://*.mixlr.com/events/*"]
 		},

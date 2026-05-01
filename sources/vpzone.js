@@ -8,6 +8,145 @@
 	var lastViewerCount = null;
 	var sourceImg = "";
 	var sourceName = "VPZone";
+	var seenWsMessageIds = new Map();
+	var currentChannelSlug = "";
+
+	function getChannelSlugFromUrl() {
+		try {
+			var match = window.location.pathname.match(/^\/watch\/([^\/?#]+)/);
+			return match ? decodeURIComponent(match[1]) : "";
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function pruneSeenWs(now) {
+		if (!seenWsMessageIds.size) return;
+		seenWsMessageIds.forEach(function (ts, id) {
+			if (now - ts > 60000) seenWsMessageIds.delete(id);
+		});
+	}
+
+	function escapeHtmlMaybe(text) {
+		return escapeHtml((text == null ? "" : String(text)));
+	}
+
+	function tierBadge(tier, subMonths) {
+		var label = "SUB";
+		if (subMonths && subMonths >= 12) {
+			label = Math.floor(subMonths / 12) + "y";
+		} else if (subMonths && subMonths >= 1) {
+			label = subMonths + "m";
+		}
+		var bg = tier === "tier3" ? "#00E9E2" : tier === "tier2" ? "#FF6DE4" : "#f9376b";
+		var width = Math.max(34, Math.round(label.length * 6.5) + 14);
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="16" viewBox="0 0 ' + width + ' 16"><rect x="0.5" y="0.5" rx="8" ry="8" width="' + (width - 1) + '" height="15" fill="' + escapeXml(bg) + '" stroke="rgba(255,255,255,0.25)"></rect><text x="' + (width / 2) + '" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">' + escapeXml(label) + "</text></svg>",
+			type: "svg"
+		};
+	}
+
+	function ownerBadge() {
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="16" viewBox="0 0 20 16"><rect x="0.5" y="0.5" rx="3" ry="3" width="19" height="15" fill="#c071f5"></rect><text x="10" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">OP</text></svg>',
+			type: "svg"
+		};
+	}
+
+	function twitchBadge() {
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="16" viewBox="0 0 20 16"><rect x="0.5" y="0.5" rx="3" ry="3" width="19" height="15" fill="#9146FF"></rect><text x="10" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">TW</text></svg>',
+			type: "svg"
+		};
+	}
+
+	function buildBadgesFromWs(msg) {
+		var badges = [];
+		if (msg.is_owner) badges.push(ownerBadge());
+		if (msg.is_subscriber) badges.push(tierBadge(msg.tier, msg.sub_months));
+		if (msg.metadata && msg.metadata.source === "twitch") badges.push(twitchBadge());
+		return badges;
+	}
+
+	function emitWsMessage(data) {
+		var base = buildBaseData();
+		Object.keys(data).forEach(function (k) { base[k] = data[k]; });
+		pushMessage(base);
+	}
+
+	function handleWsFrame(raw) {
+		if (!isExtensionOn) return;
+		var msg;
+		try { msg = JSON.parse(raw); } catch (e) { return; }
+		if (!msg || typeof msg !== "object") return;
+
+		var now = Date.now();
+		pruneSeenWs(now);
+
+		if (msg.type === "presence") {
+			if (typeof msg.count === "number" && (settings.showviewercount || settings.hypemode)) {
+				if (lastViewerCount !== msg.count) {
+					lastViewerCount = msg.count;
+					pushMessage({ type: "vpzone", event: "viewer_update", meta: msg.count });
+				}
+			}
+			return;
+		}
+
+		if (msg.type === "delete_message") return;
+
+		if (msg.id && seenWsMessageIds.has(msg.id)) return;
+		if (msg.id) seenWsMessageIds.set(msg.id, now);
+
+		var ts = msg.ts || "";
+
+		if (msg.type === "follow" || msg.type === "subscription" || msg.type === "raid") {
+			emitWsMessage({
+				chatname: escapeHtmlMaybe(msg.username || ""),
+				chatmessage: escapeHtmlMaybe(msg.body || msg.type),
+				event: msg.type,
+				membership: msg.type === "subscription" ? (msg.metadata && msg.metadata.tier ? "Subscriber (" + msg.metadata.tier + ")" : "Subscriber") : "",
+				meta: { timestamp: ts, raw: msg.metadata || {} }
+			});
+			return;
+		}
+
+		if (msg.type === "system") {
+			var kind = msg.metadata && msg.metadata.kind;
+			emitWsMessage({
+				chatname: escapeHtmlMaybe(msg.username || "system"),
+				chatmessage: escapeHtmlMaybe(msg.body || ""),
+				event: kind || "system",
+				meta: { timestamp: ts, kind: kind || "" }
+			});
+			return;
+		}
+
+		var name = msg.username || (msg.metadata && msg.metadata.username) || "";
+		var body = msg.body == null ? "" : String(msg.body);
+		if (!name || !body) return;
+
+		emitWsMessage({
+			chatname: escapeHtmlMaybe(name),
+			chatmessage: escapeHtmlMaybe(body),
+			nameColor: msg.color || "",
+			chatbadges: buildBadgesFromWs(msg),
+			meta: {
+				timestamp: ts,
+				messageId: msg.id || "",
+				channel: msg.channel_slug || currentChannelSlug,
+				source: msg.metadata && msg.metadata.source ? msg.metadata.source : "vpzone"
+			}
+		});
+	}
+
+	function handleWindowMessage(event) {
+		if (!event || event.source !== window) return;
+		var d = event.data;
+		if (!d || d.source !== "vpzone-ws-interceptor") return;
+		if (d.type !== "receive") return;
+		handleWsFrame(d.data);
+	}
 
 	function pushMessage(data) {
 		if (!isExtensionOn) {
@@ -582,11 +721,16 @@
 
 	console.log("Social Stream injected: VPZone");
 
+	currentChannelSlug = getChannelSlugFromUrl();
+	window.addEventListener("message", handleWindowMessage);
+
 	setInterval(function () {
 		if (window.location.href !== lastUrl) {
 			lastUrl = window.location.href;
 			recentFingerprints.clear();
+			seenWsMessageIds.clear();
 			lastViewerCount = null;
+			currentChannelSlug = getChannelSlugFromUrl();
 		}
 		attachObserver();
 	}, 1000);
