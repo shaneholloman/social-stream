@@ -549,14 +549,5 @@ window.addEventListener('message', function(event) {
 			detail: { message: request.message },
 			bubbles: true
 		}));
-		return;
-	}
-	if ("settings" in request) {
-		settings = request.settings;
-		window.dispatchEvent(new CustomEvent('settingsChanged', {
-			detail: { settings: settings },
-			bubbles: true
-		}));
-		syncThirdPartyEmotesForContext();
 	}
 });
