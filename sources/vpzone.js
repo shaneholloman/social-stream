@@ -134,7 +134,7 @@
 			meta: {
 				timestamp: ts,
 				messageId: msg.id || "",
-				channel: msg.channel_slug || currentChannelSlug,
+				channel: currentChannelSlug,
 				source: msg.metadata && msg.metadata.source ? msg.metadata.source : "vpzone"
 			}
 		});
