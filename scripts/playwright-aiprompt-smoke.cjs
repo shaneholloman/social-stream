@@ -128,6 +128,12 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   // The app seeds with Chat overlay template. Ensure editor has HTML.
   const htmlLen = await page.$eval('#htmlEditor', el => el.value.length);
   assert(htmlLen > 200, `Editor should have template HTML (got length ${htmlLen})`);
+  const promptText = await page.$eval('#default-system-prompt', el => el.value);
+  assert(promptText.includes('var label = params.get("label") || "dock";'), 'AI prompt bridge guidance should default live overlays to label=dock');
+  const customLiveFeedTemplateLabels = await page.$$eval('textarea[id^="tmpl-"]', els => els
+    .filter(el => /vdo\.socialstream\.ninja/.test(el.value) && /params\.get\("label"\)\s*\|\|\s*"(?!dock")/.test(el.value))
+    .map(el => el.id));
+  assert(customLiveFeedTemplateLabels.length === 0, `Template bridge labels should default to dock: ${customLiveFeedTemplateLabels.join(', ')}`);
 
   // Templates modal opens and lists entries.
   await page.click('#openTemplates');

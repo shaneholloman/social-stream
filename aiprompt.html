@@ -835,7 +835,7 @@ Overlay pages receive data via a VDO.Ninja iframe bridge. Always include this br
   var params = new URLSearchParams(location.search);
   var roomID = params.get("session") || "";
   var password = params.get("password") || "false";
-  var label = params.get("label") || "custom_overlay_" + Date.now();
+  var label = params.get("label") || "dock";
   var bridge = document.getElementById("ssn_bridge");
   if (roomID) {
     bridge.src = "https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=" +
@@ -857,6 +857,7 @@ Overlay pages receive data via a VDO.Ninja iframe bridge. Always include this br
 
 Without ?session=YOUR_ID the bridge won't connect — but the builder still sends test payloads straight to the iframe via postMessage, so handlePayload must work with or without the bridge.
 Do NOT require `event.source === bridge.contentWindow`; builder test events and preview tools can come from the parent window. Only check `event.data.dataReceived.overlayNinja`.
+Use `label=dock` by default for normal live chat/events. Custom labels only receive targeted payloads, not the general live feed.
 
 DOM ordering matters: the `<iframe i&#100;="ssn_bridge">` element MUST exist in the DOM before the script that calls `document.getElementById("ssn_bridge")` runs. The safest patterns are (a) put the iframe tag first and the script right after in `<body>`, or (b) create the iframe in JS via `document.createElement("iframe")` and append it to body. Never put the iframe element below the script that reads it — `getElementById` will return null and setting `.src` throws.
 
@@ -939,7 +940,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "blank_overlay_" + Date.now();
+		var label = params.get("label") || "dock";
 		var bridge = document.getElementById("ssn_bridge");
 		if (roomID) {
 			bridge.src = "https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=" +
@@ -997,7 +998,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "chat_overlay_" + Date.now();
+		var label = params.get("label") || "dock";
 		var limit = Math.max(1, parseInt(params.get("limit") || "8", 10));
 		var showtime = Math.max(0, parseInt(params.get("showtime") || "0", 10));
 		var feed = document.getElementById("feed");
@@ -1127,7 +1128,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "alerts_" + Date.now();
+		var label = params.get("label") || "dock";
 		var duration = Math.max(2000, parseInt(params.get("duration") || "6000", 10));
 		var stage = document.getElementById("stage");
 		var bridge = document.getElementById("ssn_bridge");
@@ -1215,7 +1216,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "viewers_" + Date.now();
+		var label = params.get("label") || "dock";
 		var bar = document.getElementById("bar");
 		var counts = {};
 		var bridge = document.getElementById("ssn_bridge");
@@ -1289,7 +1290,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "goal_" + Date.now();
+		var label = params.get("label") || "dock";
 		var target = Math.max(1, parseInt(params.get("target") || "50", 10));
 		var startAt = Math.max(0, parseInt(params.get("start") || "0", 10));
 		var title = params.get("title") || "Sub goal";
@@ -1363,7 +1364,7 @@ If the user asks a question that does not require a file change, answer normally
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "brb_" + Date.now();
+		var label = params.get("label") || "dock";
 		var minutes = Math.max(0, parseInt(params.get("minutes") || "5", 10));
 		var title = params.get("title"); if (title) document.getElementById("headline").textContent = title;
 		var subtitle = params.get("sub"); if (subtitle) document.getElementById("sub").textContent = subtitle;
