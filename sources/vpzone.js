@@ -10,6 +10,41 @@
 	var sourceName = "VPZone";
 	var seenWsMessageIds = new Map();
 	var currentChannelSlug = "";
+	var avatarCache = new Map();
+	var avatarPending = new Set();
+	var avatarNegativeTtl = 5 * 60 * 1000;
+
+	function fetchAvatar(username) {
+		if (!username) return;
+		var key = String(username).toLowerCase();
+		if (avatarCache.has(key)) return;
+		if (avatarPending.has(key)) return;
+		avatarPending.add(key);
+		try {
+			fetch("/u/" + encodeURIComponent(username), { credentials: "omit", cache: "force-cache" })
+				.then(function (res) { return res.ok ? res.text() : ""; })
+				.then(function (html) {
+					if (!html) return;
+					// Avatars live at /storage/v1/object/public/avatars/<uuid>/avatar-<ts>.<ext>
+					// The user page exposes them via either an og:image meta tag or a
+					// background-image CSS rule. We accept any of those.
+					var match =
+						html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+avatar-[^"']+)["']/i) ||
+						html.match(/<meta[^>]+content=["']([^"']+avatar-[^"']+)["'][^>]+property=["']og:image["']/i) ||
+						html.match(/(https?:\/\/[^"'\\)\s]+\/avatars\/[a-f0-9-]+\/avatar-[^"'\\)\s]+\.(?:png|jpe?g|webp|gif))/i);
+					if (match && match[1]) {
+						avatarCache.set(key, match[1]);
+					} else {
+						setTimeout(function () { avatarPending.delete(key); }, avatarNegativeTtl);
+						return;
+					}
+				})
+				.catch(function () {})
+				.finally(function () { avatarPending.delete(key); });
+		} catch (e) {
+			avatarPending.delete(key);
+		}
+	}
 
 	function getChannelSlugFromUrl() {
 		try {
@@ -126,9 +161,23 @@
 		var body = msg.body == null ? "" : String(msg.body);
 		if (!name || !body) return;
 
+		// Frames don't carry an avatar URL, but the public profile page does.
+		// Fire a background fetch on first sight; subsequent messages from the
+		// same user will be enriched from the cache.
+		var avatar =
+			msg.avatar_url ||
+			msg.avatarUrl ||
+			(msg.metadata && (msg.metadata.avatar_url || msg.metadata.avatarUrl)) ||
+			avatarCache.get(String(name).toLowerCase()) ||
+			"";
+		if (!avatar) {
+			fetchAvatar(name);
+		}
+
 		emitWsMessage({
 			chatname: escapeHtmlMaybe(name),
 			chatmessage: escapeHtmlMaybe(body),
+			chatimg: avatar,
 			nameColor: msg.color || "",
 			chatbadges: buildBadgesFromWs(msg),
 			meta: {
@@ -729,6 +778,8 @@
 			lastUrl = window.location.href;
 			recentFingerprints.clear();
 			seenWsMessageIds.clear();
+			avatarCache.clear();
+			avatarPending.clear();
 			lastViewerCount = null;
 			currentChannelSlug = getChannelSlugFromUrl();
 		}
