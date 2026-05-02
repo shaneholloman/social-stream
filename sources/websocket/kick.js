@@ -130,12 +130,14 @@ const DEFAULT_CONFIG = {
 const PUSHER_KEY = '32cbd69e4b950bf97679';
 const PUSHER_WS_BASE = 'wss://ws-us2.pusher.com';
 const PUSHER_RECONNECT_DELAY_MS = 5000;
+const PUSHER_CONNECT_TIMEOUT_MS = 30000;
 const PUSHER_PING_INTERVAL_MS = 45000;
 const PUSHER_WATCHDOG_CHECK_MS = 30000;
 const PUSHER_STALE_MIN_MS = 180000;
 
 const SUBSCRIPTION_RETRY_DELAY_MS = 10000;
 const CHAT_FEED_LIMIT = 100;
+const KICK_REPLY_CACHE_LIMIT = 200;
 const ALERT_FEED_LIMIT = 100;
 const EVENT_LOG_LIMIT = 100;
 const CHAT_SCROLL_THRESHOLD_PX = 48;
@@ -148,6 +150,7 @@ const PROFILE_CACHE_MAX_ENTRIES = 1200;
 const PROFILE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const KICK_WINDOW_BOUNDS_STORAGE_KEY = 'kickWindowBounds';
 const KICK_WINDOW_BOUNDS_SAVE_DEBOUNCE_MS = 250;
+const KICK_SOCKET_HEALTH_CHECK_MS = 60000;
 
 const state = {
     clientId: '',
@@ -164,6 +167,7 @@ const state = {
     refreshPromise: null,
     authUser: null,
     profilePromise: null,
+    chatMessageCache: new Map(),
     profileCache: new Map(),
     profileFetches: new Map(),
     eventTypesUnavailable: false,
@@ -198,9 +202,11 @@ const state = {
         connecting: false,
         pusherWs: null,
         pusherStatus: 'disconnected',
+        pusherConnectTimer: null,
         pusherPingTimer: null,
         pusherReconnectTimer: null,
         pusherWatchdogTimer: null,
+        pusherHealthTimer: null,
         pusherLastActivityAt: 0,
         pusherActivityTimeoutMs: 0
     },
@@ -248,6 +254,82 @@ const extension = {
     }
 };
 
+function enableKickBackgroundKeepAlive() {
+    if (kickBackgroundKeepAliveInitialized) return;
+    kickBackgroundKeepAliveInitialized = true;
+
+    try {
+        const receiveChannelCallback = function (event) {
+            const channel = event.channel;
+            if (!channel) return;
+            channel.onmessage = function () {};
+            channel.onopen = function () {};
+            channel.onclose = function () {};
+            setInterval(function () {
+                try { channel.send('KEEPALIVE'); } catch (_) {}
+            }, 1000);
+        };
+        const errorHandle = function () {};
+        const localConnection = new RTCPeerConnection();
+        const remoteConnection = new RTCPeerConnection();
+        localConnection.onicecandidate = e => !e.candidate || remoteConnection.addIceCandidate(e.candidate).catch(errorHandle);
+        remoteConnection.onicecandidate = e => !e.candidate || localConnection.addIceCandidate(e.candidate).catch(errorHandle);
+        remoteConnection.ondatachannel = receiveChannelCallback;
+        localConnection.sendChannel = localConnection.createDataChannel('sendChannel');
+        localConnection.sendChannel.onopen = function () {
+            try { localConnection.sendChannel.send('CONNECTED'); } catch (_) {}
+        };
+        localConnection.createOffer()
+            .then(offer => localConnection.setLocalDescription(offer))
+            .then(() => remoteConnection.setRemoteDescription(localConnection.localDescription))
+            .then(() => remoteConnection.createAnswer())
+            .then(answer => remoteConnection.setLocalDescription(answer))
+            .then(() => localConnection.setRemoteDescription(remoteConnection.localDescription))
+            .then(() => {
+                logKickWs('Kick keep-alive channel established.');
+            })
+            .catch(errorHandle);
+    } catch (e) {
+        try { console.log('Kick keep-alive setup failed:', e); } catch (_) {}
+    }
+
+    const preventBackgroundThrottling = function () {
+        try {
+            window.onblur = null;
+            window.blurred = false;
+            document.hasFocus = () => true;
+            window.onFocus = () => true;
+            Object.defineProperties(document, {
+                hidden: { value: false, configurable: true },
+                mozHidden: { value: false, configurable: true },
+                msHidden: { value: false, configurable: true },
+                webkitHidden: { value: false, configurable: true },
+                visibilityState: {
+                    get: () => 'visible',
+                    configurable: true
+                }
+            });
+        } catch (_) {}
+    };
+
+    [
+        'visibilitychange',
+        'webkitvisibilitychange',
+        'mozvisibilitychange',
+        'msvisibilitychange',
+        'blur'
+    ].forEach(eventName => {
+        window.addEventListener(eventName, event => {
+            try {
+                event.stopImmediatePropagation();
+                event.preventDefault();
+            } catch (_) {}
+        }, true);
+    });
+
+    setInterval(preventBackgroundThrottling, 200);
+}
+
 const WSS_PLATFORM = 'kick';
 const KICK_VIEWER_HEARTBEAT_INTERVAL_MS = 30000;
 const KICK_VIEWER_DISCONNECT_EMIT_DEBOUNCE_MS = 1500;
@@ -258,6 +340,7 @@ let lastBridgeNotifyStatus = null;
 let lastAuthNotifyStatus = null;
 let lastSocketNotifyStatus = null;
 let socketBridgeInitialized = false;
+let kickBackgroundKeepAliveInitialized = false;
 let kickWsEventLogCount = 0;
 let kickWsLastEventLogAt = 0;
 const ignoredEventTypesLogged = new Set();
@@ -3260,12 +3343,42 @@ async function disconnectLocalSocket() {
 
 // ── Pusher WebSocket (browser-direct chat) ──────────────────────────
 
+function isPusherSocketOpen() {
+    return Boolean(
+        state.socket.pusherWs &&
+        state.socket.pusherWs.readyState === WebSocket.OPEN
+    );
+}
+
 function sendPusherFrame(event, data) {
-    if (!state.socket.pusherWs || state.socket.pusherWs.readyState !== WebSocket.OPEN) return;
-    state.socket.pusherWs.send(JSON.stringify({ event, data }));
+    if (!isPusherSocketOpen()) return false;
+    const ws = state.socket.pusherWs;
+    try {
+        ws.send(JSON.stringify({ event, data }));
+        return true;
+    } catch (err) {
+        log(`Pusher send failed: ${err?.message || err}`, 'warning');
+        setTimeout(() => {
+            if (state.socket.pusherWs === ws) {
+                recoverPusherSocket('send_failed', {
+                    status: 'error',
+                    error: 'Pusher send failed'
+                });
+            }
+        }, 0);
+        return false;
+    }
+}
+
+function clearPusherConnectTimer() {
+    if (state.socket.pusherConnectTimer) {
+        clearTimeout(state.socket.pusherConnectTimer);
+        state.socket.pusherConnectTimer = null;
+    }
 }
 
 function disconnectPusherSocket() {
+    clearPusherConnectTimer();
     if (state.socket.pusherPingTimer) {
         clearInterval(state.socket.pusherPingTimer);
         state.socket.pusherPingTimer = null;
@@ -3273,6 +3386,10 @@ function disconnectPusherSocket() {
     if (state.socket.pusherWatchdogTimer) {
         clearInterval(state.socket.pusherWatchdogTimer);
         state.socket.pusherWatchdogTimer = null;
+    }
+    if (state.socket.pusherHealthTimer) {
+        clearInterval(state.socket.pusherHealthTimer);
+        state.socket.pusherHealthTimer = null;
     }
     if (state.socket.pusherReconnectTimer) {
         clearTimeout(state.socket.pusherReconnectTimer);
@@ -3287,12 +3404,39 @@ function disconnectPusherSocket() {
     state.socket.pusherActivityTimeoutMs = 0;
 }
 
-function schedulePusherReconnect() {
+function schedulePusherReconnect(reason = 'unknown') {
     if (state.socket.pusherReconnectTimer) return;
+    log(`Scheduling Pusher reconnect (${reason}) in ${PUSHER_RECONNECT_DELAY_MS}ms.`);
     state.socket.pusherReconnectTimer = setTimeout(() => {
         state.socket.pusherReconnectTimer = null;
         connectPusherSocket();
     }, PUSHER_RECONNECT_DELAY_MS);
+}
+
+function recoverPusherSocket(reason, options = {}) {
+    const status = options.status || 'disconnected';
+    const error = options.error || '';
+    disconnectPusherSocket();
+    state.socket.status = status;
+    updateSocketState(error ? { status, error } : { status });
+    schedulePusherReconnect(reason);
+    syncBridgeChatMode();
+}
+
+function startPusherHealthTimer() {
+    if (state.socket.pusherHealthTimer) {
+        clearInterval(state.socket.pusherHealthTimer);
+    }
+    state.socket.pusherHealthTimer = setInterval(() => {
+        if (!state.socket.pusherWs) return;
+        if (
+            state.socket.pusherStatus === 'connected' &&
+            state.socket.pusherWs.readyState !== WebSocket.OPEN
+        ) {
+            log('Pusher chat socket is no longer open. Reconnecting chat.', 'warning');
+            recoverPusherSocket('health_closed_socket');
+        }
+    }, KICK_SOCKET_HEALTH_CHECK_MS);
 }
 
 function notePusherActivity() {
@@ -3313,11 +3457,7 @@ function startPusherWatchdog(activityTimeoutSeconds) {
         const staleAfterMs = Math.max(PUSHER_STALE_MIN_MS, state.socket.pusherActivityTimeoutMs * 3);
         if (!lastActivityAt || (Date.now() - lastActivityAt) <= staleAfterMs) return;
         log('Pusher chat socket went stale. Reconnecting chat.', 'warning');
-        disconnectPusherSocket();
-        state.socket.status = 'disconnected';
-        updateSocketState({ status: 'disconnected' });
-        schedulePusherReconnect();
-        syncBridgeChatMode();
+        recoverPusherSocket('watchdog_stale');
     }, checkIntervalMs);
 }
 
@@ -3358,6 +3498,7 @@ function handlePusherMessage(event) {
     if (eventName === 'pusher:connection_established') {
         let connectionData = {};
         try { connectionData = JSON.parse(payload.data || '{}'); } catch (_) {}
+        clearPusherConnectTimer();
         state.socket.pusherStatus = 'connected';
         state.socket.status = 'connected';
         updateSocketState({ status: 'connected' });
@@ -3369,13 +3510,26 @@ function handlePusherMessage(event) {
         if (state.socket.channelId) {
             channels.push(`channel.${state.socket.channelId}`);
         }
+        let sentSubscription = false;
         for (const channel of channels) {
-            sendPusherFrame('pusher:subscribe', { auth: '', channel });
+            sentSubscription = sendPusherFrame('pusher:subscribe', { auth: '', channel }) || sentSubscription;
+        }
+        if (channels.length && !sentSubscription) {
+            recoverPusherSocket('subscribe_send_failed', {
+                status: 'error',
+                error: 'Pusher subscribe send failed'
+            });
+            return;
         }
         if (state.socket.pusherPingTimer) clearInterval(state.socket.pusherPingTimer);
         const timeout = connectionData.activity_timeout || 60;
         state.socket.pusherPingTimer = setInterval(() => {
-            sendPusherFrame('pusher:ping', {});
+            if (!sendPusherFrame('pusher:ping', {})) {
+                recoverPusherSocket('ping_send_failed', {
+                    status: 'error',
+                    error: 'Pusher ping send failed'
+                });
+            }
         }, Math.min(timeout * 1000 * 0.75, PUSHER_PING_INTERVAL_MS));
         startPusherWatchdog(timeout);
         // Pusher is now handling chat — reconnect bridge with noChat if needed
@@ -3390,14 +3544,26 @@ function handlePusherMessage(event) {
     }
 
     if (eventName === 'pusher:ping') {
-        sendPusherFrame('pusher:pong', {});
+        if (!sendPusherFrame('pusher:pong', {})) {
+            recoverPusherSocket('pong_send_failed', {
+                status: 'error',
+                error: 'Pusher pong send failed'
+            });
+        }
         return;
     }
 
     if (eventName === 'pusher:pong') return;
 
     if (eventName === 'pusher:error') {
-        log(`Pusher error: ${payload?.data?.message || 'Unknown'}`, 'warning');
+        const pusherError = typeof payload?.data === 'string'
+            ? payload.data
+            : (payload?.data?.message || 'Unknown');
+        log(`Pusher error: ${pusherError}`, 'warning');
+        recoverPusherSocket('pusher_error', {
+            status: 'error',
+            error: pusherError
+        });
         return;
     }
 
@@ -3413,7 +3579,14 @@ function handlePusherMessage(event) {
 }
 
 function connectPusherSocket() {
-    if (state.socket.pusherStatus === 'connected' || state.socket.pusherStatus === 'connecting') return;
+    if (state.socket.pusherStatus === 'connected') {
+        if (isPusherSocketOpen()) return;
+        disconnectPusherSocket();
+    } else if (state.socket.pusherStatus === 'connecting') {
+        const ws = state.socket.pusherWs;
+        if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+        disconnectPusherSocket();
+    }
     const chatroomId = state.socket.chatroomId;
     if (!chatroomId) {
         log('Pusher: no chatroomId available, cannot connect chat.', 'warning');
@@ -3432,21 +3605,36 @@ function connectPusherSocket() {
         state.socket.pusherStatus = 'disconnected';
         state.socket.status = 'disconnected';
         updateSocketState({ status: 'error', error: err?.message });
-        schedulePusherReconnect();
+        schedulePusherReconnect('connect_exception');
         return;
     }
-    state.socket.pusherWs.addEventListener('message', handlePusherMessage);
-    state.socket.pusherWs.addEventListener('close', (event) => {
-        log(`Pusher socket closed (code: ${event?.code || 'unknown'}).`);
-        state.socket.pusherStatus = 'disconnected';
-        state.socket.status = 'disconnected';
-        updateSocketState({ status: 'disconnected' });
-        schedulePusherReconnect();
-        // Pusher down — reconnect bridge with chat enabled as fallback
-        syncBridgeChatMode();
+    const ws = state.socket.pusherWs;
+    startPusherHealthTimer();
+    state.socket.pusherConnectTimer = setTimeout(() => {
+        if (state.socket.pusherWs !== ws || state.socket.pusherStatus !== 'connecting') return;
+        log('Pusher chat socket connection timed out. Reconnecting chat.', 'warning');
+        recoverPusherSocket('connect_timeout', {
+            status: 'error',
+            error: 'Pusher connection timed out'
+        });
+    }, PUSHER_CONNECT_TIMEOUT_MS);
+    ws.addEventListener('message', (event) => {
+        if (state.socket.pusherWs !== ws) return;
+        handlePusherMessage(event);
     });
-    state.socket.pusherWs.addEventListener('error', () => {
+    ws.addEventListener('close', (event) => {
+        if (state.socket.pusherWs !== ws) return;
+        clearPusherConnectTimer();
+        log(`Pusher socket closed (code: ${event?.code || 'unknown'}).`);
+        recoverPusherSocket(`close_${event?.code || 'unknown'}`);
+    });
+    ws.addEventListener('error', () => {
+        if (state.socket.pusherWs !== ws) return;
         log('Pusher socket error.', 'warning');
+        recoverPusherSocket('socket_error', {
+            status: 'error',
+            error: 'Pusher socket error'
+        });
     });
 }
 
@@ -5958,7 +6146,9 @@ async function forwardChatMessage(evt, bridgeMeta) {
             messagePayload.sourceImg = channelBranding.sourceImg;
         }
         if (allowReplies && replyDetails) {
-            messagePayload.initial = replyDetails.label;
+            if (replyDetails.label) {
+                messagePayload.initial = replyDetails.label;
+            }
             messagePayload.reply = chatmessageHtml;
             if (textOnlyMode) {
                 const prefix = replyDetails.label ? `${replyDetails.label}: ` : '';
@@ -5969,10 +6159,31 @@ async function forwardChatMessage(evt, bridgeMeta) {
                 const safeReply = escapeHtml(replyDetails.label);
                 messagePayload.chatmessage = `<i><small>${safeReply}:&nbsp;</small></i> ${chatmessageHtml}`;
             }
+            const replyMeta = buildKickReplyMeta(replyDetails);
+            if (Object.keys(replyMeta).length) {
+                if (!messagePayload.meta) {
+                    messagePayload.meta = {};
+                }
+                messagePayload.meta.reply = replyMeta;
+            }
         }
         // Only include event for actual non-chat/system cases.
         if (normalizedEvent) {
             messagePayload.event = normalizedEvent;
+        }
+        const cacheContext = {
+            authorName: chatname,
+            userId: ids?.userId,
+            username: lookupUsername,
+            html: chatmessageHtml,
+            plainText: content || stripKickMessageHtml(chatmessageHtml)
+        };
+        rememberKickChatMessage(resolvedId, cacheContext);
+        if (nativeMessageId && nativeMessageId !== normalizeKickMessageId(resolvedId)) {
+            rememberKickChatMessage(nativeMessageId, cacheContext);
+        }
+        if (bridgeMessageId && bridgeMessageId !== normalizeKickMessageId(resolvedId)) {
+            rememberKickChatMessage(bridgeMessageId, cacheContext);
         }
         pushMessage(messagePayload);
         appendChatFeedMessage(messagePayload, content);
@@ -6201,26 +6412,175 @@ function extractChatDonationLabel(...sources) {
     return '';
 }
 
+function normalizeKickMessageId(value) {
+    if (value === undefined || value === null) {
+        return '';
+    }
+    return String(value).trim();
+}
+
+function pickKickMessageId(candidates) {
+    for (const candidate of candidates || []) {
+        const normalized = normalizeKickMessageId(candidate);
+        if (normalized) {
+            return normalized;
+        }
+    }
+    return '';
+}
+
+function looksLikeKickMessageId(value) {
+    const normalized = normalizeKickMessageId(value);
+    if (!normalized) {
+        return false;
+    }
+    return /^\d{5,}$/.test(normalized) ||
+        /^[0-9a-f]{16,}$/i.test(normalized) ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized);
+}
+
+function stripKickMessageHtml(value) {
+    return typeof value === 'string'
+        ? value.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+        : '';
+}
+
+function normalizeKickReplyText(value) {
+    return typeof value === 'string'
+        ? value.replace(/\s+/g, ' ').trim()
+        : normalizeKickMessageId(value);
+}
+
+function lookupKickChatMessage(messageId) {
+    const normalizedId = normalizeKickMessageId(messageId);
+    if (!normalizedId || !state.chatMessageCache) {
+        return null;
+    }
+    return state.chatMessageCache.get(normalizedId) || null;
+}
+
+function rememberKickChatMessage(messageId, context = {}) {
+    const normalizedId = normalizeKickMessageId(messageId);
+    if (!normalizedId || !state.chatMessageCache) {
+        return;
+    }
+    if (state.chatMessageCache.has(normalizedId)) {
+        state.chatMessageCache.delete(normalizedId);
+    }
+    const html = typeof context.html === 'string' ? context.html : '';
+    const plainText = normalizeKickReplyText(context.plainText || stripKickMessageHtml(html));
+    state.chatMessageCache.set(normalizedId, {
+        messageId: normalizedId,
+        authorName: normalizeKickReplyText(context.authorName || ''),
+        userId: normalizeKickMessageId(context.userId),
+        username: normalizeKickReplyText(context.username || ''),
+        html,
+        plainText,
+        timestamp: Date.now()
+    });
+    while (state.chatMessageCache.size > KICK_REPLY_CACHE_LIMIT) {
+        const oldestKey = state.chatMessageCache.keys().next().value;
+        state.chatMessageCache.delete(oldestKey);
+    }
+}
+
+function extractReplyMessageId(value) {
+    if (!value || typeof value !== 'object') {
+        if (typeof value === 'number' || looksLikeKickMessageId(value)) {
+            return normalizeKickMessageId(value);
+        }
+        return '';
+    }
+    return pickKickMessageId([
+        value.id,
+        value.message_id,
+        value.messageId,
+        value.messageID,
+        value.chat_message_id,
+        value.chatMessageId,
+        value.reply_message_id,
+        value.replyMessageId,
+        value.reply_to_message_id,
+        value.replyToMessageId,
+        value.parent_message_id,
+        value.parentMessageId,
+        value.referenced_message_id,
+        value.referencedMessageId,
+        value.original_message_id,
+        value.originalMessageId,
+        value.initial_message_id,
+        value.initialMessageId,
+        value.data?.id,
+        value.data?.message_id,
+        value.data?.messageId,
+        value.message?.id,
+        value.message?.message_id,
+        value.message?.messageId
+    ]);
+}
+
+function buildKickReplyLabel(author, text) {
+    const cleanAuthor = normalizeKickReplyText(author || '');
+    const cleanText = normalizeKickReplyText(text || '');
+    if (cleanAuthor && cleanText) {
+        return `${cleanAuthor}: ${cleanText}`;
+    }
+    return cleanAuthor || cleanText || '';
+}
+
+function buildKickReplyMeta(replyDetails) {
+    const meta = {};
+    if (!replyDetails || typeof replyDetails !== 'object') {
+        return meta;
+    }
+    if (replyDetails.messageId) {
+        meta.messageId = String(replyDetails.messageId);
+    }
+    if (replyDetails.author) {
+        meta.author = replyDetails.author;
+    }
+    if (replyDetails.text) {
+        meta.text = replyDetails.text;
+    }
+    return meta;
+}
+
 function extractReplyDetails(message, payload) {
     const candidates = [
-        message?.reply_to,
-        message?.replyTo,
-        message?.replied_to,
-        message?.parent,
-        message?.thread?.parent,
-        message?.quoted_message,
-        message?.quote,
-        message?.reference,
-        message?.referenced_message,
-        message?.original_message,
-        message?.initial_message,
-        payload?.reply_to,
-        payload?.reply,
-        payload?.parent,
-        payload?.reference,
-        payload?.referenced_message,
-        payload?.original_message,
-        payload?.initial_message
+        { value: message?.reply_to_message_id, explicitId: true },
+        { value: message?.replyToMessageId, explicitId: true },
+        { value: message?.reply_to_id, explicitId: true },
+        { value: message?.replyToId, explicitId: true },
+        { value: message?.parent_message_id, explicitId: true },
+        { value: message?.parentMessageId, explicitId: true },
+        { value: message?.referenced_message_id, explicitId: true },
+        { value: message?.referencedMessageId, explicitId: true },
+        { value: message?.reply_to },
+        { value: message?.replyTo },
+        { value: message?.replied_to },
+        { value: message?.parent },
+        { value: message?.thread?.parent },
+        { value: message?.quoted_message },
+        { value: message?.quote },
+        { value: message?.reference },
+        { value: message?.referenced_message },
+        { value: message?.original_message },
+        { value: message?.initial_message },
+        { value: payload?.reply_to_message_id, explicitId: true },
+        { value: payload?.replyToMessageId, explicitId: true },
+        { value: payload?.reply_to_id, explicitId: true },
+        { value: payload?.replyToId, explicitId: true },
+        { value: payload?.parent_message_id, explicitId: true },
+        { value: payload?.parentMessageId, explicitId: true },
+        { value: payload?.referenced_message_id, explicitId: true },
+        { value: payload?.referencedMessageId, explicitId: true },
+        { value: payload?.reply_to },
+        { value: payload?.reply },
+        { value: payload?.parent },
+        { value: payload?.reference },
+        { value: payload?.referenced_message },
+        { value: payload?.original_message },
+        { value: payload?.initial_message }
     ];
     const visited = new Set();
     const nestedKeys = [
@@ -6240,12 +6600,24 @@ function extractReplyDetails(message, payload) {
         'initial_message'
     ];
 
-    const resolve = value => {
+    const resolve = (value, explicitId) => {
         if (!value) return null;
         if (typeof value === 'string' || typeof value === 'number') {
-            const text = String(value).trim();
+            const text = normalizeKickReplyText(value);
             if (!text) {
                 return null;
+            }
+            if (explicitId) {
+                const messageId = normalizeKickMessageId(value);
+                const cached = messageId ? lookupKickChatMessage(messageId) : null;
+                const cachedText = cached ? cached.plainText : '';
+                const cachedAuthor = cached ? cached.authorName : '';
+                return {
+                    text: cachedText || '',
+                    author: cachedAuthor || '',
+                    label: buildKickReplyLabel(cachedAuthor, cachedText),
+                    messageId
+                };
             }
             return {
                 text,
@@ -6255,7 +6627,7 @@ function extractReplyDetails(message, payload) {
         }
         if (Array.isArray(value)) {
             for (const item of value) {
-                const result = resolve(item);
+                const result = resolve(item, false);
                 if (result) {
                     return result;
                 }
@@ -6269,44 +6641,58 @@ function extractReplyDetails(message, payload) {
             return null;
         }
         visited.add(value);
-        const text = extractMessageContent(value);
-        if (text) {
-            const author = pickFirstString(
-                [
-                    value?.sender?.display_name,
-                    value?.sender?.username,
-                    value?.user?.display_name,
-                    value?.user?.username,
-                    value?.author?.display_name,
-                    value?.author?.username,
-                    value?.identity?.display_name,
-                    value?.identity?.username,
-                    value?.username,
-                    value?.name
-                ],
-                ''
-            );
-            const label = author ? `${author}: ${text}` : text;
+        const messageId = extractReplyMessageId(value);
+        const cached = messageId ? lookupKickChatMessage(messageId) : null;
+        const text = normalizeKickReplyText(extractMessageContent(value) || (cached ? cached.plainText : ''));
+        const author = pickFirstString(
+            [
+                value?.sender?.display_name,
+                value?.sender?.username,
+                value?.user?.display_name,
+                value?.user?.username,
+                value?.author?.display_name,
+                value?.author?.username,
+                value?.identity?.display_name,
+                value?.identity?.username,
+                value?.username,
+                value?.name,
+                cached ? cached.authorName : ''
+            ],
+            ''
+        );
+        if (!text) {
+            for (const key of nestedKeys) {
+                if (!Object.prototype.hasOwnProperty.call(value, key)) {
+                    continue;
+                }
+                const nested = resolve(value[key], false);
+                if (!nested) {
+                    continue;
+                }
+                const nestedText = normalizeKickReplyText(nested.text || '');
+                const nestedAuthor = author || nested.author || '';
+                return {
+                    text: nestedText,
+                    author: nestedAuthor,
+                    label: buildKickReplyLabel(nestedAuthor, nestedText) || nested.label || '',
+                    messageId: messageId || nested.messageId || ''
+                };
+            }
+        }
+        const label = buildKickReplyLabel(author, text);
+        if (label || messageId) {
             return {
                 text,
                 author,
-                label
+                label,
+                messageId
             };
-        }
-        for (const key of nestedKeys) {
-            if (!Object.prototype.hasOwnProperty.call(value, key)) {
-                continue;
-            }
-            const result = resolve(value[key]);
-            if (result) {
-                return result;
-            }
         }
         return null;
     };
 
     for (const candidate of candidates) {
-        const result = resolve(candidate);
+        const result = resolve(candidate.value, candidate.explicitId === true);
         if (result) {
             return result;
         }
@@ -7401,6 +7787,7 @@ function extractMessageContent(message) {
     if (text.trim()) {
         return text;
     }
+    if (typeof message.message === 'string') return message.message;
     if (typeof message.text === 'string') return message.text;
     if (typeof message.body === 'string') return message.body;
     if (typeof message.raw === 'string') return message.raw;
@@ -7462,6 +7849,7 @@ async function createCodeChallenge(verifier) {
 
 async function bootstrap() {
     logKickWs('Bootstrap start.');
+    enableKickBackgroundKeepAlive();
     restoreKickWindowBounds();
     try {
         await kickCoreReady;

@@ -58,7 +58,7 @@ function toDataURL(url, callback) {
 		element.childNodes.forEach(node=>{
 			if (node.childNodes.length){
 				resp += getAllContentNodes(node)
-			} else if ((node.nodeType === 3) && node.textContent && (node.textContent.trim().length > 0)){
+			} else if ((node.nodeType === 3) && node.textContent && (node.textContent.length > 0)){
 				resp += escapeHtml(node.textContent);
 			} else if (node.nodeType === 1){
 				if (!settings.textonlymode){
@@ -72,10 +72,58 @@ function toDataURL(url, callback) {
 		return resp;
 	}
 
+	function getMessageElement(ele){
+		if (!ele || ele.nodeType !== 1){return null;}
+		if (ele.matches && (ele.matches("[data-testid='chatline']") || ele.matches(".mixcloud-live-chat-row"))){
+			return ele;
+		}
+		if (ele.querySelector){
+			return ele.querySelector("[data-testid='chatline'], .mixcloud-live-chat-row");
+		}
+		return null;
+	}
+
+	function getProfileLink(ele){
+		var links = ele.querySelectorAll("a[href]");
+		for (var i = 0; i < links.length; i++){
+			var link = links[i];
+			var href = link.getAttribute("href") || "";
+			if (link.closest && link.closest("p")){continue;}
+			if (link.getAttribute("aria-label")){continue;}
+			if (href.indexOf("/pro/") !== -1){continue;}
+			if ((link.textContent || "").trim()){
+				return link;
+			}
+		}
+		return null;
+	}
+
+	function getUsernameFromLink(link){
+		if (!link){return "";}
+		var href = link.href || link.getAttribute("href") || "";
+		href = href.split("?")[0].split("#")[0];
+		var parts = href.split("/");
+		for (var i = parts.length - 1; i >= 0; i--){
+			if (parts[i]){
+				return parts[i];
+			}
+		}
+		return "";
+	}
+
+	function getNameFromImage(img){
+		if (!img){return "";}
+		var alt = img.getAttribute("alt") || "";
+		alt = alt.replace(/'s profile picture$/i, "");
+		return alt.trim();
+	}
+
 
 	var lastMessage = {};
 	
 	function processMessage(ele){
+		ele = getMessageElement(ele);
+		if (!ele){return;}
 		
 		if (ele && ele.marked){
 		  return;
@@ -106,6 +154,23 @@ function toDataURL(url, callback) {
 			chatimg = chatimg.replace("24x24", "150x150");
 		   }
 		  // name = ele.querySelector("img").alt;
+		} catch(e){}
+
+		try {
+			if (ele.getAttribute("data-testid") === "chatline"){
+				var profileLink = getProfileLink(ele);
+				var msgNode = ele.querySelector("p");
+				if (profileLink){
+					name = escapeHtml((profileLink.textContent || profileLink.innerText || "").trim());
+					username = getUsernameFromLink(profileLink);
+				}
+				if (!name){
+					name = escapeHtml(getNameFromImage(ele.querySelector("img[alt]")));
+				}
+				if (msgNode){
+					msg = getAllContentNodes(msgNode).trim();
+				}
+			}
 		} catch(e){}
 		
 		if (!name){
@@ -275,38 +340,53 @@ function toDataURL(url, callback) {
 		}
 	);
 
-	function onElementInserted(containerSelector) {
+	function handleAddedNode(node) {
+		if (!node || node.nodeType !== 1){return;}
+		if (getMessageElement(node)){
+			processMessage(node);
+		}
+		if (node.querySelectorAll){
+			var rows = node.querySelectorAll("[data-testid='chatline'], .mixcloud-live-chat-row");
+			for (var j = 0; j < rows.length; j++){
+				processMessage(rows[j]);
+			}
+		}
+	}
+
+	function observeChatContainer(target) {
+		if (!target || target.marked){return;}
+		target.marked = true;
+
 		var onMutationsObserved = function(mutations) {
 			mutations.forEach(function(mutation) {
 				if (mutation.addedNodes.length) {
-					if (mutation.addedNodes[0].previousElementSibling && mutation.addedNodes[0].previousElementSibling.previousElementSibling && mutation.addedNodes[0].previousElementSibling.previousElementSibling.previousElementSibling && mutation.addedNodes[0].previousElementSibling.previousElementSibling.previousElementSibling.previousElementSibling){
-						return; // don't allow old messages from loading
-					}
 					for (var i = 0, len = mutation.addedNodes.length; i < len; i++) {
-						if (mutation.addedNodes[i].classList.contains("mixcloud-live-chat-row")){
-							processMessage(mutation.addedNodes[i]);
-						}
+						handleAddedNode(mutation.addedNodes[i]);
 					}
 				}
 			});
 		};
-		var target = document.querySelector(containerSelector);
-		if (!target){return;}
+		var existingRows = target.querySelectorAll("[data-testid='chatline'], .mixcloud-live-chat-row");
+		for (var i = 0; i < existingRows.length; i++){
+			existingRows[i].marked = true;
+		}
 		var config = { childList: true, subtree: true };
 		var MutationObserver = window.MutationObserver || window.WebKitMutationObserver;
 		var observer = new MutationObserver(onMutationsObserved);
 		observer.observe(target, config);
 		
 	}
+
+	function onElementInserted(containerSelector) {
+		var targets = document.querySelectorAll(containerSelector);
+		for (var i = 0; i < targets.length; i++){
+			observeChatContainer(targets[i]);
+		}
+	}
 	console.log("social stream injected");
 
 	setInterval(function(){
-		if (document.querySelector(".mixcloud-live-chat-container")){
-			if (!document.querySelector(".mixcloud-live-chat-container").marked){
-				document.querySelector(".mixcloud-live-chat-container").marked=true;
-				onElementInserted(".mixcloud-live-chat-container");
-			}
-		}
+		onElementInserted(".mixcloud-live-chat-container, .mixcloud-live-chat-chat-window");
 	},1000);
 
 })();

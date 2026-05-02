@@ -270,6 +270,9 @@ let tmiLoaderPromise = null;
 let chatClient = null;
 let chatClientOffHandlers = [];
 let tmiClientFactory = null;
+const twitchDisplayNameByLogin = new Map();
+const TWITCH_DELAYTWITCH_MS = 3000;
+const TWITCH_DELETE_DELAY_BUFFER_MS = 50;
 const WEBSOCKET_READY_STATE = {
   CONNECTING: 0,
   OPEN: 1,
@@ -790,10 +793,128 @@ let badges = null;
 
 function ensureClientFactory() {
 	if (!tmiClientFactory) {
-		tmiClientFactory = createTmiClientFactory(() => ensureTmiClient());
+		const baseFactory = createTmiClientFactory(() => ensureTmiClient());
+		tmiClientFactory = async (options) => {
+			const client = await baseFactory(options);
+			attachTmiModerationDeleteHandlers(client);
+			return client;
+		};
 	}
 	return tmiClientFactory;
 }
+
+	function normalizeTwitchLogin(value) {
+		return (value || '').toString().replace(/^@/, '').trim().toLowerCase();
+	}
+
+	function rememberTwitchDisplayName(login, displayName) {
+		const normalized = normalizeTwitchLogin(login);
+		if (!normalized || !displayName) {
+			return;
+		}
+		twitchDisplayNameByLogin.set(normalized, displayName);
+		if (twitchDisplayNameByLogin.size > 500) {
+			const oldest = twitchDisplayNameByLogin.keys().next().value;
+			twitchDisplayNameByLogin.delete(oldest);
+		}
+	}
+
+	function getRememberedTwitchDisplayName(login) {
+		const normalized = normalizeTwitchLogin(login);
+		return (normalized && twitchDisplayNameByLogin.get(normalized)) || login || '';
+	}
+
+	/*
+	AI/overlay contract for Twitch moderation:
+	Twitch moderation events are controls, not chat messages. Send them as
+	{ delete: ... } so dock.html and custom overlays can remove existing DOM nodes
+	before trying to render a new message.
+	- { delete: { type:"twitch", id:"..." } } removes one matching message.
+	- { delete: { type:"twitch", chatname:"..." } } removes all Twitch messages from that user.
+	- { delete: { type:"twitch" } } removes all Twitch messages.
+	Custom overlays should handle delete payloads before their normal add-message path.
+	*/
+	function sendDeleteMessage(data) {
+		if (!data || typeof data !== 'object') {
+			return;
+		}
+		try {
+			if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+				chrome.runtime.sendMessage(chrome.runtime.id, {
+					"delete": data
+				}, function(response) {
+					// Handle response if needed
+				});
+				return;
+			}
+			if (window.ninjafy && window.ninjafy.sendMessage) {
+				window.ninjafy.sendMessage(null, {
+					"delete": data
+				}, null, window.__SSAPP_TAB_ID__);
+				return;
+			}
+			if (window.parent && window.parent !== window) {
+				window.parent.postMessage({
+					"delete": data
+				}, '*');
+				return;
+			}
+			window.postMessage({
+				"delete": data
+			}, '*');
+		} catch(e) {
+			console.error('Error sending Twitch moderation delete to socialstream:', e);
+		}
+	}
+
+	function pushDeleteMessage(data) {
+		sendDeleteMessage(data);
+		if (settings && settings.delaytwitch) {
+			setTimeout(function() {
+				sendDeleteMessage(data);
+			}, TWITCH_DELAYTWITCH_MS + TWITCH_DELETE_DELAY_BUFFER_MS);
+		}
+	}
+
+	function attachTmiModerationDeleteHandlers(client) {
+		if (!client || typeof client.on !== 'function' || client.__ssnTwitchModerationDeleteHandlers) {
+			return;
+		}
+		client.__ssnTwitchModerationDeleteHandlers = true;
+
+		client.on('messagedeleted', function(chan, username, deletedMessage, tags) {
+			const deletePayload = { type: 'twitch' };
+			const messageId = pickSourceControlMessageId(tags && tags['target-msg-id']);
+			if (messageId) {
+				deletePayload.id = messageId;
+			}
+			const chatname = getRememberedTwitchDisplayName(username);
+			if (chatname) {
+				deletePayload.chatname = chatname;
+			}
+			if (!deletePayload.id && !deletePayload.chatname) {
+				return;
+			}
+			if (!deletePayload.id) {
+				deletePayload.onlyLast = true;
+			}
+			pushDeleteMessage(deletePayload);
+		});
+
+		client.on('ban', function(chan, username) {
+			const chatname = getRememberedTwitchDisplayName(username);
+			if (chatname) {
+				pushDeleteMessage({ type: 'twitch', chatname: chatname });
+			}
+		});
+
+		client.on('timeout', function(chan, username) {
+			const chatname = getRememberedTwitchDisplayName(username);
+			if (chatname) {
+				pushDeleteMessage({ type: 'twitch', chatname: chatname });
+			}
+		});
+	}
 
 function resetChatClientHandlers() {
 	if (Array.isArray(chatClientOffHandlers) && chatClientOffHandlers.length) {
@@ -1178,6 +1299,14 @@ async function ensureChatClientInstance() {
 			return;
 		}
 		console.log('Twitch chat cleared', payload);
+		if (payload.user) {
+			const chatname = getRememberedTwitchDisplayName(payload.user);
+			if (chatname) {
+				pushDeleteMessage({ type: 'twitch', chatname: chatname });
+			}
+			return;
+		}
+		pushDeleteMessage({ type: 'twitch' });
 	}
 
 	function handleNormalizedWhisper(payload) {
@@ -1983,7 +2112,7 @@ async function ensureChatClientInstance() {
 		
 		// Apply delay if enabled
 		if (settings.delaytwitch) {
-			await new Promise(resolve => setTimeout(resolve, 3000));
+			await new Promise(resolve => setTimeout(resolve, TWITCH_DELAYTWITCH_MS));
 		}
 		
 		// Parse bits/cheers from message
@@ -2018,6 +2147,7 @@ async function ensureChatClientInstance() {
 		}
 		
 		const resolvedDisplayName = normalizedPayload?.chatname || (userInfo ? userInfo.display_name : user);
+		rememberTwitchDisplayName(user, resolvedDisplayName);
 		span.innerHTML = `${badgeHtml}${escapeHtml(resolvedDisplayName)}: ${displayMessage}`;
 		document.querySelector("#textarea").appendChild(span);
 		if (document.querySelector("#textarea").childNodes.length > 10) {

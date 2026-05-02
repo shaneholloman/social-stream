@@ -44,10 +44,11 @@ This is the most common and straightforward method for overlay pages. Your custo
     const urlParams = new URLSearchParams(window.location.search);
     const roomID = urlParams.get("session") || "test"; // Get streamID from URL param
     const password = urlParams.get("password") || "false"; // Get password from URL param
-    const label = urlParams.get("label") || "custom_overlay"; // Unique label for this overlay
+    const label = urlParams.get("label") || "dock"; // Use dock for the normal live feed
 
     const iframe = document.getElementById('ssn_bridge');
-    // &view=roomID ensures it only receives data. &label is important for targeted messages.
+    // &view=roomID ensures it only receives data. &label=dock receives normal live chat/events.
+    // Custom labels only receive targeted messages.
     // &noaudio &novideo &cleanoutput are typical for data-only VDO.Ninja clients.
     iframe.src = `https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=${password}&view=${roomID}&label=${label}&noaudio&novideo&cleanoutput&room=${roomID}`;
 
@@ -79,7 +80,7 @@ This is the most common and straightforward method for overlay pages. Your custo
 
   - `&room=STREAM_ID`: Specifies the main VDO.Ninja room to connect to.
   - `&view=STREAM_ID`: Makes this client a viewer in the specified room, receiving data sent to that room.
-  - `&label=YOUR_LABEL`: Assigns a unique label to this iframe instance. This is crucial if you want `background.js` or `dock.html` to send targeted messages specifically to this overlay.
+  - `&label=dock`: Receives normal live chat/events from SSN. Use a custom label only when you want targeted messages specifically for that overlay.
   - `&password=PASSWORD`: If your SSN session is password protected.
   - `&novideo`, `&noaudio`: Ensures no accidental camera/mic activation.
   - `&cleanoutput`: Simplifies the VDO.Ninja interface within the iframe.
@@ -339,7 +340,7 @@ How you display messages is entirely up to your HTML and CSS design.
         const urlParams = new URLSearchParams(window.location.search);
         const roomID = urlParams.get("session") || "test";
         const password = urlParams.get("password") || "false";
-        const label = urlParams.get("label") || "custom_overlay_" + Date.now(); // Ensure unique label
+        const label = urlParams.get("label") || "dock"; // Use dock for the normal live feed
 
         const iframe = document.getElementById('ssn_bridge');
         iframe.src = `https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=${password}&view=${roomID}&label=${label}&noaudio&novideo&cleanoutput&room=${roomID}`;
@@ -534,7 +535,7 @@ This example shows an overlay that only displays new follower and subscriber eve
         const urlParams = new URLSearchParams(window.location.search);
         const roomID = urlParams.get("session") || "test_events";
         const password = urlParams.get("password") || "false";
-        const label = "event_notifier_" + Date.now();
+        const label = urlParams.get("label") || "dock";
 
         const iframe = document.getElementById('ssn_bridge');
         iframe.src = `https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=${password}&view=${roomID}&label=${label}&noaudio&novideo&cleanoutput&room=${roomID}`;

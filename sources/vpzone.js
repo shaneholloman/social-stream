@@ -8,6 +8,194 @@
 	var lastViewerCount = null;
 	var sourceImg = "";
 	var sourceName = "VPZone";
+	var seenWsMessageIds = new Map();
+	var currentChannelSlug = "";
+	var avatarCache = new Map();
+	var avatarPending = new Set();
+	var avatarNegativeTtl = 5 * 60 * 1000;
+
+	function fetchAvatar(username) {
+		if (!username) return;
+		var key = String(username).toLowerCase();
+		if (avatarCache.has(key)) return;
+		if (avatarPending.has(key)) return;
+		avatarPending.add(key);
+		try {
+			fetch("/u/" + encodeURIComponent(username), { credentials: "omit", cache: "force-cache" })
+				.then(function (res) { return res.ok ? res.text() : ""; })
+				.then(function (html) {
+					if (!html) return;
+					// Avatars live at /storage/v1/object/public/avatars/<uuid>/avatar-<ts>.<ext>
+					// The user page exposes them via either an og:image meta tag or a
+					// background-image CSS rule. We accept any of those.
+					var match =
+						html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+avatar-[^"']+)["']/i) ||
+						html.match(/<meta[^>]+content=["']([^"']+avatar-[^"']+)["'][^>]+property=["']og:image["']/i) ||
+						html.match(/(https?:\/\/[^"'\\)\s]+\/avatars\/[a-f0-9-]+\/avatar-[^"'\\)\s]+\.(?:png|jpe?g|webp|gif))/i);
+					if (match && match[1]) {
+						avatarCache.set(key, match[1]);
+					} else {
+						setTimeout(function () { avatarPending.delete(key); }, avatarNegativeTtl);
+						return;
+					}
+				})
+				.catch(function () {})
+				.finally(function () { avatarPending.delete(key); });
+		} catch (e) {
+			avatarPending.delete(key);
+		}
+	}
+
+	function getChannelSlugFromUrl() {
+		try {
+			var match = window.location.pathname.match(/^\/watch\/([^\/?#]+)/);
+			return match ? decodeURIComponent(match[1]) : "";
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function pruneSeenWs(now) {
+		if (!seenWsMessageIds.size) return;
+		seenWsMessageIds.forEach(function (ts, id) {
+			if (now - ts > 60000) seenWsMessageIds.delete(id);
+		});
+	}
+
+	function escapeHtmlMaybe(text) {
+		return escapeHtml((text == null ? "" : String(text)));
+	}
+
+	function tierBadge(tier, subMonths) {
+		var label = "SUB";
+		if (subMonths && subMonths >= 12) {
+			label = Math.floor(subMonths / 12) + "y";
+		} else if (subMonths && subMonths >= 1) {
+			label = subMonths + "m";
+		}
+		var bg = tier === "tier3" ? "#00E9E2" : tier === "tier2" ? "#FF6DE4" : "#f9376b";
+		var width = Math.max(34, Math.round(label.length * 6.5) + 14);
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="16" viewBox="0 0 ' + width + ' 16"><rect x="0.5" y="0.5" rx="8" ry="8" width="' + (width - 1) + '" height="15" fill="' + escapeXml(bg) + '" stroke="rgba(255,255,255,0.25)"></rect><text x="' + (width / 2) + '" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">' + escapeXml(label) + "</text></svg>",
+			type: "svg"
+		};
+	}
+
+	function ownerBadge() {
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="16" viewBox="0 0 20 16"><rect x="0.5" y="0.5" rx="3" ry="3" width="19" height="15" fill="#c071f5"></rect><text x="10" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">OP</text></svg>',
+			type: "svg"
+		};
+	}
+
+	function twitchBadge() {
+		return {
+			html: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="16" viewBox="0 0 20 16"><rect x="0.5" y="0.5" rx="3" ry="3" width="19" height="15" fill="#9146FF"></rect><text x="10" y="11" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#ffffff">TW</text></svg>',
+			type: "svg"
+		};
+	}
+
+	function buildBadgesFromWs(msg) {
+		var badges = [];
+		if (msg.is_owner) badges.push(ownerBadge());
+		if (msg.is_subscriber) badges.push(tierBadge(msg.tier, msg.sub_months));
+		if (msg.metadata && msg.metadata.source === "twitch") badges.push(twitchBadge());
+		return badges;
+	}
+
+	function emitWsMessage(data) {
+		var base = buildBaseData();
+		Object.keys(data).forEach(function (k) { base[k] = data[k]; });
+		pushMessage(base);
+	}
+
+	function handleWsFrame(raw) {
+		if (!isExtensionOn) return;
+		var msg;
+		try { msg = JSON.parse(raw); } catch (e) { return; }
+		if (!msg || typeof msg !== "object") return;
+
+		var now = Date.now();
+		pruneSeenWs(now);
+
+		if (msg.type === "presence") {
+			if (typeof msg.count === "number" && (settings.showviewercount || settings.hypemode)) {
+				if (lastViewerCount !== msg.count) {
+					lastViewerCount = msg.count;
+					pushMessage({ type: "vpzone", event: "viewer_update", meta: msg.count });
+				}
+			}
+			return;
+		}
+
+		if (msg.type === "delete_message") return;
+
+		if (msg.id && seenWsMessageIds.has(msg.id)) return;
+		if (msg.id) seenWsMessageIds.set(msg.id, now);
+
+		var ts = msg.ts || "";
+
+		if (msg.type === "follow" || msg.type === "subscription" || msg.type === "raid") {
+			emitWsMessage({
+				chatname: escapeHtmlMaybe(msg.username || ""),
+				chatmessage: escapeHtmlMaybe(msg.body || msg.type),
+				event: msg.type,
+				membership: msg.type === "subscription" ? (msg.metadata && msg.metadata.tier ? "Subscriber (" + msg.metadata.tier + ")" : "Subscriber") : "",
+				meta: { timestamp: ts, raw: msg.metadata || {} }
+			});
+			return;
+		}
+
+		if (msg.type === "system") {
+			var kind = msg.metadata && msg.metadata.kind;
+			emitWsMessage({
+				chatname: escapeHtmlMaybe(msg.username || "system"),
+				chatmessage: escapeHtmlMaybe(msg.body || ""),
+				event: kind || "system",
+				meta: { timestamp: ts, kind: kind || "" }
+			});
+			return;
+		}
+
+		var name = msg.username || (msg.metadata && msg.metadata.username) || "";
+		var body = msg.body == null ? "" : String(msg.body);
+		if (!name || !body) return;
+
+		// Frames don't carry an avatar URL, but the public profile page does.
+		// Fire a background fetch on first sight; subsequent messages from the
+		// same user will be enriched from the cache.
+		var avatar =
+			msg.avatar_url ||
+			msg.avatarUrl ||
+			(msg.metadata && (msg.metadata.avatar_url || msg.metadata.avatarUrl)) ||
+			avatarCache.get(String(name).toLowerCase()) ||
+			"";
+		if (!avatar) {
+			fetchAvatar(name);
+		}
+
+		emitWsMessage({
+			chatname: escapeHtmlMaybe(name),
+			chatmessage: escapeHtmlMaybe(body),
+			chatimg: avatar,
+			nameColor: msg.color || "",
+			chatbadges: buildBadgesFromWs(msg),
+			meta: {
+				timestamp: ts,
+				messageId: msg.id || "",
+				channel: currentChannelSlug,
+				source: msg.metadata && msg.metadata.source ? msg.metadata.source : "vpzone"
+			}
+		});
+	}
+
+	function handleWindowMessage(event) {
+		if (!event || event.source !== window) return;
+		var d = event.data;
+		if (!d || d.source !== "vpzone-ws-interceptor") return;
+		if (d.type !== "receive") return;
+		handleWsFrame(d.data);
+	}
 
 	function pushMessage(data) {
 		if (!isExtensionOn) {
@@ -582,11 +770,18 @@
 
 	console.log("Social Stream injected: VPZone");
 
+	currentChannelSlug = getChannelSlugFromUrl();
+	window.addEventListener("message", handleWindowMessage);
+
 	setInterval(function () {
 		if (window.location.href !== lastUrl) {
 			lastUrl = window.location.href;
 			recentFingerprints.clear();
+			seenWsMessageIds.clear();
+			avatarCache.clear();
+			avatarPending.clear();
 			lastViewerCount = null;
+			currentChannelSlug = getChannelSlugFromUrl();
 		}
 		attachObserver();
 	}, 1000);

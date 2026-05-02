@@ -6151,7 +6151,7 @@ async function sendToDestinations(message) {
 		}
 	}
 
-	var isAlertMessage = message && message.event;
+	var isAlertMessage = !!(message && (message.event || message.hasDonation || message.donation));
 	var reactionEventName = "";
 	if (message && typeof message.event === "string") {
 		reactionEventName = message.event
@@ -11685,6 +11685,7 @@ try {
 
 let aiPromptOverlays = { version: 1, activeOverlay: "", order: [], overlays: {} };
 let bridgeChunkRequests = {};
+const BRIDGE_CHUNK_SIZE = 12000;
 
 function normalizeAiPromptOverlayKey(value) {
 	value = String(value || "")
@@ -11747,7 +11748,43 @@ async function getAiPromptOverlays() {
 
 function saveAiPromptOverlays(store) {
 	aiPromptOverlays = normalizeAiPromptOverlayStore(store);
-	chrome.storage.local.set({ aiPromptOverlays });
+	return new Promise(resolve => {
+		chrome.storage.local.set({ aiPromptOverlays }, () => {
+			const error = chrome.runtime.lastError && chrome.runtime.lastError.message ? chrome.runtime.lastError.message : "";
+			if (error) {
+				console.error("Failed to save AI prompt overlays:", error);
+			}
+			resolve({ store: aiPromptOverlays, error });
+		});
+	});
+}
+
+function sendDataP2PChunked(data, UUID = false) {
+	let text = "";
+	try {
+		text = JSON.stringify(data);
+	} catch (e) {
+		console.error("Failed to serialize bridge payload:", e);
+		return;
+	}
+	if (text.length <= BRIDGE_CHUNK_SIZE) {
+		sendDataP2P(data, UUID);
+		return;
+	}
+	const chunkId = "bridge_" + Date.now() + "_" + Math.floor(Math.random() * 1e9);
+	const total = Math.ceil(text.length / BRIDGE_CHUNK_SIZE);
+	for (let i = 0; i < total; i++) {
+		sendDataP2P(
+			{
+				action: "ssnBridgeChunk",
+				chunkId,
+				index: i,
+				total,
+				value: text.slice(i * BRIDGE_CHUNK_SIZE, (i + 1) * BRIDGE_CHUNK_SIZE)
+			},
+			UUID
+		);
+	}
 }
 
 async function handleBridgeChunkRequest(request, UUID) {
@@ -12014,7 +12051,20 @@ async function processIncomingRequest(request, UUID = false) {
 				initializeTimer(UUID);
 			}
 		} else if (request.action === "saveAiPromptOverlays" && request.value) {
-			saveAiPromptOverlays(request.value);
+			const saveResult = await saveAiPromptOverlays(request.value);
+			if (UUID && request.target) {
+				sendDataP2P(
+					{
+						aiPromptOverlaysSaved: {
+							target: request.target,
+							ok: !saveResult.error,
+							error: saveResult.error || "",
+							updatedAt: saveResult.store && saveResult.store.updatedAt
+						}
+					},
+					UUID
+				);
+			}
 		} else if (request.action === "cohostToolStatus" && UUID) {
 			const status = getCohostToolStatus();
 			sendDataP2P({ cohostToolStatus: { target: request.target || null, value: status, tools: status.tools } }, UUID);
@@ -12038,7 +12088,7 @@ async function processIncomingRequest(request, UUID = false) {
 			}
 		} else if (request.action === "getAiPromptOverlays" && UUID) {
 			const overlayStore = await getAiPromptOverlays();
-			sendDataP2P({ aiPromptOverlays: { target: request.target || null, value: overlayStore } }, UUID);
+			sendDataP2PChunked({ aiPromptOverlays: { target: request.target || null, value: overlayStore } }, UUID);
 		} else if (request.value && "target" in request && UUID && request.action === "chatbot") {
 			// target is the callback ID
 			if (isExtensionOn && settings.allowChatBot) {

@@ -579,6 +579,13 @@
 
 		.modal .tiny { margin-bottom: 14px; }
 
+		.modal-error {
+			margin-top: 8px;
+			color: #ff9898;
+			font-size: 12px;
+			line-height: 1.4;
+		}
+
 		.template-grid {
 			display: grid;
 			grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -801,6 +808,7 @@
 			<div class="tiny">Paste any SSN payload as JSON. It will be delivered to the preview iframe as <code>event.data.dataReceived.overlayNinja</code>.</div>
 			<label for="customEventJson">JSON payload</label>
 			<textarea id="customEventJson" spellcheck="false" style="height:180px;font-family:Consolas,monospace;font-size:12px;"></textarea>
+			<div id="customEventError" class="modal-error" role="alert" aria-live="polite" hidden></div>
 			<div class="modal-actions">
 				<button type="button" id="customEventCancel" class="ghost">Cancel</button>
 				<button type="button" id="customEventSend" class="primary">Send</button>
@@ -821,13 +829,13 @@
 Overlay pages receive data via a VDO.Ninja iframe bridge. Always include this bridge when the page needs live data. Messages arrive as window postMessage events:
 
 ```html
-<iframe id="ssn_bridge" style="display:none;"></iframe>
+<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 <script>
 (function () {
   var params = new URLSearchParams(location.search);
   var roomID = params.get("session") || "";
   var password = params.get("password") || "false";
-  var label = params.get("label") || "custom_overlay_" + Date.now();
+  var label = params.get("label") || "dock";
   var bridge = document.getElementById("ssn_bridge");
   if (roomID) {
     bridge.src = "https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=" +
@@ -849,16 +857,18 @@ Overlay pages receive data via a VDO.Ninja iframe bridge. Always include this br
 
 Without ?session=YOUR_ID the bridge won't connect — but the builder still sends test payloads straight to the iframe via postMessage, so handlePayload must work with or without the bridge.
 Do NOT require `event.source === bridge.contentWindow`; builder test events and preview tools can come from the parent window. Only check `event.data.dataReceived.overlayNinja`.
+Use `label=dock` by default for normal live chat/events. Custom labels only receive targeted payloads, not the general live feed.
 
-DOM ordering matters: the `<iframe id="ssn_bridge">` element MUST exist in the DOM before the script that calls `document.getElementById("ssn_bridge")` runs. The safest patterns are (a) put the iframe tag first and the script right after in `<body>`, or (b) create the iframe in JS via `document.createElement("iframe")` and append it to body. Never put the iframe element below the script that reads it — `getElementById` will return null and setting `.src` throws.
+DOM ordering matters: the `<iframe i&#100;="ssn_bridge">` element MUST exist in the DOM before the script that calls `document.getElementById("ssn_bridge")` runs. The safest patterns are (a) put the iframe tag first and the script right after in `<body>`, or (b) create the iframe in JS via `document.createElement("iframe")` and append it to body. Never put the iframe element below the script that reads it — `getElementById` will return null and setting `.src` throws.
 
 === PAYLOAD FIELDS (the SSN schema) ===
 Most messages look like:
-{ id, type, chatname, chatmessage, chatimg, timestamp, hasDonation, membership, event, subtitle, meta, contentimg, nameColor, chatbadges, karma, bot, mod, host, vip, tid, private }
+{ id, type, chatname, chatmessage, textonly, chatimg, timestamp, hasDonation, membership, event, subtitle, meta, contentimg, nameColor, chatbadges, karma, bot, mod, host, vip, tid, private }
 
 - type: source platform string — "youtube", "twitch", "kick", "tiktok", "facebook", "rumble", "discord", "whatnot", etc.
 - Source/platform icons can be derived from `type`: `https://socialstream.ninja/sources/images/` + lowercase/sanitized `data.type` + `.png` (for example `youtube.png`, `twitch.png`, `kick.png`). Use a normal `<img>` created in JS and hide it on `error`; do not use inline `onerror=`.
 - chatname / chatmessage / chatimg: standard chat fields. chatimg is a URL (may be empty).
+- chatmessage is renderable HTML by default so SSN emotes/icons/images show correctly. Only treat it as plain text when `data.textonly === true`. Render it into a dedicated message-body element with `innerHTML` when `!data.textonly`, and `textContent` when `data.textonly`. Keep other fields escaped/text-only unless noted.
 - event: set only for SYSTEM notifications — leave unset/false for plain chat. Known values include "new_follower", "subscription_gift", "gifted", "subscriber", "raid", "hype", "shoutout", "supersticker", "viewer_update", "follower_update", "subscriber_update", "viewer_updates" (aggregated), plus custom ones.
 - hasDonation: string like "$5.00" for tips / super chats / bits when money was involved.
 - membership: string like "Tier 1", "Member (6 months)", etc.
@@ -871,7 +881,7 @@ Most messages look like:
 - private: true when the message was flagged private by SSN (e.g. from Discord DMs).
 
 Example chat payload:
-{ "chatname": "Jess", "chatmessage": "hello!", "chatimg": "https://.../user1.jpg", "type": "youtube" }
+{ "chatname": "Jess", "chatmessage": "hello <img class=\"emote\" src=\"https://.../emote.png\" alt=\"emote\">", "textonly": false, "chatimg": "https://.../user1.jpg", "type": "youtube" }
 
 Example follow event:
 { "event": "new_follower", "chatname": "NewFan", "type": "twitch" }
@@ -883,6 +893,7 @@ Example viewer counter aggregate:
 { "event": "viewer_updates", "meta": { "youtube": 815, "twitch": 221, "kick": 94 } }
 
 === BUILDING RULES ===
+1a. Message-body rule: `data.chatmessage` is SSN's renderable HTML unless `data.textonly === true`. Put it in a dedicated message element with `innerHTML` when not text-only, and `textContent` when text-only; escape all other fields normally.
 1. ALWAYS escape untrusted strings before inserting as HTML. Use textContent where possible. NEVER build inline HTML event handlers (onerror=, onclick=, etc.) inside a JS string — the escaping gets tangled and produces syntax errors. Instead, create the element, then `el.addEventListener("error", ...)` or `el.onerror = function () { ... }`. Same rule for inline `style="..."` built from dynamic values with quotes: prefer element.style.color = .... Build DOM with createElement + appendChild in ONE pass — don't rewrite .outerHTML on a node that's already in the tree, don't wipe the row with `.innerHTML = ""` mid-function, and never call insertBefore(newNode, refNode) unless refNode is already a child of the parent you're inserting into. Plan the node tree before you start creating elements.
 2. Filter by data.type / data.event early so the overlay stays focused on its job.
 3. When the user wants "chat", skip messages where data.event is set (unless they also ask for events).
@@ -922,14 +933,14 @@ If the user asks a question that does not require a file change, answer normally
 	</style>
 </head>
 <body>
-	<div class="stage" id="stage"></div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<div class="stage" i&#100;="stage"></div>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "blank_overlay_" + Date.now();
+		var label = params.get("label") || "dock";
 		var bridge = document.getElementById("ssn_bridge");
 		if (roomID) {
 			bridge.src = "https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&password=" +
@@ -972,6 +983,7 @@ If the user asks a question that does not require a file change, answer normally
 		.body { min-width: 0; }
 		.name { font-weight: 700; color: var(--name); }
 		.text { margin-top: 2px; word-wrap: break-word; }
+		.text img { max-height: 1.35em; vertical-align: middle; }
 		.platform { font-size: 10px; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-left: 6px; letter-spacing: 0.05em; }
 		@keyframes slideIn { to { opacity: 1; transform: translateY(0); } }
 		.row.fade-out { animation: fadeOut 300ms ease-in forwards; }
@@ -980,13 +992,13 @@ If the user asks a question that does not require a file change, answer normally
 </head>
 <body>
 	<div id="feed"></div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "chat_overlay_" + Date.now();
+		var label = params.get("label") || "dock";
 		var limit = Math.max(1, parseInt(params.get("limit") || "8", 10));
 		var showtime = Math.max(0, parseInt(params.get("showtime") || "0", 10));
 		var feed = document.getElementById("feed");
@@ -997,27 +1009,66 @@ If the user asks a question that does not require a file change, answer normally
 				"&label=" + encodeURIComponent(label) +
 				"&noaudio&novideo&cleanoutput&room=" + encodeURIComponent(roomID);
 		}
-		function escapeHtml(value) {
-			var div = document.createElement("div");
-			div.textContent = value == null ? "" : String(value);
-			return div.innerHTML;
+		function hideBrokenImage(img) {
+			img.addEventListener("error", function () { img.style.display = "none"; });
+		}
+		function setMessageHtml(el, data) {
+			var value = data.chatmessage == null ? "" : String(data.chatmessage);
+			if (data.textonly) {
+				el.textContent = value;
+			} else {
+				el.innerHTML = value;
+			}
+		}
+		function setNameColor(el, value) {
+			value = value == null ? "" : String(value).trim();
+			if (/^#[0-9a-f]{3,8}$/i.test(value) || /^rgba?\([0-9,\s.]+\)$/i.test(value)) {
+				el.style.color = value;
+			}
 		}
 		function addRow(data) {
 			if (data.event || data.bot) return;
 			var row = document.createElement("div");
 			row.className = "row";
-			var nameColor = data.nameColor ? ' style="color:' + escapeHtml(data.nameColor) + '"' : "";
 			var safeType = data.type ? String(data.type).toLowerCase().replace(/[^a-z0-9_-]/g, "") : "";
-			row.innerHTML =
-				(safeType ? '<img class="source-icon" src="https://socialstream.ninja/sources/images/' + escapeHtml(safeType) + '.png" alt="">' : '') +
-				(data.chatimg ? '<img class="avatar" src="' + escapeHtml(data.chatimg) + '" alt="">' : '<div class="avatar"></div>') +
-				'<div class="body">' +
-					'<span class="name"' + nameColor + '>' + escapeHtml(data.chatname || "Anonymous") + '</span>' +
-					(data.type ? '<span class="platform">' + escapeHtml(data.type) + '</span>' : '') +
-					'<div class="text">' + escapeHtml(data.chatmessage || "") + '</div>' +
-				'</div>';
-			var icon = row.querySelector(".source-icon");
-			if (icon) icon.addEventListener("error", function () { icon.style.display = "none"; });
+			if (safeType) {
+				var icon = document.createElement("img");
+				icon.className = "source-icon";
+				icon.src = "https://socialstream.ninja/sources/images/" + safeType + ".png";
+				icon.alt = "";
+				hideBrokenImage(icon);
+				row.appendChild(icon);
+			}
+			if (data.chatimg) {
+				var avatar = document.createElement("img");
+				avatar.className = "avatar";
+				avatar.src = String(data.chatimg);
+				avatar.alt = "";
+				hideBrokenImage(avatar);
+				row.appendChild(avatar);
+			} else {
+				var avatarFallback = document.createElement("div");
+				avatarFallback.className = "avatar";
+				row.appendChild(avatarFallback);
+			}
+			var body = document.createElement("div");
+			body.className = "body";
+			var name = document.createElement("span");
+			name.className = "name";
+			name.textContent = data.chatname || "Anonymous";
+			setNameColor(name, data.nameColor);
+			body.appendChild(name);
+			if (data.type) {
+				var platform = document.createElement("span");
+				platform.className = "platform";
+				platform.textContent = data.type;
+				body.appendChild(platform);
+			}
+			var text = document.createElement("div");
+			text.className = "text";
+			setMessageHtml(text, data);
+			body.appendChild(text);
+			row.appendChild(body);
 			feed.appendChild(row);
 			while (feed.children.length > limit) {
 				feed.removeChild(feed.firstChild);
@@ -1063,20 +1114,21 @@ If the user asks a question that does not require a file change, answer normally
 		.alert.raid .kind { color: var(--blue); }
 		.headline { font-size: 20px; font-weight: 800; margin-top: 4px; }
 		.detail { color: rgba(255,255,255,0.75); margin-top: 4px; }
+		.detail img { max-height: 1.35em; vertical-align: middle; }
 		.alert.out { animation: out 320ms ease-in forwards; }
 		@keyframes in { to { opacity: 1; transform: translateY(0); } }
 		@keyframes out { to { opacity: 0; transform: translateY(-16px); } }
 	</style>
 </head>
 <body>
-	<div id="stage"></div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<div i&#100;="stage"></div>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "alerts_" + Date.now();
+		var label = params.get("label") || "dock";
 		var duration = Math.max(2000, parseInt(params.get("duration") || "6000", 10));
 		var stage = document.getElementById("stage");
 		var bridge = document.getElementById("ssn_bridge");
@@ -1093,15 +1145,21 @@ If the user asks a question that does not require a file change, answer normally
 			type = type ? String(type).toLowerCase().replace(/[^a-z0-9_-]/g, "") : "";
 			return type ? "https://socialstream.ninja/sources/images/" + type + ".png" : "";
 		}
-		function show(kind, headline, detail, type) {
+		function show(kind, headline, detail, type, detailIsHtml) {
 			var div = document.createElement("div");
 			var iconUrl = sourceIconUrl(type);
 			div.className = "alert " + kind;
 			div.innerHTML = '<div class="topline">' +
 				(iconUrl ? '<img class="source-icon" src="' + escapeText(iconUrl) + '" alt="">' : '') +
 				'<div class="kind">' + escapeText(kind) + '</div></div>' +
-				'<div class="headline">' + escapeText(headline) + '</div>' +
-				(detail ? '<div class="detail">' + escapeText(detail) + '</div>' : '');
+				'<div class="headline">' + escapeText(headline) + '</div>';
+			if (detail) {
+				var detailEl = document.createElement("div");
+				detailEl.className = "detail";
+				if (detailIsHtml) detailEl.innerHTML = String(detail);
+				else detailEl.textContent = String(detail);
+				div.appendChild(detailEl);
+			}
 			var icon = div.querySelector(".source-icon");
 			if (icon) icon.addEventListener("error", function () { icon.style.display = "none"; });
 			stage.appendChild(div);
@@ -1110,7 +1168,7 @@ If the user asks a question that does not require a file change, answer normally
 		function route(data) {
 			if (!data || typeof data !== "object") return;
 			if (data.hasDonation) {
-				show("donation", (data.chatname || "Someone") + " tipped " + data.hasDonation, data.chatmessage || "", data.type);
+				show("donation", (data.chatname || "Someone") + " tipped " + data.hasDonation, data.chatmessage || "", data.type, !data.textonly);
 			} else if (data.event === "new_follower") {
 				show("follow", (data.chatname || "Someone") + " followed!", data.type || "", data.type);
 			} else if (data.event === "subscription_gift" || data.event === "gifted") {
@@ -1152,13 +1210,13 @@ If the user asks a question that does not require a file change, answer normally
 </head>
 <body>
 	<div id="bar"></div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "viewers_" + Date.now();
+		var label = params.get("label") || "dock";
 		var bar = document.getElementById("bar");
 		var counts = {};
 		var bridge = document.getElementById("ssn_bridge");
@@ -1226,13 +1284,13 @@ If the user asks a question that does not require a file change, answer normally
 		<div class="value"><span id="progress">0</span><small>/ <span id="target">50</span></small></div>
 		<div class="bar"><div class="fill" id="fill"></div></div>
 	</div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "goal_" + Date.now();
+		var label = params.get("label") || "dock";
 		var target = Math.max(1, parseInt(params.get("target") || "50", 10));
 		var startAt = Math.max(0, parseInt(params.get("start") || "0", 10));
 		var title = params.get("title") || "Sub goal";
@@ -1289,6 +1347,7 @@ If the user asks a question that does not require a file change, answer normally
 		.chat { position: fixed; right: 24px; bottom: 24px; width: 320px; max-height: 50vh; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
 		.chat .row { background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 8px 10px; font-size: 13px; opacity: 0; transform: translateY(8px); animation: slideIn 220ms ease-out forwards; }
 		.chat .name { font-weight: 700; color: #79d6ac; margin-right: 6px; }
+		.chat .message img { max-height: 1.35em; vertical-align: middle; }
 		@keyframes slideIn { to { opacity: 1; transform: translateY(0); } }
 	</style>
 </head>
@@ -1299,13 +1358,13 @@ If the user asks a question that does not require a file change, answer normally
 		<div class="timer" id="timer">05:00</div>
 	</div>
 	<div class="chat" id="chat"></div>
-	<iframe id="ssn_bridge" style="display:none;"></iframe>
+	<iframe i&#100;="ssn_bridge" style="display:none;"></iframe>
 	<script>
 	(function () {
 		var params = new URLSearchParams(location.search);
 		var roomID = params.get("session") || "";
 		var password = params.get("password") || "false";
-		var label = params.get("label") || "brb_" + Date.now();
+		var label = params.get("label") || "dock";
 		var minutes = Math.max(0, parseInt(params.get("minutes") || "5", 10));
 		var title = params.get("title"); if (title) document.getElementById("headline").textContent = title;
 		var subtitle = params.get("sub"); if (subtitle) document.getElementById("sub").textContent = subtitle;
@@ -1326,12 +1385,23 @@ If the user asks a question that does not require a file change, answer normally
 		}
 		setInterval(tick, 500); tick();
 		var chat = document.getElementById("chat");
-		function escapeText(value) { var d = document.createElement("div"); d.textContent = value == null ? "" : String(value); return d.innerHTML; }
+		function setMessageHtml(el, data) {
+			var value = data.chatmessage == null ? "" : String(data.chatmessage);
+			if (data.textonly) el.textContent = value;
+			else el.innerHTML = value;
+		}
 		function addChat(data) {
 			if (data.event || data.bot || !data.chatmessage) return;
 			var row = document.createElement("div");
 			row.className = "row";
-			row.innerHTML = '<span class="name">' + escapeText(data.chatname || "Anon") + ':</span>' + escapeText(data.chatmessage);
+			var name = document.createElement("span");
+			name.className = "name";
+			name.textContent = (data.chatname || "Anon") + ":";
+			var message = document.createElement("span");
+			message.className = "message";
+			setMessageHtml(message, data);
+			row.appendChild(name);
+			row.appendChild(message);
 			chat.insertBefore(row, chat.firstChild);
 			while (chat.children.length > 6) chat.removeChild(chat.lastChild);
 		}
@@ -1345,10 +1415,10 @@ If the user asks a question that does not require a file change, answer normally
 </body>
 </html></textarea>
 
+	<script src="./shared/aiPrompt/overlayStore.js"></script>
 	<script>
 	(function () {
-		var STORAGE_KEY = "ssnAiPromptPagesV2";
-		var LEGACY_KEY = "ssnAiPromptPagesV1";
+		var OverlayStore = window.SSNAiPromptOverlayStore;
 		var MAX_HISTORY = 20;
 
 		var state = null;
@@ -1368,7 +1438,14 @@ If the user asks a question that does not require a file change, answer normally
 		var HTML2CANVAS_URL = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
 		var overlayPackageRequestTarget = null;
 		var overlayPackageLoaded = false;
+		var overlayPackageSyncPending = false;
+		var overlayPackageLocalDirty = false;
+		var overlaySavePending = false;
+		var overlaySaveTarget = null;
+		var overlaySaveTimer = null;
+		var overlaySaveAttempts = 0;
 		var BRIDGE_CHUNK_SIZE = 12000;
+		var bridgeResponseChunks = {};
 
 		var el = function (id) { return document.getElementById(id); };
 		var pageName = el("pageName");
@@ -1389,6 +1466,7 @@ If the user asks a question that does not require a file change, answer normally
 		var templateGrid = el("templateGrid");
 		var customEventModal = el("customEventModal");
 		var customEventJson = el("customEventJson");
+		var customEventError = el("customEventError");
 		var attachScreenshot = el("attachScreenshot");
 		var autoFixErrors = el("autoFixErrors");
 
@@ -1467,16 +1545,44 @@ If the user asks a question that does not require a file change, answer normally
 		function makeId() { return "page-" + Date.now() + "-" + Math.floor(Math.random() * 1e6); }
 		function makeMessageId() { return Math.floor(Math.random() * 1e9); }
 		function cleanName(name) {
-			name = String(name || "").toLowerCase().trim().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-			return name || "overlay";
+			return OverlayStore.normalizeOverlayKey(name);
 		}
 		function slugName(name) { return cleanName(name); }
+		function reserveUniqueName(base, used) {
+			var root = cleanName(base || "overlay");
+			var name = root;
+			var count = 2;
+			while (used[name]) name = root + "-" + count++;
+			used[name] = true;
+			return name;
+		}
+		function uniquePageName(base, excludeId) {
+			var used = {};
+			if (state && state.pages) {
+				for (var i = 0; i < state.pages.length; i++) {
+					if (state.pages[i].id !== excludeId) used[cleanName(state.pages[i].name)] = true;
+				}
+			}
+			return reserveUniqueName(base, used);
+		}
+		function normalizePageNames(pages) {
+			var used = {};
+			var changed = false;
+			for (var i = 0; pages && i < pages.length; i++) {
+				var next = reserveUniqueName(pages[i].name || pages[i].id || ("overlay-" + (i + 1)), used);
+				if (pages[i].name !== next) {
+					pages[i].name = next;
+					changed = true;
+				}
+			}
+			return changed;
+		}
 
 		function defaultPage(seed) {
 			var tmpl = seed || TEMPLATES[0];
 			return {
 				id: makeId(),
-				name: tmpl.name,
+				name: cleanName(tmpl.name),
 				systemPrompt: defaultSystemPrompt,
 				html: tmpl.src,
 				conversation: [],
@@ -1492,8 +1598,7 @@ If the user asks a question that does not require a file change, answer normally
 
 		function loadState() {
 			try {
-				var raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
-				var parsed = raw ? JSON.parse(raw) : null;
+				var parsed = OverlayStore.readState(localStorage);
 				if (!parsed || !parsed.pages || !parsed.pages.length) return defaultState();
 				for (var i = 0; i < parsed.pages.length; i++) {
 					var p = parsed.pages[i];
@@ -1502,6 +1607,7 @@ If the user asks a question that does not require a file change, answer normally
 					p.html = p.html || TEMPLATES[0].src;
 					p.name = cleanName(p.name);
 				}
+				normalizePageNames(parsed.pages);
 				var activeExists = false;
 				for (var j = 0; j < parsed.pages.length; j++) {
 					if (parsed.pages[j].id === parsed.activeId) { activeExists = true; break; }
@@ -1516,9 +1622,9 @@ If the user asks a question that does not require a file change, answer normally
 
 		function saveState() {
 			try {
-				localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-				storageStatus.textContent = "Saved " + new Date().toLocaleTimeString();
-				publishOverlays();
+				OverlayStore.writeState(state, localStorage);
+				storageStatus.textContent = "Saved locally " + new Date().toLocaleTimeString();
+				queueOverlayPublish();
 			} catch (e) {
 				storageStatus.textContent = "Local save failed: " + (e && e.message ? e.message : "unknown error");
 			}
@@ -1539,67 +1645,66 @@ If the user asks a question that does not require a file change, answer normally
 
 		function activePage() { return findPage(state.activeId) || state.pages[0]; }
 
-		function uniqueOverlayKey(base, used) {
-			var root = slugName(base || "overlay");
-			var key = root;
-			var count = 2;
-			while (used[key]) {
-				key = root + "-" + count++;
-			}
-			used[key] = true;
-			return key;
+		function buildOverlayPackage() {
+			return OverlayStore.buildPackage(state, { defaultSystemPrompt: defaultSystemPrompt });
 		}
 
-		function buildOverlayPackage() {
-			var overlays = {};
-			var order = [];
-			var used = {};
-			var activeKey = "";
-			for (var i = 0; state && state.pages && i < state.pages.length; i++) {
-				var page = state.pages[i];
-				var key = uniqueOverlayKey(page.name || page.id || ("overlay-" + (i + 1)), used);
-				if (page.id === state.activeId) activeKey = key;
-				order.push(key);
-				overlays[key] = {
-					id: key,
-					name: key,
-					slug: key,
-					pageId: page.id,
-					html: page.html || "",
-					systemPrompt: page.systemPrompt || defaultSystemPrompt,
-					conversation: page.conversation || [],
-					updatedAt: page.updatedAt || Date.now()
-				};
+		function clearOverlaySaveTimer() {
+			if (!overlaySaveTimer) return;
+			clearTimeout(overlaySaveTimer);
+			overlaySaveTimer = null;
+		}
+
+		function queueOverlayPublish() {
+			overlaySavePending = true;
+			if (overlayPackageSyncPending) {
+				overlayPackageLocalDirty = true;
+				return;
 			}
-			return { version: 1, activeOverlay: activeKey || order[0] || "overlay", order: order, overlays: overlays, updatedAt: Date.now() };
+			publishOverlays();
 		}
 
 		function publishOverlays() {
-			if (!bridgeReady || !bridgeFrame || !bridgeFrame.contentWindow || !bridgeRoomID) return;
-			postBridgeOverlayPayload({ action: "saveAiPromptOverlays", value: buildOverlayPackage() }, "pcs");
+			if (!overlaySavePending || overlayPackageSyncPending) return false;
+			if (!bridgeReady || !bridgeFrame || !bridgeFrame.contentWindow || !bridgeRoomID) return false;
+			if (!overlaySaveTarget) {
+				overlaySaveTarget = makeMessageId();
+				overlaySaveAttempts = 0;
+			}
+			overlaySaveAttempts++;
+			postBridgeOverlayPayload({ action: "saveAiPromptOverlays", target: overlaySaveTarget, value: buildOverlayPackage() }, "rpcs");
+			storageStatus.textContent = "Saved locally; syncing overlay...";
+			clearOverlaySaveTimer();
+			if (overlaySaveAttempts < 10) {
+				overlaySaveTimer = setTimeout(function () {
+					if (overlaySavePending) publishOverlays();
+				}, 1000);
+			} else {
+				storageStatus.textContent = "Saved locally; backend sync not confirmed.";
+			}
+			return true;
+		}
+
+		function confirmOverlaySave(response) {
+			if (!response || response.target !== overlaySaveTarget) return false;
+			if (response.ok === false) {
+				storageStatus.textContent = "Saved locally; backend save failed: " + (response.error || "unknown error");
+				return true;
+			}
+			overlaySavePending = false;
+			overlaySaveTarget = null;
+			overlaySaveAttempts = 0;
+			clearOverlaySaveTimer();
+			storageStatus.textContent = "Saved and synced " + new Date().toLocaleTimeString();
+			return true;
 		}
 
 		function applyOverlayPackage(pack) {
-			var overlays = pack && pack.overlays;
-			if (!overlays) return false;
-			var order = (pack.order && pack.order.length) ? pack.order.slice() : Object.keys(overlays);
-			var pages = [];
-			for (var i = 0; i < order.length; i++) {
-				var key = order[i];
-				var item = overlays[key];
-				if (!item || !item.html) continue;
-				pages.push({
-					id: key,
-					name: cleanName(item.name || item.slug || key),
-					systemPrompt: item.systemPrompt || defaultSystemPrompt,
-					html: item.html || "",
-					conversation: item.conversation || [],
-					updatedAt: item.updatedAt || Date.now()
-				});
-			}
-			if (!pages.length) return false;
-			state = { version: 2, activeId: (pack.activeOverlay && overlays[pack.activeOverlay]) ? pack.activeOverlay : pages[0].id, pages: pages };
-			localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+			var nextState = OverlayStore.packageToState(pack, { defaultSystemPrompt: defaultSystemPrompt, normalizeName: cleanName });
+			if (!nextState) return false;
+			normalizePageNames(nextState.pages);
+			state = nextState;
+			OverlayStore.writeState(state, localStorage);
 			loadActivePage();
 			setStatus("Loaded saved AI prompt overlays.", "ok");
 			return true;
@@ -1609,16 +1714,21 @@ If the user asks a question that does not require a file change, answer normally
 			if (!bridgeReady || !bridgeFrame || !bridgeFrame.contentWindow || !bridgeRoomID) return;
 			overlayPackageRequestTarget = makeMessageId();
 			overlayPackageLoaded = false;
-			postBridgeOverlayPayload({ action: "getAiPromptOverlays", target: overlayPackageRequestTarget }, "pcs");
+			overlayPackageSyncPending = true;
+			overlayPackageLocalDirty = overlaySavePending;
+			postBridgeOverlayPayload({ action: "getAiPromptOverlays", target: overlayPackageRequestTarget }, "rpcs");
 			setTimeout(function () {
-				if (!overlayPackageLoaded) publishOverlays();
+				if (!overlayPackageLoaded) {
+					overlayPackageSyncPending = false;
+					queueOverlayPublish();
+				}
 			}, 2500);
 		}
 
 		function syncFormToPage() {
 			var page = activePage();
 			if (!page) return;
-			page.name = cleanName(pageName.value);
+			page.name = uniquePageName(pageName.value, page.id);
 			if (pageName.value !== page.name) pageName.value = page.name;
 			page.systemPrompt = systemPrompt.value || defaultSystemPrompt;
 			page.html = htmlEditor.value || "";
@@ -1653,7 +1763,7 @@ If the user asks a question that does not require a file change, answer normally
 			hideConsoleBar();
 			renderPageList();
 			renderConversation();
-			refreshPreview();
+			refreshPreview({ skipSave: true });
 		}
 
 		function renderConversation() {
@@ -1803,12 +1913,13 @@ If the user asks a question that does not require a file change, answer normally
 			return reporter + source;
 		}
 
-		function refreshPreview() {
+		function refreshPreview(options) {
+			options = options || {};
 			syncFormToPage();
 			hideConsoleBar();
 			var html = htmlEditor.value || "";
 			previewFrame.srcdoc = html ? injectErrorReporter(html) : "";
-			scheduleSave();
+			if (!options.skipSave) scheduleSave();
 		}
 
 		function schedulePreview() {
@@ -1875,7 +1986,7 @@ If the user asks a question that does not require a file change, answer normally
 					scale: 1,
 					logging: false,
 					useCORS: true,
-					allowTaint: true,
+					allowTaint: false,
 					width: Math.max(rootEl.clientWidth, 320),
 					height: Math.max(rootEl.clientHeight, 240),
 					windowWidth: Math.max(rootEl.clientWidth, 320),
@@ -1908,11 +2019,28 @@ If the user asks a question that does not require a file change, answer normally
 			});
 		}
 
+		function setCustomEventError(message) {
+			customEventError.textContent = message || "";
+			customEventError.hidden = !message;
+			if (message) customEventJson.setAttribute("aria-invalid", "true");
+			else customEventJson.removeAttribute("aria-invalid");
+		}
+
+		function openCustomEventModal() {
+			setCustomEventError("");
+			customEventModal.classList.add("visible");
+			customEventJson.focus();
+		}
+
+		function closeCustomEventModal() {
+			setCustomEventError("");
+			customEventModal.classList.remove("visible");
+		}
+
 		function sendSimulatedEvent(kind) {
 			if (kind === "custom") {
 				customEventJson.value = JSON.stringify({ chatname: "You", chatmessage: "hi", type: "youtube" }, null, 2);
-				customEventModal.classList.add("visible");
-				customEventJson.focus();
+				openCustomEventModal();
 				return;
 			}
 			var payload = EVENT_SAMPLES[kind];
@@ -1948,7 +2076,7 @@ If the user asks a question that does not require a file change, answer normally
 				"",
 				"If the request needs a file change, return ONE complete HTML document inside one ```html fenced block. If it's just a question, answer normally.",
 				"Before returning HTML, check every <script> block for valid plain JavaScript syntax. If you include dynamic text inside JavaScript, quote it with JSON-safe string literals. Do not leave raw prose, markdown, smart quotes, or stray punctuation inside <script> blocks.",
-				"Live-data minimums: expose window.handleOverlayPayload = handlePayload; accept postMessage payloads without filtering event.source; support chat fields (chatname/chatmessage/chatimg/type), alert fields (hasDonation, membership, new_follower, raid, gifted/subscription_gift), and viewer_updates snapshots. Plain chat is valid without event/hasDonation/membership; alert events are valid even when chatmessage, subtitle, or meta is missing. Derive source icons from data.type with https://socialstream.ninja/sources/images/{type}.png and hide broken icons."
+				"Live-data minimums: expose window.handleOverlayPayload = handlePayload; accept postMessage payloads without filtering event.source; support chat fields (chatname/chatmessage/textonly/chatimg/type), alert fields (hasDonation, membership, new_follower, raid, gifted/subscription_gift), and viewer_updates snapshots. Plain chat is valid without event/hasDonation/membership; alert events are valid even when chatmessage, subtitle, or meta is missing. data.chatmessage is renderable HTML unless data.textonly === true; render only that field with innerHTML in a dedicated message element when not text-only, and use textContent when text-only. Derive source icons from data.type with https://socialstream.ninja/sources/images/{type}.png and hide broken icons."
 			].join("\n");
 		}
 
@@ -1997,6 +2125,7 @@ If the user asks a question that does not require a file change, answer normally
 			if (bridgeRoomID) params.push("session=" + encodeURIComponent(bridgeRoomID));
 			if (bridgePassword && bridgePassword !== "false") params.push("password=" + encodeURIComponent(bridgePassword));
 			if (urlParams.get("v")) params.push("v=" + encodeURIComponent(urlParams.get("v")));
+			params.push("label=dock");
 			params.push("overlay=" + encodeURIComponent(pack.activeOverlay || "overlay"));
 			return base + "aioverlay.html?" + params.join("&");
 		}
@@ -2052,6 +2181,29 @@ If the user asks a question that does not require a file change, answer normally
 				}, "*");
 			}
 			return total;
+		}
+
+		function resolveBridgeChunk(payload) {
+			if (!payload || payload.action !== "ssnBridgeChunk") return payload;
+			var chunkId = String(payload.chunkId || "");
+			var index = parseInt(payload.index, 10);
+			var total = parseInt(payload.total, 10);
+			if (!chunkId || !isFinite(index) || !isFinite(total) || index < 0 || total < 1 || index >= total) return null;
+			var entry = bridgeResponseChunks[chunkId];
+			if (!entry || entry.total !== total) {
+				entry = { total: total, parts: [], received: 0 };
+				bridgeResponseChunks[chunkId] = entry;
+			}
+			if (typeof entry.parts[index] === "undefined") entry.received++;
+			entry.parts[index] = String(payload.value || "");
+			if (entry.received < entry.total) return null;
+			delete bridgeResponseChunks[chunkId];
+			try {
+				return JSON.parse(entry.parts.join(""));
+			} catch (e) {
+				logBuilder("error", "Failed to parse chunked bridge response", e);
+				return null;
+			}
 		}
 
 		function sendPrompt(requestOverride, opts) {
@@ -2221,7 +2373,7 @@ If the user asks a question that does not require a file change, answer normally
 		function newPage(seed) {
 			syncFormToPage();
 			var page = defaultPage(seed);
-			if (!seed) page.name = "new-prompt-page";
+			page.name = uniquePageName(seed ? seed.name : "new-prompt-page");
 			state.pages.push(page);
 			state.activeId = page.id;
 			saveState();
@@ -2233,7 +2385,7 @@ If the user asks a question that does not require a file change, answer normally
 			var current = activePage();
 			var copy = {
 				id: makeId(),
-				name: cleanName(current.name) + "-copy",
+				name: uniquePageName(cleanName(current.name) + "-copy"),
 				systemPrompt: current.systemPrompt || defaultSystemPrompt,
 				html: current.html || TEMPLATES[0].src,
 				conversation: [],
@@ -2264,8 +2416,8 @@ If the user asks a question that does not require a file change, answer normally
 			htmlEditor.value = tmpl.src;
 			var page = activePage();
 			if (!page.conversation || !page.conversation.length) {
-				page.name = tmpl.name;
-				pageName.value = tmpl.name;
+				page.name = uniquePageName(tmpl.name, page.id);
+				pageName.value = page.name;
 			}
 			syncFormToPage();
 			refreshPreview();
@@ -2297,7 +2449,7 @@ If the user asks a question that does not require a file change, answer normally
 			reader.onload = function () {
 				syncFormToPage();
 				var page = defaultPage(TEMPLATES[0]);
-				page.name = file.name.replace(/\.(html|htm)$/i, "") || "Imported page";
+				page.name = uniquePageName(file.name.replace(/\.(html|htm)$/i, "") || "Imported page");
 				page.html = String(reader.result || "");
 				state.pages.push(page);
 				state.activeId = page.id;
@@ -2452,16 +2604,19 @@ If the user asks a question that does not require a file change, answer normally
 				eventBtns[j].addEventListener("click", function (e) { sendSimulatedEvent(e.currentTarget.getAttribute("data-event")); });
 			}
 
-			el("customEventCancel").addEventListener("click", function () { customEventModal.classList.remove("visible"); });
+			el("customEventCancel").addEventListener("click", closeCustomEventModal);
+			customEventJson.addEventListener("input", function () { setCustomEventError(""); });
 			el("customEventSend").addEventListener("click", function () {
 				try {
 					var parsed = JSON.parse(customEventJson.value || "null");
 					deliverToPreview(parsed);
-					customEventModal.classList.remove("visible");
+					closeCustomEventModal();
 					setStatus("Custom payload sent to preview.", "ok");
 				} catch (err) {
 					logBuilder("warn", "Invalid custom payload JSON", err);
-					alert("Invalid JSON: " + err.message);
+					setCustomEventError("Invalid JSON: " + err.message);
+					setStatus("Invalid custom payload JSON.", "warn");
+					customEventJson.focus();
 				}
 			});
 
@@ -2476,7 +2631,7 @@ If the user asks a question that does not require a file change, answer normally
 					return;
 				}
 				if (bridgeFrame && event.source === bridgeFrame.contentWindow) {
-					var payload = data.dataReceived && data.dataReceived.overlayNinja;
+					var payload = resolveBridgeChunk(data.dataReceived && data.dataReceived.overlayNinja);
 					if (!payload) return;
 					if (payload.chatbotChunk && typeof payload.chatbotChunk.value !== "undefined") {
 						receiveAIResponse(payload.chatbotChunk, true);
@@ -2484,7 +2639,15 @@ If the user asks a question that does not require a file change, answer normally
 						receiveAIResponse(payload.chatbotResponse, false);
 					} else if (payload.aiPromptOverlays && payload.aiPromptOverlays.target === overlayPackageRequestTarget) {
 						overlayPackageLoaded = true;
-						if (!applyOverlayPackage(payload.aiPromptOverlays.value || payload.aiPromptOverlays)) publishOverlays();
+						overlayPackageSyncPending = false;
+						if (overlayPackageLocalDirty) {
+							overlayPackageLocalDirty = false;
+							queueOverlayPublish();
+						} else if (!applyOverlayPackage(payload.aiPromptOverlays.value || payload.aiPromptOverlays)) {
+							queueOverlayPublish();
+						}
+					} else if (payload.aiPromptOverlaysSaved) {
+						confirmOverlaySave(payload.aiPromptOverlaysSaved);
 					}
 				}
 			});

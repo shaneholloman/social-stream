@@ -24,3 +24,4 @@ tests/cohost-customopenai*.playwright.js
 
 # Generated benchmark/stress outputs
 tests/artifacts/
+tmp/
