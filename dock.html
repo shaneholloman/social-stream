@@ -1,8 +1,10 @@
 <html lang="en">
 	<head>
+    <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <meta name="description" content="Dashboard. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
   <script type="text/javascript" src="./js/local-server-url.js"></script>
 		<meta name="viewport" content="width=device-width,initial-scale=1" />
-		<meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+
 		<meta content="utf-8" http-equiv="encoding" />
 		<title>Social Stream - Dashboard</title>
 		<meta name="title" content="Social Stream - Dashboard" />
@@ -11,6 +13,10 @@
 		<meta name="robots" content="noindex">
 		<script type="text/javascript" src="currency.js"></script>
 		<script type="text/javascript" src="./libs/objects.js"></script>
+<script src="./shared/utils/chatBadges.js"></script>
+<script src="./shared/utils/chatHtml.js"></script>
+<link rel="stylesheet" href="./shared/utils/chatBadges.css">
+		<script src="./shared/utils/contentImage.js"></script>
 
 		<style>
 			:root {
@@ -65,7 +71,7 @@
 				--member-bgcolor-odd: #65fdff33;
 				--member-bgcolor-bubble: #0f1620d1;
 				--member-bgcolor-bubble-odd: #060c16d1;
-				
+
 				--firstime-bgcolor: #976b6b4f;
 
 				--special-bgcolor: #0f2bfd33;
@@ -81,12 +87,12 @@
 
 				--scrollbar-visible: inherit;
 				--padding-rows: 3px;
-				
+
 				--text-stroke-width: 0px;
 				--text-stroke-color: #000;
 				--text-shadow: -2px -2px #000000, -2px -1px #000000, -2px 0px #000000, -2px 1px #000000, -2px 2px #000000, -1px -2px #000000, -1px -1px #000000, -1px 0px #000000, -1px 1px #000000, -1px 2px #000000, 0px -2px #000000, 0px -1px #000000, 0px 0px #000000, 0px 1px #000000, 0px 2px #000000, 1px -2px #000000, 1px -1px #000000, 1px 0px #000000, 1px 1px #000000, 1px 2px #000000, 2px -2px #000000, 2px -1px #000000, 2px 0px #000000, 2px 1px #000000, 2px 2px #000000;
 				--text-glow: 0 0 #0000;
-				
+
 			}
 			.closeBtn {
 				position: absolute;
@@ -109,7 +115,7 @@
 			.closeBtn:active {
 				background-color: #7a7a7a;
 			}
-			
+
 			#TipRightClick {
 				text-shadow: 0 0 black;
 				cursor: help;
@@ -121,7 +127,7 @@
 				top: 7px;
 				position: relative;
 			}
-			
+
 			.volume-container {
 				  position: relative;
 				  display: inline-block;
@@ -140,7 +146,7 @@
 			.volume-container:hover .volume-slider {
 			  display: block;
 			}
-			
+
 			.blurred {
 				filter: blur(var(--blur-amount));
 			}
@@ -216,7 +222,7 @@
 					opacity: 0;
 				}
 			}
-			
+
 			.modal {
 				display: none; /* Hidden by default */
 				position: fixed; /* Stay in place */
@@ -251,7 +257,7 @@
 				cursor: pointer;
 			}
 
-			
+
 			#obsControlModal {
 			  position: fixed;
 			  z-index: 1000;
@@ -303,7 +309,7 @@
 			  cursor: pointer;
 			  transition: background-color 0.3s;
 			}
-			
+
 			.horizontal .bubble {
 				vertical-align: top;
 			}
@@ -336,7 +342,7 @@
 			#obsControlModal .close-btn:hover {
 			  background-color: #c9302c;
 			}
-			
+
 			.viewerIcons {
 				background-position: left;
 				background-repeat: no-repeat;
@@ -361,7 +367,7 @@
 			  .modal .modal-content {
 				padding: 20px;
 			  }
-			  
+
 			 .modal  button {
 				padding: 8px 12px;
 				font-size: 14px;
@@ -387,6 +393,12 @@
 				transform-origin: 0 0;
 				width: 100%;
 				margin-bottom: calc((46px  + var(--locked-chatbar)) / var(--scale-output)); /* Same as menu height + menu padding-top + menu padding-bottom */
+			}
+
+			#output.sidepadding {
+				box-sizing: border-box;
+				padding-left: var(--side-padding);
+				padding-right: var(--side-padding);
 			}
 
 			.horizontal-ticker-root {
@@ -432,17 +444,17 @@
 				animation: none !important;
 			}
 
-			
+
 			@media only screen and (min-width: 700.001px) { 
 				#output  {
 					margin-bottom: calc(46px / var(--scale-output));
 				}
 			}
-			
+
 			.event-pill {
 				padding-right: 5px;
 			}
-			
+
 			.hl-profile-pic {
 				border: var(--profile-pic-border);
 				min-width: 24px;
@@ -483,18 +495,18 @@
 				max-height: var(--content-images) !important;
 				height: var(--content-images) !important;
 			}
-			
+
 
 			.largeContent .hl-imgContent {
 				max-width: 100%;
 				min-width: 0;
 			}
 			.largeContent .hl-imgContent img, .largeContent .hl-imgContent video {
-				width: 240px;
+				width: var(--large-content-size, 240px);
 				max-width: calc(100% - 4px) !important;
 				margin: 0 2px;
 				height: auto !important;
-				max-height: 240px !important;
+				max-height: var(--large-content-size, 240px) !important;
 				object-fit: contain;
 			}
 			.largeContent .hl-content {
@@ -617,19 +629,28 @@
 				unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 			}
 
+			.hl-content .reply-context,
+			.hl-content .reply-context * {
+				color: var(--reply-color, #a8b3cf) !important;
+			}
+			.hl-content .reply-label,
+			.hl-content .reply-label * {
+				color: var(--reply-label-color, #fff) !important;
+			}
+
 			body {
 				font-family: "NotoColorEmojiLimited", var(--font-family);
 				color: var(--font-color);
 				margin: 0 0;
 				background-color: var(--background-color);
-				
+
 				text-shadow: var(--text-shadow), var(--text-glow);
 				-webkit-text-stroke: var(--text-stroke-width) var(--text-stroke-color);
 				text-stroke: var(--text-stroke-width) var(--text-stroke-color);
 				overflow-x: hidden;
 				scrollbar-color: #666 #201c29;
 			}
-			
+
 			input[type="checkbox"] {
 				padding: 0;
 				margin: 0 5px 0 0;
@@ -697,22 +718,22 @@
 				display: flex;
 				margin-top: 4px;
 			}
-			
+
 			.notcompactmode .twoLines .hl-firstline {
 				margin-top: 10px;
 				margin-bottom: 2px;
 			}
-			
+
 			.twoLines .compactmode  {
 				align-items: flex-start;
 				flex-direction: column;
 			}
-			
+
 			#context-menu {
 			  transform-origin: bottom left;
 			  transform: scale(var(--menu-scale, 1));
 			}
-			
+
 			.allowfat .hl-message{
 				max-width: 400px;
 				word-break: keep-all;
@@ -721,7 +742,7 @@
 				overflow:visible;
 				white-space: normal;
 			}
-				
+
 
 			.twoLines.alignright .hl-firstline {
 				display: flex;
@@ -729,7 +750,7 @@
 				margin-left: auto;
 				flex-direction: row;
 			}
-			
+
 			.twoLines.alignright .hl-firstline {
 				justify-content: flex-end;
 			}
@@ -764,7 +785,7 @@
 				font-weight: var(--message-font-weight);
 				font-size: var(--comment-font-size);
 			}
-			
+
 			.hl-name {
 				 overflow-wrap: normal;
 			}
@@ -778,7 +799,7 @@
 				max-width: 24px;
 				max-height: 24px;
 			}
-			
+
 			.hl-message img+img, .hl-message img+svg, .hl-message svg+img, .hl-message svg+svg {
 				margin: auto 0px;
 			}
@@ -786,7 +807,7 @@
 			.hl-message .hl-content img, .hl-message .hl-content video {
 				max-width: 38px;
 			}
-			
+
 			.hl-message img.chat-line__message--emote-gigantified,
 			.hl-message svg.chat-line__message--emote-gigantified {
 				position: relative;
@@ -811,13 +832,13 @@
 			.notcompactmode .hl-content svg {
 				max-width: 80px;
 			}
-			
+
 			.notcompactmode .hl-message img.chat-line__message--emote-gigantified,
 			.notcompactmode .hl-message svg.chat-line__message--emote-gigantified {
 				height: 56px;
 				max-height: 56px;
 			}
-			
+
 			.notcompactmode .hl-content img.chat-line__message--emote-gigantified,
 			.notcompactmode .hl-content svg.chat-line__message--emote-gigantified {
 				max-width: 112px;
@@ -859,11 +880,11 @@
 			.highlight {
 				background-color: yellow !important;
 			}
-			
+
 			svg.regular-emote, img.regular-emote {
 				margin: auto 0;
 			}
-			
+
 			.marked-host {
 				border-left: 3px solid #ff4444 !important;
 			}
@@ -912,7 +933,7 @@
 				object-fit: contain;
 				vertical-align: bottom;
 			}
-			
+
 			#sceneButtons button.active {
 				border:3px solid blue;
 			}
@@ -1006,35 +1027,35 @@
 				display: inline-flex;
 				width: -webkit-fill-available;
 			}
-			
+
 			.largeavatar.horizontal .bubble.hl-rightside .hl-message {
 				display: block;
 			}
-			
+
 			.hl-rightside .hl-message .donationAmount {
 				margin: auto;
 			}
-			
+
 			.alignright .hl-rightside.bubble .hl-message, .alignright .hl-rightside.bubble .hl-righttopline{
 				margin-left: auto;
 			}
-			
+
 			.alignright .hl-rightside.bubble .hl-righttopline .time-arrived{
 				margin: 9.5px 2px auto 1px;
 			}
-			
+
 			.alignright .highlight-chat.larger-emojis.compactmode .hl-message.bubble .hl-content {
 				    margin: auto;
 			}
-			
+
 			.hl-rightside.bubble .hl-message {
 				margin: 4px 7px 7px 7px;
 			}
-			
+
 			.bubble span.hl-content:empty {
 				display:none;
 			}
-			
+
 			.hl-message.bubble span.hl-donation {
 				margin: auto 0
 			}
@@ -1064,7 +1085,7 @@
 			body.namebubble.twoLines.alignright .hl-firstline .hl-name {
 				margin: auto 0 auto 6px;
 			}
-			
+
 
 			.bot > .hl-message {
 				padding: 5px 0 5px 5px;
@@ -1099,18 +1120,36 @@
 				contain: paint;
 			}
 
+			.highlight-chat.deleted-message .hl-message {
+				opacity: 0.6;
+			}
+
+			.deleted-message-label {
+				display: inline-block;
+				align-self: center;
+				flex-shrink: 0;
+				margin: 0 0.4em;
+				padding: 0.1em 0.35em;
+				border: 1px solid currentColor;
+				border-radius: 3px;
+				font-size: 0.75em;
+				font-weight: bold;
+				line-height: 1.2;
+				white-space: nowrap;
+			}
+
 			#output.alignbottom > .highlight-chat {
 				flex-shrink: 0;
 			}
-			
-			
+
+
 			.highlight-chat.expand {
 				animation: expand 2s;
 				overflow: visible;
 				word-break: break-all;
 				line-break: anywhere;
 			}
-			
+
 			@keyframes slideLeft { 
 				from {
 					transform: translateX(150%);
@@ -1119,17 +1158,17 @@
 					transform: translateX(0px);
 				}
 			}
-			
+
 			.horizontal .highlight-chat {
 				vertical-align:top;
 				animation: expand 4s, slideLeft 1s ease-in-out forwards;
 				vertical-align: bottom;
 			}
-			
+
 			.horizontal .highlight-chat.fadein {
 				animation: expand 4s, slideLeft 1s ease-in-out forwards, fadein 2s;
 			}
-			
+
 			.horizontal .highlight-chat.fadeout {
 				animation:  expand 4s, slideLeft 1s ease-in-out forwards, fadeout 2s;
 			}
@@ -1147,7 +1186,7 @@
 				padding-top: 3px;
 				background-color: #0000;
 			}
-			
+
 			.horizontal:not(.alignbottom) .highlight-chat.compactmode {
 				vertical-align: top;
 				display:inline-flex;
@@ -1156,12 +1195,12 @@
 			.horizontal .compactmode.time-arrived {
 				margin: auto 0;
 			}
-			
+
 			.horizontal .compactmode.source-name {
 				margin: auto 0;
 				margin-left: 4px;
 			}
-			
+
 
 			.horizontal .highlight-chat.larger-emojis:not(.compactmode) {
 				line-height: 30px; 
@@ -1211,7 +1250,7 @@
 				max-height: 24px;
 				vertical-align: top;
 			}
-			
+
 			.hl-badge.svg {
 				object-fit: contain;
 				display: inline-block;
@@ -1230,7 +1269,7 @@
 			.notcompactmode .larger-emojis > .time-arrived {
 				margin: 12px 2px auto 1px;
 			}
-			
+
 			.notcompactmode .larger-emojis > .source-name {
 				margin: 12px 2px auto 1px;
 			}
@@ -1238,11 +1277,11 @@
 			.notcompactmode .larger-emojis .icon {
 				margin: 5px 2px auto 1px;
 			} 
-			
+
 			.notcompactmode .larger-emojis > img.icon {
 				margin: 3px 2px auto 1px;
 			} 
-			
+
 			.notcompactmode .larger-emojis .leftside.larger-emojis .icon{
 				margin: 0px 2px auto 1px;
 				vertical-align: top;
@@ -1309,19 +1348,19 @@
 			.notcompactmode div:not(.expand) > .time-arrived {
 				margin: 9.5px 2px auto 1px;
 			}
-			
+
 			.notcompactmode div:not(.expand) > .source-name {
 				margin: 9.5px 2px auto 1px;
 			}
-			
+
 			.notcompactmode .hl-righttopline > div.time-arrived {
 				margin: auto 2px auto 1px;
 			}
-			
+
 			.notcompactmode .hl-righttopline > div.source-name {
 				margin: auto 2px auto 1px;
 			}
-			
+
 			.hl-name:first-child {
 				margin-left: 0;
 			}
@@ -1471,11 +1510,11 @@
 			.member {
 				background-color: var(--member-bgcolor);
 			}
-			
+
 			.odd.member:not(.expand) {
 				background-color: var(--member-bgcolor-odd);
 			}
-			
+
 			.highlight-chat.member {
 				background-color: var(--member-bgcolor);
 			}
@@ -1491,11 +1530,11 @@
 			.dono-highlight {
 				background-color: var(--donation-bgcolor);
 			}
-			
+
 			.odd.dono-highlight:not(.expand) {
 				background-color: var(--donation-bgcolor-odd);
 			}
-			
+
 			.bubble.dono-highlight {
 				background-color: var(--donation-bgcolor-bubble);
 				box-shadow: inset 0 0 2px #ffff00a1;
@@ -1562,7 +1601,7 @@
 				margin: auto 0;
 				margin: auto min(2%, 31px) auto auto
 			}
-			
+
 			.horizontal .donationAmount {
 				vertical-align: middle;
 				margin: auto 0;
@@ -1701,7 +1740,7 @@
 			.popInModal > .imgButton {
 				margin-top: 2px;
 			}
-			
+
 			@media only screen and (min-width: 700.001px) { 
 				#chatInput_parent {
 					top: unset;
@@ -1711,7 +1750,7 @@
 					max-width: 700px;
 				}
 			}
-			
+
 			@media only screen and (max-width: 700px) {
 				#chatInput_parent {
 					position: fixed;
@@ -1722,12 +1761,12 @@
 					border-radius: 0;
 					margin:5px 0px;
 				}
-				
+
 				#chatInputCloseButton {
 					display:none!important;
 				}
 			}
-			
+
 			.modalTextInput {
 				height: 20px;
 				font-size: 18px;
@@ -1740,7 +1779,17 @@
 				opacity: 1; /* Firefox */
 			}
 
-			.hl-badge.textbadge {
+			.hl-badge.textbadge,
+			.hl-firstline .hl-name .hl-badge.textbadge {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				vertical-align: middle;
+				line-height: 1;
+				white-space: nowrap;
+				overflow-wrap: normal;
+				max-width: none;
+				flex-shrink: 0;
 				border-radius: 6px;
 				padding: 0 5px;
 				font-size: 50%;
@@ -1778,7 +1827,7 @@
 			#chatInput:focus {
 				width: 250px;
 			}
-			
+
 			#chatInput_parent:not(.compactchat) {
 				margin: 2.5px max( calc((100% - 700px) / 2 - 20px) , 0px);
 			}
@@ -2237,9 +2286,9 @@
 				contain: paint;
 				backface-visibility: hidden;
 			}
-			
 
-			
+
+
 			@keyframes fadein {
 				0% {
 					opacity: 0;
@@ -2512,7 +2561,7 @@
 			.alignright .compactmode {
 				margin-left: auto;
 			}
-			
+
 			.horizontal .hl-message {
 				min-height: 24px;
 			}
@@ -2534,15 +2583,15 @@
 			.alignright .horizontal .hl-donation {
 				padding-right: 11px;
 			}
-			
+
 			.alignright .horizontal {
 				direction: ltr; 
 			}
-			
+
 			.horizontal .hl-leftside:empty{
 				 display: none;
 			}
-			
+
 			.horizontal .hl-content {
 				align-content: center;
 			}
@@ -2554,11 +2603,11 @@
 				margin-left: auto;
 				display: flex;
 			}
-			
+
 			.alignright .horizontal .compactmode div.hl-message {
 				display: inline-block
 			}
-			
+
 			.alignright .compactmode .bubble.hl-message {
 				flex-direction: row;
 				overflow:hidden;
@@ -2566,37 +2615,37 @@
 				margin-left: auto;
 				display: flex;
 			}
-			
+
 			.alignright .hl-message.hl-content.bubble {
 				margin-left: auto;
 				display: flex;
 			}
-			
+
 			.alignright .compactmode.horizontal .hl-message {
 				display: inline-block;
 			}
-			
+
 			.alignright .hl-message .time-arrived {
 				margin:auto 4px;
 			}
-			
+
 			.alignright .highlight-chat .hl-firstline {
 				overflow:hidden;
 				text-overflow: ellipsis;
 				margin-left: auto;
 			}
-			
+
 			#currentScene {
 				background-color:#0000;
 				border:3px solid white;
 				padding:2px 5px;
 				cursor: pointer;
 			}
-			
+
 			#currentScene:empty {
 				display: none;
 			}
-			
+
 		.emote-container {
 		  display: inline-grid;
 		  grid-template-columns: 1fr;
@@ -2653,7 +2702,7 @@
 			width: 100%;
 			pointer-events: none;
 		}
-		
+
 		.output-container {
 			mask-image: linear-gradient(to top,
 				black 80%,
@@ -2681,7 +2730,7 @@
 		.OBS .output-container {
 			overflow: hidden;
 		}
-		
+
 		.output-container #output:not(.alignbottom) {
 			height: 100%; /* This might not be wortwhile */
 		}
@@ -2692,7 +2741,7 @@
 		.OBS .output-container #output::-webkit-scrollbar {
 			 display: none; /* Chrome, Safari, Opera */
 		}
-		
+
 		.context-menu__submenu {
 			display: none;
 			position: absolute;
@@ -2744,7 +2793,8 @@
 		}
 
 		</style>
-	</head>
+	<link rel="stylesheet" href="dock-questions.css">
+</head>
 	<body id="main" class="vanilla notcompactmode">
 		<div id="topbar"></div>
 		<div id="topbarSpacer" aria-hidden="true"></div>
@@ -3656,6 +3706,15 @@
 				document.documentElement.style.setProperty("--font-color", fontColorParam);
 			}
 
+			var replyColorEnabled = urlParams.has("replycolor");
+			if (replyColorEnabled) {
+				document.documentElement.style.setProperty("--reply-color", normalizeColor(urlParams.get("replycolor")) || "#a8b3cf");
+			}
+			var replyLabelColorEnabled = urlParams.has("replylabelcolor");
+			if (replyLabelColorEnabled) {
+				document.documentElement.style.setProperty("--reply-label-color", normalizeColor(urlParams.get("replylabelcolor")) || "#ffffff");
+			}
+
 			var nameColorParam = normalizeColor(urlParams.get("namecolor"));
 			if (hasValue(nameColorParam)) {
 				document.documentElement.style.setProperty("--font-color-name", nameColorParam);
@@ -3757,8 +3816,13 @@
 					};
 					  
 					document.addEventListener('DOMContentLoaded', () => {
-						let ninjafy = window.ninjafy || window.electronApi;
-						ninjafy.onCloseFileStream(writerCloseHandler);
+						let fileStreamBridge = window.ninjafy;
+						if (!fileStreamBridge || typeof fileStreamBridge.onCloseFileStream !== 'function') {
+							fileStreamBridge = window.electronApi;
+						}
+						if (fileStreamBridge && typeof fileStreamBridge.onCloseFileStream === 'function') {
+							fileStreamBridge.onCloseFileStream(writerCloseHandler);
+						}
 					});
 				}
 			} catch (e) {
@@ -3867,6 +3931,7 @@
 			if (urlParams.has("trivialevents")) {
 				trivialevents = true;
 			}
+			var trivialHighlightColor = normalizeColor(urlParams.get("trivialhighlightcolor"));
 
 			var filterNamesNotMessages = false;
 			if (urlParams.has("namefilter")) {
@@ -3878,6 +3943,8 @@
 			if (urlParams.has("deleteonlylast")) {
 				deleteOnlyLast = true;
 			}
+			var showDeleted = urlParams.has("showdeleted");
+			var deletedDockMessages = new WeakSet();
 			
 
 			var thisLabel = false;
@@ -3922,15 +3989,39 @@
 			if (urlParams.has("autoqueuesuperchats") || urlParams.has("autoqueuesuperchat")) {
 				autoQueueSuperChats = true;
 			}
+			var autoQueueMemberships = urlParams.has("autoqueuememberships");
 
 			function shouldAutoQueueMessage(data) {
 				if (!data || typeof data !== "object") {
 					return false;
 				}
+				if (autoQueueMemberships && (data.type === "youtube" || data.type === "youtubeshorts") &&
+					["sponsorship", "resub", "membermilestone", "membershiprenewal", "giftpurchase", "giftredemption"].includes(String(data.event || "").toLowerCase())) {
+					return true;
+				}
 				if (autoQueueSuperChats) {
 					return String(data.event || "").toLowerCase() === "superchat";
 				}
 				return autoQueueDonations && !!(data.hasDonation || data.donation);
+			}
+
+			function isQueueRequested(data) {
+				return data.queueme ||
+					(selfQueue && data.chatmessage && selfQueue.some(item => data.chatmessage.split(" ").includes(item))) ||
+					(autoQueueQuestions && data.question) || shouldAutoQueueMessage(data);
+			}
+
+			function queueMessageIfRequested(node, data) {
+				if (!node || node.classList.contains("queued") || node.classList.contains("deleted-message")) {
+					return;
+				}
+				if (isQueueRequested(data)) {
+					selectedQueue.push(node);
+					node.children[0].dataset.qid = selectedQueue.length;
+					node.classList.add("queued");
+					applyHiddenState(node);
+					updateQueueButton();
+				}
 			}
 			if (urlParams.has("viewonly")) {
 				blockMessageSelecting = true;
@@ -4853,6 +4944,8 @@
 
 			if (urlParams.get("custombeep")) {
 				updateAudioSource(urlParams.get("custombeep"));
+			} else if (urlParams.has("loudbeep")) {
+				updateAudioSource("./audio/tone-loud.wav");
 			}
 
 			if (urlParams.has("beepvolume")) {
@@ -5091,7 +5184,7 @@
 
 			function getColorForAmount(data) {
 				
-				let amount = data.donoValue || toUSD(data.donation || data.hasDonation, data.type);
+				let amount = getDonationValueUSD(data);
 				
 				for (const [threshold, color] of tiers) {
 					if (amount >= threshold) return color;
@@ -5118,6 +5211,7 @@
 			if (urlParams.has("hidebadges") || urlParams.has("nobadges")) {
 				showbadges = false;
 			}
+			var stripMemberships = urlParams.has("stripmemberships");
 
 			var doNotAutoshowFiltered = false;
 			if (urlParams.has("excludefiltered")) {
@@ -5134,6 +5228,9 @@
 			colorized = nameColorMode !== "none";
 
 			if (urlParams.has("largecontent")) {
+				var largeContentScale = parseFloat(urlParams.get("largecontent"));
+				largeContentScale = Number.isFinite(largeContentScale) ? Math.max(1, Math.min(5, largeContentScale)) : 1;
+				getById("output").style.setProperty("--large-content-size", (240 * largeContentScale) + "px");
 				getById("output").classList.add("largeContent");
 			}
 
@@ -5203,6 +5300,10 @@
 			
 			if (urlParams.has("autoyoutubememberchat")) {
 				autoyoutubememberchat = true;
+			}
+
+			if (!autoshow && (autoshowdonos || autoshowmembers || autoshowcontentimages)) {
+				autoShow(); // the donation/member/content-image filters imply auto-feature
 			}
 			
 			var giveVIPBadge = false;
@@ -5364,6 +5465,43 @@
 				setupSocket();
 			}
 
+			// Older extension links carry server2/server3 without the Dock API flag.
+			// Publish selections on their own socket so those links do not opt in to
+			// incoming API commands or change Dock-to-Dock synchronization.
+			var socketserverFeatured = false;
+			var featuredReconnectTimeout = null;
+			var featuredReconnectCount = 1;
+			var featuredServerParam = urlParams.has("server2") ? "server2" : "server3";
+			var featuredServerURL = SocialStreamLocalServer.getRelayUrl(urlParams, featuredServerParam, "wss://io.socialstream.ninja/api");
+			function setupFeaturedSocket() {
+				if (featuredReconnectTimeout) {
+					clearTimeout(featuredReconnectTimeout);
+					featuredReconnectTimeout = null;
+				}
+				if (socketserverFeatured) {
+					socketserverFeatured.onclose = null;
+					socketserverFeatured.close();
+				}
+				socketserverFeatured = new WebSocket(featuredServerURL);
+				socketserverFeatured.onopen = function () {
+					featuredReconnectCount = 1;
+					socketserverFeatured.send(JSON.stringify({ join: roomID.split(",")[0], out: 2, in: 2 }));
+				};
+				socketserverFeatured.onclose = function () {
+					featuredReconnectTimeout = setTimeout(function () {
+						featuredReconnectCount += 1;
+						setupFeaturedSocket();
+					}, 100 * featuredReconnectCount);
+				};
+				socketserverFeatured.onerror = function () {
+					socketserverFeatured.close();
+				};
+				// This socket deliberately has no incoming-message handler.
+			}
+			if (!urlParams.has("server") && (urlParams.has("server2") || urlParams.has("server3"))) {
+				setupFeaturedSocket();
+			}
+
 			//
 
 			var conConExtension = 1;
@@ -5466,6 +5604,14 @@
 
 			if (urlParams.has("padding")) {
 				document.documentElement.style.setProperty("--padding-rows", (parseInt(urlParams.get("padding") || 5)) + "px");
+			}
+			if (urlParams.has("sidepadding")) {
+				var sidePadding = parseInt(urlParams.get("sidepadding"), 10);
+				if (!isFinite(sidePadding)) {
+					sidePadding = 8;
+				}
+				document.documentElement.style.setProperty("--side-padding", Math.max(0, Math.min(99, sidePadding)) + "px");
+				getById("output").classList.add("sidepadding");
 			}
 			
 			var NormalizeText = false;
@@ -5693,6 +5839,7 @@
 
 					msg.snippet = {};
 					//
+					// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
 					if (data.textonly) {
 						msg.snippet.displayMessage = data.chatmessage;
 					} else if (!stripHTML) {
@@ -6040,7 +6187,7 @@
 			}
 			
 			if (alignbottom || fadetop) {
-				const ro = new MutationObserver(mutations => {
+				const scrollOutputToBottom = () => {
 					if (reversed && !forceAutoscroll) {
 					} else {
 						var delta = 0;
@@ -6051,8 +6198,18 @@
 							jumptoBottom2()
 						}
 					}
-				});
+				};
+				const ro = new MutationObserver(scrollOutputToBottom);
 				ro.observe(getById("output"), { childList: true, attributes: false, subtree: false });
+				mainOutputWindow.addEventListener("load", function(event) {
+					if (event.target.tagName !== "IMG") return;
+					// Image loads do not add DOM children. Wait for attachment load handlers to reveal them.
+					requestAnimationFrame(function() {
+						if (!historyBrowsing && !historyReturnSyncPending) {
+							scrollOutputToBottom();
+						}
+					});
+				}, true);
 			} else {
 				const ro = new ResizeObserver(entries => {
 					if (reversed && !forceAutoscroll) {
@@ -6410,6 +6567,7 @@
 				var visibleNodes = [];
 				var hiddenNodes = [];
 				Array.prototype.forEach.call(nodes, function(node) {
+                    if (node.classList.contains("ssn-question-pending")) return;
 					if (isDockMessageVisible(node)) {
 						visibleNodes.push(node);
 					} else {
@@ -7029,33 +7187,88 @@
 				return suppliedColor;
 			}
 			
+			function markDeletedMessage(node) {
+				node.classList.add("deleted-message");
+				node.classList.remove("queued");
+				var queueBadge = node.querySelector(".queueid");
+				if (queueBadge) delete queueBadge.dataset.qid;
+				if (node.rawContents) deletedDockMessages.add(node.rawContents);
+				if (!node.querySelector(".deleted-message-label")) {
+					var label = document.createElement("span");
+					label.className = "deleted-message-label";
+					label.textContent = "Deleted";
+					var message = node.querySelector(".hl-message");
+					if (message) message.parentNode.insertBefore(label, message);
+					else node.appendChild(label);
+				}
+			}
+
 			function deleteMessages(data, deleteOnlyLast=false) {
 				let selector = "";
-				if (data.delete.id) {
+				let matchField = "";
+				const nativeId = data.delete.meta && data.delete.meta.messageId;
+				if (data.delete.meta && data.delete.meta.messageId) {
+					const sourceSelector = data.delete.type ? dataAttributeSelector("data-source-type", data.delete.type) : "";
+					selector = ".highlight-chat" + sourceSelector;
+				} else if (data.delete.id) {
+					matchField = "id";
 					selector = dataAttributeSelector("data-mid", data.delete.id);
-				} else if (data.delete.type === "twitch" && data.delete.meta && data.delete.meta.pluralmind && data.delete.userid) {
+					if (data.delete.type) selector += dataAttributeSelector("data-source-type", data.delete.type);
+				} else if (data.delete.userid && data.delete.type) {
+					matchField = "userid";
 					selector = dataAttributeSelector("data-userid", data.delete.userid) + dataAttributeSelector("data-source-type", data.delete.type);
 				} else if (data.delete.type === "twitch" && data.delete.meta && data.delete.meta.pluralmind && data.delete.username) {
+					matchField = "username";
 					selector = dataAttributeSelector("data-username", data.delete.username) + dataAttributeSelector("data-source-type", data.delete.type);
 				} else if (data.delete.chatname && data.delete.type) {
+					matchField = "chatname";
 					selector = dataAttributeSelector("data-chatname", data.delete.chatname) + dataAttributeSelector("data-source-type", data.delete.type);
 				} else if (data.delete.type) {
 					selector = dataAttributeSelector("data-source-type", data.delete.type);
 				} else if (data.delete.chatname) {
+					matchField = "chatname";
 					selector = dataAttributeSelector("data-chatname", data.delete.chatname);
 				}
 
-				if (deleteOnlyLast || data.delete.onlyLast) {
-					const elements = Array.from(document.querySelectorAll(selector));
-					if (elements.length) {
-						const newest = elements.reduce((a, b) => 
-							Number(a.dataset.mid) > Number(b.dataset.mid) ? a : b
-						);
-						newest.remove();
+				// Include queued rows already detached from the visible chat.
+				const nodes = new Set(Array.from(document.querySelectorAll(selector)));
+				selectedQueue.concat(autoShowQueue).forEach(node => {
+					if (node.matches(selector)) nodes.add(node);
+				});
+				let matches = Array.from(nodes).filter(node => !nativeId ||
+					String(getNativeSourceControlMessageId(node.rawContents || {})) === String(nativeId)
+				).map(node => ({ node, id: node.dataset.mid, type: node.dataset.sourceType }));
+				const pending = historyMissedLiveBuffer.concat(queue.map(item => item.contents), messageBuffer.map(item => item.contents));
+				pending.forEach(message => {
+					if (data.delete.type && String(message.type) !== String(data.delete.type)) return;
+					if (nativeId) {
+						if (String(getNativeSourceControlMessageId(message)) !== String(nativeId)) return;
+					} else if (matchField) {
+						const value = matchField === "id" ? (message.mid || message.id) : message[matchField];
+						if (String(value) !== String(data.delete[matchField])) return;
 					}
-				} else {
-					document.querySelectorAll(selector).forEach(ele => ele.remove());
+					matches.push({ message, id: message.mid || message.id, type: message.type });
+				});
+				// Native-message deletions already identify their target; onlyLast applies to the other selectors.
+				if (!nativeId && (deleteOnlyLast || data.delete.onlyLast) && matches.length) {
+					const newest = matches.reduce((a, b) => Number(a.id) > Number(b.id) ? a : b);
+					matches = matches.filter(item => item === newest || (newest.id &&
+						String(item.id) === String(newest.id) && item.type === newest.type));
 				}
+				const deletedNodes = new Set(matches.filter(item => item.node).map(item => item.node));
+				const deletedPending = new Set(matches.filter(item => item.message).map(item => item.message));
+				if (showDeleted) {
+					deletedPending.forEach(message => deletedDockMessages.add(message));
+				} else {
+					historyMissedLiveBuffer = historyMissedLiveBuffer.filter(message => !deletedPending.has(message));
+					queue = queue.filter(item => !deletedPending.has(item.contents));
+					messageBuffer = messageBuffer.filter(item => !deletedPending.has(item.contents));
+				}
+				const previousQueueLength = selectedQueue.length;
+				selectedQueue = selectedQueue.filter(node => !deletedNodes.has(node));
+				autoShowQueue = autoShowQueue.filter(node => !deletedNodes.has(node));
+				deletedNodes.forEach(node => showDeleted ? markDeletedMessage(node) : node.remove());
+				if (selectedQueue.length !== previousQueueLength) updateQueueButton(true);
 			}
 			
 			function getUserHistory(element) {
@@ -7081,24 +7294,45 @@
 				if (!messageData || typeof messageData !== "object") {
 					return;
 				}
-				historyMissedLiveBuffer.push(Object.assign({}, messageData));
+				var bufferedMessage = Object.assign({}, messageData);
+				if (showDeleted && deletedDockMessages.has(messageData)) deletedDockMessages.add(bufferedMessage);
+				historyMissedLiveBuffer.push(bufferedMessage);
 				if (historyMissedLiveBuffer.length > 500) {
-					historyMissedLiveBuffer.shift();
+					var discardIndex = historyMissedLiveBuffer.findIndex(function(message) {
+						return !isQueueRequested(message);
+					});
+					// Retain pending queue entries even when they alone exceed the history limit.
+					if (discardIndex !== -1) {
+						historyMissedLiveBuffer.splice(discardIndex, 1);
+					}
 				}
 			}
 
 			function flushMissedLiveBuffer() {
-				if (historyBrowsing || historyReturnSyncPending || !historyMissedLiveBuffer.length) {
+				if (historyBrowsing || historyReturnSyncPending) {
 					return;
 				}
 				var buffered = historyMissedLiveBuffer.slice();
 				historyMissedLiveBuffer = [];
-				buffered.forEach(function(msg) {
-					var displayId = (msg && msg.mid) ? msg.mid : msg.id;
-					if (!displayId || !document.querySelector(dataAttributeSelector("data-mid", displayId))) {
-						processData({ contents: msg }, { reloaded: true, suppressLiveSideEffects: true, skipHistoryDeferral: true });
-					}
-				});
+				// Finish queueing the entire catch-up batch before any rows can be pruned.
+				historyReturnSyncPending = true;
+				try {
+					buffered.forEach(function(msg) {
+						var displayId = (msg && msg.mid) ? msg.mid : msg.id;
+						var node = displayId ? document.querySelector(dataAttributeSelector("data-mid", displayId)) : null;
+						if (!node) {
+							node = processData({ contents: msg }, { reloaded: true, suppressLiveSideEffects: true, skipHistoryDeferral: true });
+						}
+						// These arrived live while browsing history, even if recentHistory already rendered them.
+						if (node) {
+							if (showDeleted && deletedDockMessages.has(msg)) markDeletedMessage(node);
+							queueMessageIfRequested(node, node.rawContents);
+						}
+					});
+				} finally {
+					historyReturnSyncPending = false;
+				}
+				cleanUpOldNodes();
 				jumptoBottom2();
 			}
 
@@ -7401,13 +7635,14 @@
 				if (roastItem) roastItem.title = peers.extension ? "" : "Requires Social Stream and Private Chat Bot enabled.";
 			}
 
-			function cohostHtmlToText(value) {
+			function cohostHtmlToText(value, isHTML = true) {
 				var text = "";
 				if (value === null || typeof value === "undefined") return "";
+				if (!isHTML || !/[<&]/.test(value)) return String(value).replace(/\s+/g, " ").trim();
 				try {
-					var div = document.createElement("div");
+					var div = document.createElement("template");
 					div.innerHTML = String(value);
-					text = div.textContent || div.innerText || "";
+					text = div.content.textContent || "";
 				} catch (e) {
 					text = String(value || "");
 				}
@@ -7416,10 +7651,11 @@
 
 			function getCohostMessageText(element) {
 				var raw = element && element.rawContents ? element.rawContents : {};
-				var text = cohostHtmlToText(raw.chatmessage || raw.message || raw.text || "");
+				// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+				var text = cohostHtmlToText(raw.chatmessage || raw.message || raw.text || "", !raw.textonly);
 				if (!text && element) {
 					var messageNode = element.querySelector(".hl-content") || element.querySelector(".hl-message");
-					text = cohostHtmlToText(messageNode ? messageNode.innerHTML : element.innerHTML);
+					text = cohostHtmlToText(messageNode ? messageNode.textContent : element.textContent, false);
 				}
 				return text;
 			}
@@ -7430,13 +7666,14 @@
 				if (!name && element) {
 					var nameNode = element.querySelector(".hl-name");
 					name = nameNode ? nameNode.textContent : "";
+					return cohostHtmlToText(name, false) || "Viewer";
 				}
 				return cohostHtmlToText(name) || "Viewer";
 			}
 
 			function sendCohostOverlaySay(text, options) {
 				var opts = options || {};
-				var value = cohostHtmlToText(text);
+				var value = cohostHtmlToText(text, false);
 				if (!value) {
 					setCohostDockStatus("no readable message", "error");
 					return false;
@@ -7468,10 +7705,10 @@
 				return true;
 			}
 
-			function buildCohostPrompt(mode, element) {
+			function buildCohostPrompt(mode, element, messageText) {
 				var raw = element && element.rawContents ? element.rawContents : {};
 				var name = getCohostMessageName(element);
-				var text = getCohostMessageText(element);
+				var text = typeof messageText === "string" ? messageText : getCohostMessageText(element);
 				var platform = raw.type || element.dataset.sourceType || "chat";
 				var task = mode === "roast"
 					? "Write one short playful PG roast back to the viewer. Keep it friendly, no hate, no threats, no sexual content, no slurs, and do not punch down."
@@ -7522,7 +7759,7 @@
 				setCohostDockStatus("AI thinking", "busy");
 				send2Extension({
 					action: "chatbot",
-					value: buildCohostPrompt(mode, element),
+					value: buildCohostPrompt(mode, element, text),
 					target: target,
 					turbo: false
 				}, null, true);
@@ -7988,9 +8225,11 @@
 				} else if ("queue" in data) {
 					if (data.queue && (syncDocks || force)) {
 						if (typeof data.queue == "object") {
+							// Reconcile row markers without mutating the queue or notifying auto-show mid-update.
 							selectedQueue.forEach(xx => {
 								if (xx.dataset.mid && !data.queue.includes(parseInt(xx.dataset.mid))) {
-									removeQueue(xx);
+									xx.classList.remove("queued");
+									delete xx.children[0].dataset.qid;
 								}
 							});
 							var sq = [];
@@ -8061,10 +8300,7 @@
 					// delete by message ID; likely another dock is syncing their delete with me
 					//if ((syncDocks || force)){
 					try {
-						var ele = document.querySelector(dataAttributeSelector("data-mid", data.deleteMessage));
-						if (ele) {
-							ele.remove();
-						}
+						deleteMessages({ delete: { id: data.deleteMessage } });
 						return true;
 					} catch (e) {}
 					//}
@@ -8228,7 +8464,6 @@
 								}
 							}
 						});
-						cleanUpOldNodes();
 						console.log("Loaded from remote DB storage");
 						historyReturnSyncPending = false;
 						flushMissedLiveBuffer();
@@ -8321,7 +8556,9 @@
 						const para = document.createElement("p");
 						//console.log(timeSince(msg.timestamp));
 						//console.log(msg.timestamp);
-						para.innerHTML = (msg.chatmessage||msg.message) + " - <small><i>Sent: " + timeSince(msg.timestamp) + "</i></small>";
+						var body = msg.chatmessage || msg.message || "";
+						// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+						para.innerHTML = (msg.textonly ? escapeHtml(body) : (window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(body) : escapeHtml(body))) + " - <small><i>Sent: " + timeSince(msg.timestamp) + "</i></small>";
 						messagesList.appendChild(para);
 					});
 					modal.style.display = "block";
@@ -8865,8 +9102,9 @@
 							} else {
 								queue.push({ contents: content });
 								if (queue.length > 100) {
-									// keep the queue from exploding in size
-									queue.shift();
+									// Prefer queue candidates while keeping the paused buffer capped at 100.
+									var discardIndex = queue.findIndex(item => !isQueueRequested(item.contents));
+									queue.splice(discardIndex === -1 ? 0 : discardIndex, 1);
 								}
 							}
 							return true;
@@ -8979,8 +9217,9 @@
 					} else {
 						queue.push({ contents: data.content });
 						if (queue.length > 100) {
-							// keep the queue from exploding in size
-							queue.shift();
+							// Prefer queue candidates while keeping the paused buffer capped at 100.
+							var discardIndex = queue.findIndex(item => !isQueueRequested(item.contents));
+							queue.splice(discardIndex === -1 ? 0 : discardIndex, 1);
 						}
 					}
 					return true;
@@ -9027,8 +9266,9 @@
 					}
 					queue.push({ contents: data });
 					if (queue.length > 100) {
-						// keep the queue from exploding in size
-						queue.shift();
+						// Prefer queue candidates while keeping the paused buffer capped at 100.
+						var discardIndex = queue.findIndex(item => !isQueueRequested(item.contents));
+						queue.splice(discardIndex === -1 ? 0 : discardIndex, 1);
 					}
 					return true;
 				}
@@ -9772,7 +10012,13 @@
 				} catch (e) {
 					console.error(e);
 				}
-				element.remove();
+				if (element.dataset.mid) {
+					deleteMessages({ delete: { id: element.dataset.mid, type: element.dataset.sourceType } });
+				} else if (selectedQueue.includes(element)) {
+					removeQueue(element);
+				}
+				if (showDeleted) markDeletedMessage(element);
+				else element.remove();
 			}
 
 			var dockActionNoticeTimer = null;
@@ -10320,7 +10566,7 @@
 			}
 
 			function cleanUpOldNodes() {
-				if (historyBrowsing) return;
+				if (historyBrowsing || historyReturnSyncPending) return;
 				if (horizontal) {
 					horizontalPruneMessages();
 					return;
@@ -10441,14 +10687,7 @@
 				}
 			}
 
-			function removeHtmlTagsFromPlainTextField(value) {
-				return String(value || "")
-					.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
-					.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
-					.replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, "")
-					.replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, "")
-					.replace(/<[^>]*>/g, "");
-			}
+			
 
 			function stripHtmlFunction(html) {
 				html = String(html == null ? "" : html);
@@ -10459,32 +10698,24 @@
 							doc.body.querySelectorAll("script,style,noscript,template").forEach(function (node) {
 								node.remove();
 							});
-							return removeHtmlTagsFromPlainTextField(doc.body.textContent || "");
+							return doc.body.textContent || "";
 						}
 					}
 				} catch (e) {}
-				let tmp = document.createElement("DIV");
+				let tmp = document.createElement("template");
 				tmp.innerHTML = html;
-				return removeHtmlTagsFromPlainTextField(tmp.textContent || tmp.innerText || "");
+				return tmp.content.textContent || "";
 			}
 
 			function isExactBlockedMessage(data, blockedMessages) {
 				if (!data || !blockedMessages || !blockedMessages.length) return false;
 				var messageText = data.textContent || data.chatmessage || "";
-				messageText = stripHtmlFunction(messageText).trim().toLowerCase();
+				// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+				messageText = (data.textContent || data.textonly ? messageText : stripHtmlFunction(messageText)).trim().toLowerCase();
 				return blockedMessages.indexOf(messageText) !== -1;
 			}
 
-			function sanitizePlainTextAlertFields(data) {
-				if (!data) {
-					return;
-				}
-				["hasDonation", "donation", "membership", "hasMembership", "subtitle", "title"].forEach(function (field) {
-					if (typeof data[field] === "string") {
-						data[field] = stripHtmlFunction(data[field]);
-					}
-				});
-			}
+			
 
 			function plainTextToHtml(value) {
 				let span = document.createElement("span");
@@ -10492,11 +10723,11 @@
 				return span.innerHTML;
 			}
 
-			function isAllCapsMessage(text) {
+			function isAllCapsMessage(text, isHTML = true) {
 				if (!text) {
 					return false;
 				}
-				text = stripHtmlFunction(text).replace(/\s\s+/g, " ").trim();
+				text = (isHTML ? stripHtmlFunction(text) : text).replace(/\s\s+/g, " ").trim();
 				if (!text) {
 					return false;
 				}
@@ -10521,6 +10752,88 @@
 				} catch (e) {
 					return "";
 				}
+			}
+
+			function colorReplyLabel(chatmessage, data) {
+				if (!replyLabelColorEnabled) {
+					return chatmessage;
+				}
+				var template = document.createElement("template");
+				template.innerHTML = chatmessage;
+				var context = template.content.firstElementChild;
+				while (context && context.tagName === "I") {
+					context = context.firstElementChild;
+				}
+				if (!context) {
+					return chatmessage;
+				}
+				var text = context.textContent;
+				var label = text.match(/^Replying to\s+[^:]+:/i);
+				var author = data.meta && data.meta.reply && data.meta.reply.author;
+				if (!label && typeof author === "string" && author && text.indexOf(author + ":") === 0) {
+					label = [author + ":"];
+				}
+				if (!label) {
+					return chatmessage;
+				}
+				// Wrap only the label's text range, preserving nested name formatting and quoted emotes.
+				var remaining = label[0].length;
+				var walker = document.createTreeWalker(context, 4);
+				var textNode;
+				while ((textNode = walker.nextNode())) {
+					if (remaining <= textNode.length) {
+						var range = document.createRange();
+						range.selectNodeContents(context);
+						range.setEnd(textNode, remaining);
+						var span = document.createElement("span");
+						span.className = "reply-label";
+						span.appendChild(range.extractContents());
+						range.insertNode(span);
+						return template.innerHTML;
+					}
+					remaining -= textNode.length;
+				}
+				return chatmessage;
+			}
+
+			function colorReplyContext(chatmessage, data) {
+				// This parameter is the local display string: plain bodies have already been escaped once.
+				// Reply wrappers/colors may decorate that display, but must not enter literal data.chatmessage.
+				// Existing <i> markup in HTML-mode messages is valid and may be retained.
+				if ((!replyColorEnabled && !replyLabelColorEnabled) || DoNotShowInitialReply || !data.initial || !data.reply || !chatmessage) {
+					return chatmessage;
+				}
+				// Color the source's quoted context; tolerate wrappers from older event rows.
+				// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+				if (!data.textonly && !stripHTML && /^(<i>)?<i><small>/i.test(chatmessage)) {
+					if (replyColorEnabled) {
+						chatmessage = chatmessage.replace(/^(<i>)?<i><small>/i, function (match, eventWrapper) {
+							return (eventWrapper || "") + '<i class="reply-context"><small>';
+						});
+					}
+					return colorReplyLabel(chatmessage, data);
+				}
+				// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+				if (data.textonly || stripHTML) {
+					var initial = String(data.initial);
+					// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+					if (stripHTML && !data.textonly) {
+						initial = stripHtmlFunction(initial);
+					}
+					var prefix = initial.replace(/[\r\n]+/g, "").replace(/\s+/g, " ").trim() + ":";
+					// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+					if (data.textonly) {
+						prefix = escapeHtml(prefix);
+					}
+					if (NormalizeText) {
+						prefix = normalizeText(prefix, false);
+					}
+					if (chatmessage.indexOf(prefix) === 0) {
+						chatmessage = '<span' + (replyColorEnabled ? ' class="reply-context"' : '') + '>' + chatmessage.slice(0, prefix.length) + '</span>' + chatmessage.slice(prefix.length);
+						return colorReplyLabel(chatmessage, data);
+					}
+				}
+				return chatmessage;
 			}
 
 			function escapeAttributeValue(value) {
@@ -11004,13 +11317,13 @@
 
 				return makeStatic;
 			}
-			function isEmojiOnly(str) {
+			function isEmojiOnly(str, isHTML = true) {
 				let strippedStr = stripEmojisFromText(str);
 				strippedStr = strippedStr.replace(/\s+/g, '');
 				if (strippedStr.length === 0) {
 					return true; // Contains only emojis and/or spaces
 				}
-				const textContent = strippedStr.replace(/<[^>]*>/g, '');
+				const textContent = isHTML ? strippedStr.replace(/<[^>]*>/g, '') : strippedStr;
 				return textContent.length === 0;
 			}
 			
@@ -11511,6 +11824,11 @@
 				if (data.contents) {
 					data = data.contents;
 
+					// Temporary Web Store ad-announcement workaround; remove on 2026-10-07 (one week).
+					if (data.type === "twitch" && ["ad_break", "adbreak", "ad_request", "ad_schedule"].includes(data.event)) {
+						return;
+					}
+
 					var shouldDeferForHistory = (historyBrowsing || historyReturnSyncPending) && !reloaded && !prependMode && !processDataOptions.skipHistoryDeferral;
 					if (shouldDeferForHistory) {
 						if (historyBrowsing) {
@@ -11523,7 +11841,8 @@
 
 					var invisible = false;
 					var makeBlurred = false;
-					var suppressLiveSideEffects = prependMode === true || processDataOptions.suppressLiveSideEffects === true;
+					var isDeletedMessage = showDeleted && deletedDockMessages.has(data);
+					var suppressLiveSideEffects = prependMode === true || processDataOptions.suppressLiveSideEffects === true || isDeletedMessage;
 
 					if (debug){
 						console.log(data);
@@ -11740,11 +12059,15 @@
 					}
 					var safeDataId = escapeAttributeValue(data.id);
 					var safeDataType = escapeAttributeValue(data.type);
-					sanitizePlainTextAlertFields(data);
 					if (stripDonationData){
 						data.hasDonation = "";
 					}
 
+					// Accept legacy numeric amounts while preserving string and zero behavior.
+					if (data.hasDonation && typeof data.hasDonation === "number") {
+						data.hasDonation = Number.isFinite(data.hasDonation)
+							? String(data.hasDonation) : "";
+					}
 					if (data.hasDonation) {
 						if (stripHTML) {
 							data.hasDonation = stripHtmlFunction(data.hasDonation);
@@ -11798,16 +12121,23 @@
 
 					if (data.chatmessage) {
 						if (stripHTML) {
-							data.chatmessage = stripHtmlFunction(data.chatmessage);
+							// textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload.
+							if (!data.textonly) {
+								data.chatmessage = stripHtmlFunction(data.chatmessage);
+								if (data.initial) data.initial = stripHtmlFunction(data.initial);
+								if (data.reply) data.reply = stripHtmlFunction(data.reply);
+								// textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload.
+								data.textonly = true;
+							}
 						} else if (data.event) {
 							data.chatmessage = data.chatmessage.trim();
-							data.chatmessage = "<i>" + data.chatmessage + "</i>";
 						}
 					} else {
 						data.chatmessage = "";
 					}
 
-					if (hideAllCaps && data.chatmessage && isAllCapsMessage(data.chatmessage)) {
+					// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+					if (hideAllCaps && data.chatmessage && isAllCapsMessage(data.chatmessage, !data.textonly)) {
 						return;
 					}
 
@@ -11886,10 +12216,10 @@
 
 					var addImage = "";
 					if (data.contentimg) {
-						if (data.contentimg.includes('.mp4') || data.contentimg.includes('.webm')){
-							addImage = '<div class="hl-imgContent"><video autoplay="true" muted="true" src="' + data.contentimg + '" onerror="this.style.display = \'none\';" /></video></div>';
+						if (/\.(mp4|webm)$/i.test(data.contentimg.split(/[?#]/)[0])){
+							addImage = '<div class="hl-imgContent"><video autoplay="true" muted="true" src="' + escapeAttributeValue(data.contentimg) + '" /></video></div>';
 						} else {
-							addImage = '<div class="hl-imgContent"><img src="' + data.contentimg + '" onerror="this.style.display = \'none\';" /></div>';
+							addImage = '<div class="hl-imgContent"><img alt="" src="' + escapeAttributeValue(data.contentimg) + '" /></div>';
 						}
 					} else if (attachmentsonly) {
 						data.chatmessage = "";
@@ -11920,39 +12250,51 @@
 					var chatmessage = data.chatmessage || "";
 
 					if (chatmessage) {
+						// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
 						if (stylizeEmoji && !reloaded && !data.textonly) {
 							//chatmessage = chatmessage.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/gi, "<span class='emoji'>$1</span>");
 							chatmessage = wrapEmojis(chatmessage);
 						}
+						// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
 						if (!stripHTML && !data.textonly) {
 							// we want to reuse this, but only if HTML is allowed
 							data.chatmessage = chatmessage;
+							// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
 							data.textonly = false; // we know that it contains html now
 						}
 					}
 
+					// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+					const plainChatMessage = (hideshortmessages || hideNumbers) && !data.contentimg && !data.hasDonation
+						? (data.textContent || (data.textonly ? chatmessage : stripHtmlFunction(chatmessage)) || "").trim() : "";
 					if (!chatmessage && !data.contentimg && !data.hasDonation) {
 						return;
 					} else if (hideshortmessages && !data.contentimg && !data.hasDonation) {
-						if (chatmessage.replace(/(<([^>]+)>)/ig, "").length < hideshortmessages){
+						if (plainChatMessage.length < hideshortmessages){
 							return;
 						}
 					}
 
-					const plainChatMessage = (data.textContent || data.chatmessage || "").replace(/<[^>]*>/g, "").trim();
 					if (hideNumbers && plainChatMessage && !data.contentimg && !data.hasDonation && /^\d+$/.test(plainChatMessage)) {
 						return;
 					}
 					
 					if (filterEmojiOnly && data.chatmessage && !data.hasDonation && !data.contentimg) {
-						if (isEmojiOnly(data.chatmessage)) {
+						// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+						if (isEmojiOnly(data.chatmessage, !data.textonly)) {
 							return; // Skip this message as it contains only emojis or empty HTML tags
 						}
 					}
 					
+					if (NormalizeText && chatmessage) {
+						// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
+						chatmessage = normalizeText(chatmessage, !data.textonly && !stripHTML);
+					}
+
+					// textonly=true: escape only the local display copy for this HTML template; raw data.chatmessage stays literal. This is output encoding, not re-sanitization.
 					if (data.textonly) {
-						// should be legacy compatible, since textonly is new.
-						chatmessage = escapeHtml(chatmessage); // lets escape any < > ' " or other special characeters, since it would be dangerous as HTML.
+						// Missing legacy flags retain HTML mode; a true flag must preserve literal characters.
+						chatmessage = escapeHtml(chatmessage); // Encode the display copy once; keep the stored/transmitted plain body unchanged.
 					}
 
 					if (largeavatar && data.chatname && data.type && avatars) {
@@ -12061,9 +12403,9 @@
 					var nameColor = "";
 					var dockNameColor = getDockNameColor(data);
 					if (dockNameColor) {
-						nameColor = "style='color:" + dockNameColor + ";'";
+						nameColor = "style='color:" + escapeAttributeValue(dockNameColor) + ";'";
 						if (largeavatar){
-							nameColor = "style='color:" + dockNameColor + ";display: flex;'";
+							nameColor = "style='color:" + escapeAttributeValue(dockNameColor) + ";display: flex;'";
 						}
 					} else if (largeavatar){
 						nameColor = "style='display: flex;'";
@@ -12084,42 +12426,12 @@
 						}
 					}
 					
-					if (giveVIPBadge && vip){
-						if (!data.chatbadges){
-							data.chatbadges = [];
-						}
-						data.chatbadges.push("./icons/vip.png");
+					var displayBadges = SocialStreamBadges.toArray(data.chatbadges);
+					if (giveVIPBadge && vip) {
+						displayBadges.push("./icons/vip.png");
+						data.chatbadges = displayBadges;
 					}
-
-					if (data.chatbadges && limitbadges !== false) {
-						try {
-							data.chatbadges = data.chatbadges.slice(0, limitbadges);
-						} catch (e) {}
-					}
-
-					if (data.chatbadges && showbadges) {
-						if (typeof data.chatbadges == "string"){
-							chatbadges = data.chatbadges;
-						} else {
-							data.chatbadges.forEach(badge => {
-								if (typeof badge == "object") {
-									if (badge.type && badge.type == "img" && badge.src) {
-										if (badge.bgcolor) {
-											chatbadges += "<img class='hl-badge' style='background-color:" + badge.bgcolor + ";' src='" + badge.src + "' />";
-										} else {
-											chatbadges += "<img class='hl-badge' src='" + badge.src + "' />";
-										}
-									} else if (badge.type && badge.type == "svg" && badge.html) {
-										chatbadges += "<span class='hl-badge svg'>" + badge.html + "</span>";
-									} else if (badge.type && badge.type == "text" && badge.text) {
-										chatbadges += "<span class='hl-badge textbadge'>" + badge.text + "</span>";
-									}
-								} else {
-									chatbadges += "<img class='hl-badge' src='" + badge + "' />";
-								}
-							});
-						}
-					}
+					chatbadges = showbadges ? SocialStreamBadges.render(displayBadges, { className: "hl-badge", limit: limitbadges }) : "";
 
 					var specialMessage = false;
 
@@ -12129,6 +12441,7 @@
 							data.chatname = "VDO.Ninja";
 						} else if (custombot) {
 							var textname = data.chatname;
+							// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode retains upstream-sanitized markup.
 							if (!data.textonly && custombot) {
 								textname = unescapeHtml(data.chatname);
 							}
@@ -12208,6 +12521,9 @@
 						chatname = truncateText(chatname, trimName);
 					}
 
+					// Legacy names may contain entities or emotes; check only the display copy.
+					chatname = window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(chatname) : escapeHtml(chatname || "");
+
 					if (largeavatar) {
 						chatname = '<div dir="' + textDirection + '" ' + nameColor + ' class="hl-name' + splitMode + '">' + (chatname || "") + '<span class="hl-badges">' + chatbadges + "</span></div>";
 					} else if (chatname) {
@@ -12253,15 +12569,20 @@
 						console.error("Messages should have an ID, else queuing/pinning won't work");
 					}
 					
+					// Final HTML-only display check for older/custom senders; do not trust URL version.
+					// textonly=true is already escaped literal text here and must bypass HTML sanitization.
+					// Check the local copy once, before trimming can create DOM; leave the stored body alone.
+					if (!data.textonly && chatmessage) {
+						chatmessage = window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(chatmessage) : escapeHtml(chatmessage);
+					}
 					if (trimChat){
 						chatmessage = truncateHTMLContent(chatmessage, trimChat);
 					}
 					
-					if (NormalizeText && chatmessage){
-						chatmessage = normalizeText(data.chatmessage, data.textonly || false);
-					}
 					
-					// Trusted relay HTML: chatname/chatmessage are sanitized upstream in background.js before rendering here.
+					chatmessage = colorReplyContext(chatmessage, data);
+
+					// Chat HTML was checked above; generated row controls and reply decoration stay separate.
 					if (largeavatar) {
 						var node = createElementFromHTML('<div id="msg_' + safeDataId + '" ' + mid + ' data-menu="context-menu" class="highlight-chat' + expand + '" data-source-type="' + safeDataType + '">' + '<div class="hl-leftside">' + chatImg + showType + "</div>" + '<div class="hl-rightside' + larger + '">' + '<div class="hl-righttopline">' + chatname + channelSourceName + timeArrived  +  "<div class='queueid'></div>" + "</div>" + '<div class="hl-message">' + '<span class="hl-content" dir="' + textDirection + '" id="content_' + safeDataId + '">' + chatmessage + "</span>" + addImage + donationHTML + "</div>" + "</div></div>");
 					} else if (twoLines) {
@@ -12326,8 +12647,8 @@
 
 					if (data.highlightColor && trivialevents) {
 						node.classList.add("special-highlight");
-						if (!bubble) {
-							node.style.backgroundColor = data.highlightColor;
+						if (!bubble || trivialHighlightColor) {
+							node.style.backgroundColor = trivialHighlightColor || data.highlightColor;
 						}
 					}
 					
@@ -12378,6 +12699,10 @@
 						node.dataset.member = "true";
 					} else {
 						data.membership = "";
+					}
+
+					if (stripMemberships) {
+						memebershipHTML = "";
 					}
 
 					if (data.membership && !bubble && highlightMembers) {
@@ -12469,6 +12794,10 @@
 					}
 
 					let hlMessage = node.querySelector(".hl-message");
+					if (data.event && !stripHTML && contentElement) {
+						// Italics are display styling in either mode; never append <i> to a textonly payload.
+						contentElement.style.fontStyle = "italic";
+					}
 
 					var svgs = node.querySelectorAll("svg");
 					svgs.forEach(svg => {
@@ -12534,6 +12863,7 @@
 					if (chatmessage && hlMessage && (stripLinksForMessage || activeLinks || shortlink)) {
 						processURLs(hlMessage, { makeClickable: activeLinks, stripLinks: stripLinksForMessage, shortenURLs: shortlink });
 					} 
+					SSNContentImage.watch(node, data, contentElement || hlMessage);
 					
 					if (data.type && data.type == "twitch" && avatars && data.chatimg && data.chatname) { 
 						// Load Twitch avatar
@@ -12609,6 +12939,7 @@
 					}
 
 					node.rawContents = data;
+					if (isDeletedMessage) markDeletedMessage(node);
 					
 					const metaFeatured = data.meta && data.meta.featured;
 					const metaPinnedTarget = data.meta && data.meta.pinnedTarget;
@@ -12744,30 +13075,9 @@
 
 					if (!suppressLiveSideEffects) {
 						applyBotActions(data); // Official actions
+                        if (window.SSNQuestionTracker) window.SSNQuestionTracker.add(node, data);
 
-						if (data.queueme) {
-							selectedQueue.push(node);
-							node.children[0].dataset.qid = selectedQueue.length;
-							node.classList.add("queued");
-							updateQueueButton();
-						} else if (selfQueue && data.chatmessage && (selfQueue.some(item => data.chatmessage.split(" ").includes(item)))) {
-							selectedQueue.push(node);
-							node.children[0].dataset.qid = selectedQueue.length;
-							node.classList.add("queued");
-							updateQueueButton(); 
-						} else if (autoQueueQuestions && data.question) {
-							// Auto-pin questions when autoQueueQuestions URL parameter is set
-							selectedQueue.push(node);
-							node.children[0].dataset.qid = selectedQueue.length;
-							node.classList.add("queued");
-							updateQueueButton();
-						} else if (shouldAutoQueueMessage(data)) {
-							// Auto-queue donation messages or Super Chats when their matching option is set.
-							selectedQueue.push(node);
-							node.children[0].dataset.qid = selectedQueue.length;
-							node.classList.add("queued");
-							updateQueueButton();
-						}
+						queueMessageIfRequested(node, data);
 						
 						if (autoPinQuestions && data.question) {
 							pinIt(node);
@@ -13006,12 +13316,13 @@
 					});
 				}
 				try {
-					if (socketserver) {
+					var selectionSocket = socketserver || (socketserverFeatured && socketserverFeatured.readyState === 1 ? socketserverFeatured : false);
+					if (selectionSocket) {
 						// send a copy to the remote API
 						if (data.out){
 							delete data.out;
 						}
-						socketserver.send(JSON.stringify(data));
+						selectionSocket.send(JSON.stringify(data));
 					}
 					iframes.forEach(iframe => {
 						var msg = {};
@@ -14093,5 +14404,6 @@
 			initHotkeys();
 
 		</script>
-	</body>
+	<script src="dock-questions.js"></script>
+</body>
 </html>

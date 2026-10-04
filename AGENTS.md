@@ -24,16 +24,20 @@ If you need more context on how Electron wiring differs from the extension boots
 - Event payload vocabulary and field expectations are documented in `docs/event-reference.html`. Update that page whenever a source adds, renames, or re-shapes an event so downstream surfaces stay in sync.
 
 ## Communication
-- VERY IMPORTANT: Be terse.
-- VERY IMPORTANT: Do not add extra details unless Steve explicitly asks for them.
-- VERY IMPORTANT: State the answer or fix in one sentence first.
-- VERY IMPORTANT: Do not explain reasoning unless Steve asks.
-- Answer the exact question directly first.
-- Be terse.
-- Answer only what was asked unless extra context is needed to prevent a mistake.
-- Call out oversights or red-flag concerns when they matter.
+- VERY IMPORTANT: Be terse and direct. Answer the exact question or state the fix in one sentence first.
+- Answer only what Steve asked. Add context only when needed to prevent a concrete mistake; explain reasoning only when asked.
+- Use plain, everyday language. Include technical details only when needed to understand the issue or make a decision.
+- When asked to explain a proposed change, use short, specific descriptions of the issue, proposed fix, and behavior concern.
+- Validate a proposed fix and its behavior concerns before recommending it when local verification is possible. Report observed results; explicitly identify anything still unverified instead of presenting assumptions as findings.
+- Behavior changes mean actual differences. Never list unchanged functionality (for example, "messages should continue working") as a change or concern.
+- Separate intended behavior changes from concrete compatibility risks. Do not invent speculative risks to fill a section; if asked and none are identified, say so briefly.
+- Omit reassurance, analogies, repeated summaries, and testing checklists unless requested or necessary to explain a concrete risk.
+- When Steve asks to work through issues one at a time, discuss only the current issue.
+- Call out material oversights or red flags directly.
 
 ## Message Contracts
+
+- `donoValue` is always a numeric USD amount, supplied optionally by the source when it has better context. Consumers must honor a valid override (including zero) before using `currency.js` to estimate USD from `hasDonation` and the source. Keep the original display amount/unit in `hasDonation`; do not put raw coins or foreign-currency amounts in `donoValue`. Unpriced TikTok gifts default to one coin per gift at the existing USD-per-coin rate.
 
 - Every outbound event follows the canonical structure referenced in `docs/event-reference.html`. Required fields (`platform`, `type`, `chatname`, `chatmessage`, etc.) must stay intact.
 - `textonly` applies only to `chatmessage`: `true` means render `chatmessage` as plain text, while `false` means `chatmessage` may contain sanitized/renderable HTML. Other normal fields are expected to be plain text; media fields such as `chatimg` and `contentimg` carry URLs/data.
@@ -144,19 +148,20 @@ Sample payloads based on the fake test data in [background.js](./background.js):
 - All `sources/websocket/**/*.html|js` assets load inside both the Chrome extension and the Electron app. Any new page (e.g., a streaming client) must accept configuration via URL parameters (`?channel=...`, `?videoId=...`) just like the legacy polling pages.
 - Lite plugins (`lite/plugins/**`) are standalone web-only integrations. They never ship inside the extension or Electron bundle, but they should still share core logic via `shared/` when practical.
 
-## Communication
+## Accessibility, UI, UX, and Integrations
 
-- VERY IMPORTANT: Be terse in responses to Steve.
-- Do not add extra detail beyond the direct answer unless needed to prevent a mistake.
-- VERY IMPORTANT: State the answer or fix in one sentence first.
-- VERY IMPORTANT: Do not explain reasoning unless Steve asks.
-- When replying to Steve, prefer plain, everyday language over jargon.
-- Keep explanations direct and practical; explain technical terms briefly when they matter.
+- Prioritize accessibility and a clear, consistent user experience when designing or changing features.
+- Popup menus must reuse the existing theme colors, styled buttons, switches, section hierarchy, and meaningful icons/emotes with text labels. Put basic setup first and advanced controls in subsections. Verify input contrast in light and dark modes. Keep menus terse; put longer instructions in `docs/` and link to them from the menu.
+- Shared popup control styling lives in `popup-ui.css`. Reuse its field, focus, action-button, and subsection rules across old and new panels; avoid provider-specific colors or inline styles for equivalent actions. Keep labels above fields, use `.switch` for on/off settings, and reserve `.tts-test-button` for test/play actions rather than reset/clear actions.
+- Keep the default experience simple for new users, with plain labels, sensible defaults, and easy previews. Make advanced options and effects available through clearly labelled optional controls.
+- Provide keyboard access, visible focus, accessible control names, and understandable feedback. Do not rely only on color or sound to communicate state.
+- Inspect existing app integrations, especially the Event Flow editor, before adding new configuration or automation. Reuse existing patterns and capabilities where practical, and avoid disconnected or competing ways to configure the same behavior.
 
 ## Git Safety
 
 - VERY IMPORTANT: Never use `git restore`, `git revert`, or any revert/restore operation unless Steve explicitly asks for that exact action.
 - VERY IMPORTANT: Always work from and target the `beta` branch in this repository. Never work from, commit to, push to, or target `main`.
+- VERY IMPORTANT: Use Steve's configured Git identity for commits. Never set an AI assistant as author or committer, and never add AI co-author trailers or attribution to commit messages.
 
 ## Git Push Contract
 
@@ -165,3 +170,15 @@ Sample payloads based on the fake test data in [background.js](./background.js):
 - VERY IMPORTANT: Do it serially in this exact order only: `git add -A`, `git commit` (use `--allow-empty` if needed), `git pull --rebase origin beta`, `git push origin beta`.
 - VERY IMPORTANT: Do not parallelize any git commands in that flow.
 - VERY IMPORTANT: Do not add extra git inspection commands unless Steve explicitly asks for them.
+
+## Menu Regression Checks
+
+- SSApp testing is optional. Run it when useful for the task, without requesting separate permission; do not treat it as a mandatory check or routine prerequisite for changes, commits, or pushes. `node tests/popup-search-electron.test.cjs` remains optional and excluded from mandatory test suites and required checks.
+- Run `node tests/popup-search.test.js` when changes affect popup menus or popup search, or when Steve explicitly requests it. It is not a blanket prerequisite for the Git Push Contract.
+- The Electron suite requires the sibling `ssapp` checkout and local Playwright; set `SSAPP_REPO` if the app checkout is elsewhere. It uses an isolated profile and local relay, never live source channels.
+
+
+## Commerce overlay use case
+- Monetization presentation is primarily an OBS Browser Source viewed by the audience. Keep operator controls, private session details, setup feedback, and publishing credentials off the viewer overlay.
+- Reuse one commerce state and control API for the SSN popup, Stream Deck, Event Flow, and any optional OBS control dock. A dock is an alternative operator surface, not a requirement for using the overlay.
+- Report selected/hidden/scheduled state without claiming that OBS is live or the source is visible; SSN cannot infer OBS scene visibility from a successful control command.

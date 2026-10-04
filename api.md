@@ -6,6 +6,8 @@ There is an easy to use sandbox to play with some of the common API commands and
 
 Capability-driven control clients should use the versioned [Social Stream Remote-Control Protocol](docs/remote-control-protocol.md). The legacy commands documented below remain supported.
 
+**Run a custom Event Flow:** add the **Run from Stream Deck / API** trigger to a flow, name it, save and enable it. Send `{"action":"triggerWorkflow","value":{"trigger":"intermission"},"get":"run-1"}` through the same SSN connection. `getWorkflowTriggers` discovers callable flow IDs/names; optional `value.flowId` selects one flow and `value.data` supplies template values such as `{meta.workflow.data.minutes}`. Check the host's advertised capabilities first. A successful callback means the run was accepted; delayed or external actions may finish later. See the [complete Stream Deck and API workflow guide](docs/streamdeck-event-flow.html) for HTTP, WebSocket, P2P, examples, failures, and setup.
+
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
@@ -32,9 +34,7 @@ Capability-driven control clients should use the versioned [Social Stream Remote
     - [Prerequisites](#prerequisites)
     - [Supported Platforms](#supported-platforms)
     - [Stripe Setup](#stripe-setup)
-    - [Ko-Fi Setup](#ko-fi-setup)
-    - [Buy Me A Coffee Setup](#buy-me-a-coffee-setup)
-    - [Fourthwall Setup](#fourthwall-setup)
+    - [Creator store setup](#creator-store-setup)
     - [Security Note](#security-note)
     - [Donation Message Format](#donation-message-format)
 - [Featured Page (featured.html)](#featured-page-featuredhtml)
@@ -97,6 +97,9 @@ Capability-driven control clients should use the versioned [Social Stream Remote
   - [Available Actions](#available-actions)
   - [Variables](#variables)
   - [Comparison with StreamDeck](#comparison-with-streamdeck)
+    - [Product showcase controls (Stream Deck / remote API)](#product-showcase-controls-stream-deck--remote-api)
+    - [Read product display state](#read-product-display-state)
+    - [Managed giveaways](#managed-giveaways)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -546,9 +549,9 @@ With this route, each donation is normalized once in the extension and then deli
 | Platform | Webhook URL | Event Type |
 |----------|-------------|------------|
 | **Stripe** | `https://io.socialstream.ninja/{sessionID}/stripe` | `checkout.session.completed` |
-| **Ko-Fi** | `https://io.socialstream.ninja/{sessionID}/kofi` | Donations (public only) |
-| **Buy Me A Coffee** | `https://io.socialstream.ninja/{sessionID}/bmac` | `donation.created`, `membership.started` |
-| **Fourthwall** | `https://io.socialstream.ninja/{sessionID}/fourthwall` | `ORDER_PLACED` |
+| **Ko-Fi** | `https://io.socialstream.ninja/{sessionID}/kofi` | Public tips, memberships, shop orders and commissions |
+| **Buy Me A Coffee** | `https://io.socialstream.ninja/{sessionID}/bmac` | `donation.created`, `membership.started`, shop, commission and wishlist payments |
+| **Fourthwall** | `https://io.socialstream.ninja/{sessionID}/fourthwall` | Orders, gifts, donations and new subscriptions |
 
 ### Stripe Setup
 
@@ -563,25 +566,9 @@ With this route, each donation is normalized once in the extension and then deli
 
 **Testing**: Use Stripe's Test Mode with card number `4242 4242 4242 4242`, any future expiry date, and any CVC.
 
-### Ko-Fi Setup
+### Creator store setup
 
-1. Sign in to [Ko-Fi Webhook Settings](https://ko-fi.com/manage/webhooks)
-2. Paste `https://io.socialstream.ninja/YOUR_SESSION_ID/kofi` into **Webhook URL**, then click **Update**
-3. Enable **remote API control of extension** as shown above
-4. Reload an already-open dock, then click **Send single tip test** in Ko-Fi
-5. Confirm exactly one alert appears; only public donations are supported
-
-### Buy Me A Coffee Setup
-
-1. Sign in to Buy Me A Coffee and navigate to Settings → Webhooks
-2. Add webhook URL: `https://io.socialstream.ninja/YOUR_SESSION_ID/bmac`
-3. Both one-time donations (`donation.created`) and new memberships (`membership.started`) are supported
-
-### Fourthwall Setup
-
-1. Go to your Fourthwall admin: Settings → For Developers → Webhooks
-2. Create a webhook with URL: `https://io.socialstream.ninja/YOUR_SESSION_ID/fourthwall`
-3. Subscribe to `ORDER_PLACED` events
+See the [illustrated creator store guide](docs/creator-store-setup.html) for Fourthwall, Ko-fi and Buy Me a Coffee. It covers event selection, receiver status, isolated previews, product import and OBS links. Use SSN's sample preview to check appearance without triggering payments or Event Flow.
 
 ### Security Note
 
@@ -683,7 +670,8 @@ type | string (lowercase identifier) | Primary source identifier such as `twitch
 sourceImg | string (URL or `./sources/images/...`) | Optional alternate icon representing a sub-source (ex: channel avatar, Restream origin). Should generally differ from the `type` icon. Legacy relative paths are normalised to `./sources/images/{file}` for consistency but remain locally resolved.
 sourceName | string | Channel title, profile name, or host identifier associated with the source feed.
 textonly | boolean | Applies only to `chatmessage`; indicates whether `chatmessage` should be treated as plain text (`true`) or may contain markup (`false`). Other normal fields are expected to be plain text, except media fields such as `chatimg` and `contentimg`.
-hasDonation | string | Donation amount with units, e.g., `"3 roses"` or `"$50 USD"`.
+hasDonation | string | Donation display amount with units, e.g., `"3 roses"` or `"$50 USD"`.
+donoValue | number (optional) | Source-supplied USD equivalent, known or estimated. A valid value, including zero, overrides shared conversion of `hasDonation`. The display label remains unchanged. Unpriced TikTok gifts default to one coin per gift.
 chatbadges | Array<string \| BadgeDescriptor> | Badge icons shown beside the author. Strings are image URLs; `BadgeDescriptor` objects can include `{ type, text, src }` for richer badges.
 contentimg | string (URL) | Optional media attachment for the message (image/gif/mp4/webm).
 membership | string | Short description of a membership/subscription state or label (e.g., `"Member"` or `"Tier 3 Upgrade"`).
@@ -1362,3 +1350,56 @@ Advantages of using Companion:
 - Can be used alongside StreamDeck for more complex setups
 
 This makes Companion a simpler alternative to the StreamDeck HTTP method described above, especially for basic Social Stream Ninja control.
+
+
+### Product showcase controls (Stream Deck / remote API)
+
+Use the existing P2P or WebSocket API. These commands are advertised in the version 2 capabilities and return correlated success/error responses. SSN and host controls must be enabled. Configure and save Products & support links first.
+
+| Action | Value | Effect |
+| --- | --- | --- |
+| `commerceShow` | Saved public product URL, or omit | Pin that product (or current/first product). |
+| `commerceNext` | Seconds, optional; default 0 | Pin the next product. |
+| `commerceHide` | Seconds, optional; default 0 | Hide promotions; activity alerts continue. |
+| `commerceResume` | Omit | Resume the saved schedule. |
+
+0 seconds means until changed; 1-3600 restores the schedule after that duration. Overrides reset when SSN restarts. `commerceShow` also accepts an object `{ "url": "https://example.com/product", "seconds": 30 }` for a timed product.
+
+```json
+{"protocol":2,"action":"commerceShow","value":"https://example.com/product","get":"product-key-1"}
+```
+
+The existing `commerceControl` action accepts `{ "command": "show", "url": "https://example.com/product", "seconds": 30 }` inside `value`, or the original top-level `command`, `url`, and `seconds` fields. All paths call the same monetization controller. Replies contain only the action, command and live display override; no publishing credentials. Commands do not publish pages, post chat, or create payment events. See [product controls](docs/product-controls.html).
+
+
+### Read product display state
+
+`{"protocol":2,"action":"getCommerceState","get":"product-state-1"}` returns `payload.commerce`: `enabled`, `hostOn`, `mode` (`offline`, `disabled`, `hidden`, `pinned`, `scheduled`), `selected` (name/URL or null), `expiresAt` (epoch milliseconds or 0), `remainingSeconds` (or null), saved `items` (name/URL only), and `publicPage` publishing/synchronization status. The existing host-control/session permissions apply. It returns no publishing key, session key or buyer data.
+
+Commerce control replies also include this state. Local display commands acknowledge immediately after applying the selection; public-page synchronization runs separately, coalesces newer selections, and retries failures. A successful response confirms SSN state only, not OBS recording/streaming, scene visibility, or public-page synchronization. The same read/write contract supports operator controls in Stream Deck, Event Flow, the SSN popup, or a future OBS browser dock; audience overlays need no controls.
+
+
+### Managed giveaways
+
+Managed giveaways persist on the host. Use `giveaway.html?session=YOUR_SESSION&managed&giveaway=default` for synchronized card, reel, or community-wheel displays. Optional `backdrop=panel` enables an opaque themed panel; transparent is the default.
+
+All commands accept `value.giveawayId` (default `default`). Mutations accept `operationId` for retry protection and `roundId` to reject actions against a replaced round. Responses return `{ok, operationId?, giveaway}` or `{ok:false,error}` inside the existing protocol 2 envelope. The callback `get` field is separate from `operationId`.
+
+| Action | Value / behavior |
+| --- | --- |
+| `startgiveaway` | Optional `config`: `keyword`, `match` (`exact`/`word`), `membersOnly`, `removeWinner`, `ticketCost` (0–10000), `maxTickets` (1–10000), `prizePoints` (0–1000000), `winnerCount` (1–20), `kind` (`giveaway`, `coin`, `number`). Legacy top-level keyword configuration remains accepted. |
+| `closegiveaway` | Closes entries, preserving reservations. |
+| `drawgiveaway` | Commits the next winner and point award; consumes ticket reservations. Number Hunt is solved by guessing instead. |
+| `cancelgiveaway` | Refunds outstanding reservations before any result is committed. |
+| `resetgiveaway` | Archives history and creates a new closed round; rejects outstanding reservations. |
+| `getgiveawaystate` | Current audience-safe snapshot. |
+| `listgiveaways` | `{ok,giveaways:[...]}` summaries for the session. |
+| `getgiveawayhistory` | `{ok,history:[...]}` current and archived winner records. |
+| `getgiveawayentries` | Optional `page` (100 rows per page); private operator response `{ok,roundId,page,total,entries}`. |
+| `removegiveawayentry` | `entryId`; removes and refunds an entry before a result. |
+| `entergiveaway` | `actor`; one free entry. |
+| `buygiveawaytickets` | `actor`, integer `count`, optional `side` (`heads`/`tails` for Coin Flip Pot). Atomic reservation and entry. |
+| `grantgiveawaytickets` | `actor`, integer `count`; operator grant without charge, unavailable for a pot game. |
+| `guessgiveaway` | `actor`, integer `guess` in the current range; Number Hunt awards the first correct solver. |
+
+Actors use captured `chatname`, `type`, optional native `userid`/`username`, and membership fields. Do not expose operator API access to arbitrary viewers. Ticket/prize features require SSN points enabled. Balances remain local to a profile; changing sessions does not create another wallet. Recovered open rounds are closed for review. See the [complete giveaway/points guide](docs/giveaway-points-guide.html) for funding, limits, refunds, game rules, Event Flow, Stream Deck, and recovery.

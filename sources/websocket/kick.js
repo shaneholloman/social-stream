@@ -9,6 +9,7 @@ let storeProfileCacheEntry;
 let mergeBadges;
 let mergeProfileDetails;
 let mapBadges;
+let getKickRoleBadge = () => null;
 let eventNameForType;
 
 // Fallback implementations when providers/kick/core.js fails to load.
@@ -21,10 +22,24 @@ function applyKickCoreFallbacks() {
         };
     }
     if (typeof normalizeImage !== 'function') {
-        normalizeImage = (value) => (value ? String(value) : '');
+        normalizeImage = (value) => {
+            if (!value) return '';
+            const url = String(value);
+            if (/^https?:\/\//i.test(url)) return url;
+            if (url.startsWith('//')) return `https:${url}`;
+            return `https://kick.com${url.startsWith('/') ? '' : '/'}${url}`;
+        };
     }
     if (typeof formatBadgesForDisplay !== 'function') {
-        formatBadgesForDisplay = (badges) => Array.isArray(badges) ? badges : [];
+        formatBadgesForDisplay = (badges) => mapBadges(badges).map((badge) => {
+            if (typeof badge !== 'string') return badge;
+            const value = badge.trim();
+            if (!value) return null;
+            if (/^https?:\/\//i.test(value) || value.startsWith('/')) {
+                return { type: 'img', src: normalizeImage(value) };
+            }
+            return { type: 'text', text: value };
+        }).filter(Boolean);
     }
     if (typeof getProfileCacheEntry !== 'function') {
         getProfileCacheEntry = () => null;
@@ -48,18 +63,27 @@ function applyKickCoreFallbacks() {
     if (typeof mapBadges !== 'function') {
         mapBadges = (badges) => {
             if (!Array.isArray(badges) || !badges.length) return [];
-            return badges.map((badge) => {
+            return [...badges].sort((a, b) => (a?.sort_order ?? Infinity) - (b?.sort_order ?? Infinity)).map((badge) => {
                 if (!badge) return null;
-                if (typeof badge === 'string') return badge;
-                if (badge.selected === false) return null;
-                const image = badge.image || badge.icon || badge.source;
-                if (image && typeof image === 'object') {
-                    const src = image.url || image.light || image.dark;
-                    if (src) return normalizeImage(src);
+                if (typeof badge === 'string') return getKickRoleBadge(badge) || badge;
+                if (badge.selected === false || badge.active === false) return null;
+                // Accept both Kick assets and our already-normalized chatbadges shape.
+                // Do not let an empty/malformed candidate hide another usable image URL.
+                const images = [badge.src, badge.image_url, badge.image, badge.icon, badge.source, badge.url, badge.asset];
+                for (const image of images) {
+                    const candidates = image && typeof image === 'object'
+                        ? [image.url, image.src, image.light, image.dark]
+                        : [image];
+                    for (const src of candidates) {
+                        if (typeof src === 'string' && src.trim()) {
+                            return normalizeImage(src.trim());
+                        }
+                    }
                 }
-                if (badge.image_url) return normalizeImage(badge.image_url);
-                if (badge.asset) return normalizeImage(badge.asset);
                 if (badge.svg) return { type: 'svg', html: badge.svg };
+                if (badge.type === 'svg' && badge.html) return { type: 'svg', html: badge.html };
+                const roleBadge = getKickRoleBadge(badge);
+                if (roleBadge) return roleBadge;
                 if (badge.text) return { type: 'text', text: badge.text };
                 if (badge.label || badge.name) return badge.label || badge.name;
                 return null;
@@ -110,6 +134,12 @@ async function importWithFallback(extensionPath, relativePath) {
 }
 
 const kickCoreReady = (async () => {
+    // Load role artwork independently so the standalone core fallback also has icons.
+    try {
+        ({ getKickRoleBadge } = await importWithFallback('shared/kickBadges.js', '../../shared/kickBadges.js'));
+    } catch (error) {
+        console.warn('Kick role artwork unavailable; using supplied assets or text.', error);
+    }
     const kickModule = await importWithFallback(KICK_CORE_EXTENSION_PATH, KICK_CORE_RELATIVE_PATH);
     ({
         normalizeChannel,
@@ -251,7 +281,7 @@ const state = {
         type: 'user'
     },
     advancedControls: {
-        syncDeleteMessages: false,
+        syncDeleteMessages: true,
         syncBlockUsers: false,
         hideMetrics: false
     },
@@ -374,8 +404,7 @@ const KICK_VIEWER_DISCONNECT_EMIT_DEBOUNCE_MS = 1500;
 const KICK_CHAT_ECHO_TIMEOUT_MS = 10000;
 const KICK_CHAT_ECHO_STALE_MS = 60000;
 let extensionInitialized = false;
-let lastBridgeNotifyStatus = null;
-let lastAuthNotifyStatus = null;
+let lastCaptureNotifyKey = null;
 let lastSocketNotifyStatus = null;
 let socketBridgeInitialized = false;
 let kickBackgroundKeepAliveInitialized = false;
@@ -397,6 +426,7 @@ const kickViewerHeartbeat = {
 };
 let pendingKickChatEchoSeq = 0;
 const pendingKickChatEchoes = [];
+const pendingKickMessages = new Set();
 
 const LITE_MESSAGE_PREFIX = 'kick-lite-';
 let liteBridgeCoreReady = false;
@@ -804,6 +834,10 @@ function isSettingEnabled(key) {
 }
 
 function isTextOnlyMode() {
+    // Capture contract: textonly=true means a literal chatmessage string, not HTML.
+    // Do not add formatting tags or HTML-encode it; viewer-typed <i> / &amp; stays literal.
+    // HTML mode may include markup for the normal relay checks. The flag applies only to chatmessage.
+    // textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
     const setting = extension.settings && extension.settings.textonlymode;
     if (setting && typeof setting === 'object') {
         return setting.setting === true;
@@ -1389,12 +1423,11 @@ function extractProfileFromSource(source) {
         source.subscription?.badges,
         source.subscription?.badges_v2
     ];
-    for (const collection of badgeCollections) {
-        const normalized = mapBadges(collection);
-        if (normalized.length) {
-            profile.badges = mergeBadges(profile.badges, normalized);
-            touched = true;
-        }
+    // Combine legacy and v2 badges before normalization discards sort_order.
+    const normalizedBadges = mapBadges(badgeCollections.flatMap(collection => Array.isArray(collection) ? collection : []));
+    if (normalizedBadges.length) {
+        profile.badges = mergeBadges(profile.badges, normalizedBadges);
+        touched = true;
     }
 
     const badgeInfo = source.identity?.badge_info || source.identity?.badgeInfo || {};
@@ -1483,11 +1516,9 @@ function collectBadgesFromSources(...sources) {
             source.subscription?.badges,
             source.subscription?.badges_v2
         ];
-        for (const collection of collections) {
-            const normalized = mapBadges(collection);
-            if (normalized.length) {
-                badges = mergeBadges(badges, normalized);
-            }
+        const normalized = mapBadges(collections.flatMap(collection => Array.isArray(collection) ? collection : []));
+        if (normalized.length) {
+            badges = mergeBadges(badges, normalized);
         }
     }
     return badges;
@@ -2400,11 +2431,11 @@ function initElements() {
 function loadAdvancedControls() {
     try {
         const parsed = JSON.parse(localStorage.getItem(KICK_ADVANCED_CONTROLS_STORAGE_KEY) || '{}');
-        state.advancedControls.syncDeleteMessages = !!parsed.syncDeleteMessages;
+        state.advancedControls.syncDeleteMessages = parsed.syncDeleteMessages !== false;
         state.advancedControls.syncBlockUsers = !!parsed.syncBlockUsers;
         state.advancedControls.hideMetrics = !!parsed.hideMetrics;
     } catch (_) {
-        state.advancedControls.syncDeleteMessages = false;
+        state.advancedControls.syncDeleteMessages = true;
         state.advancedControls.syncBlockUsers = false;
         state.advancedControls.hideMetrics = false;
     }
@@ -2947,6 +2978,33 @@ function resolveAuthIdentity() {
     return null;
 }
 
+// Account authorization and chat transport are independent. A later OAuth or
+// bridge update must not overwrite a working public Pusher chat connection.
+function notifyKickCaptureStatus(payload = {}) {
+    const socketStatus = state.socket?.status || 'disconnected';
+    const bridgeStatus = state.bridge?.status || 'disconnected';
+    const pusherUp = state.socket?.pusherStatus === 'connected';
+    let status;
+    let message;
+    if (pusherUp || socketStatus === 'connected' || bridgeStatus === 'connected') {
+        status = 'connected';
+        message = pusherUp ? 'Kick chat connected via Pusher' : socketStatus === 'connected' ? 'Kick chat connected' : 'Connected to Kick bridge';
+    } else if (socketStatus === 'connecting' || bridgeStatus === 'connecting') {
+        status = 'connecting';
+        message = 'Connecting to Kick chat';
+    } else if (socketStatus === 'error') {
+        status = 'error';
+        message = payload.error || state.socket?.lastError || 'Kick chat connection failed';
+    } else {
+        status = 'disconnected';
+        message = state.channelSlug ? 'Kick chat disconnected' : 'Choose a Kick channel to start chat';
+    }
+    const key = `${status}:${message}`;
+    if (key === lastCaptureNotifyKey) return;
+    lastCaptureNotifyKey = key;
+    notifyApp({ wssStatus: { platform: WSS_PLATFORM, status, message } });
+}
+
 function updateAuthStatus() {
     if (!els.authState) return;
     const authed = state.tokens?.access_token && !isTokenExpired();
@@ -2970,7 +3028,7 @@ function updateAuthStatus() {
             els.authState.innerHTML = `Signed in as <span class="status-emphasis">${safeDisplay}</span>${safeUsername ? ` <span class="status-subtle">(@${safeUsername})</span>` : ''}`;
         }
     } else {
-        els.authState.textContent = authed ? 'Signed in' : (waitingForRefresh ? 'Refreshing sign-in...' : 'Not signed in');
+        els.authState.textContent = authed ? 'Signed in' : (waitingForRefresh ? 'Refreshing sign-in...' : 'OAuth not connected (optional for chat)');
     }
     els.authState.className = authed ? 'status-chip' : 'status-chip warning';
     // Hide auth-dependent status chips when not signed in
@@ -2992,17 +3050,7 @@ function updateAuthStatus() {
         const showSelector = !authed && isElectronEnvironment();
         authMethodSelector.classList.toggle('hidden', !showSelector);
     }
-    const status = authed ? 'authorized' : (waitingForRefresh ? 'auth_refreshing' : 'signin_required');
-    if (status !== 'auth_refreshing' && status !== lastAuthNotifyStatus) {
-        lastAuthNotifyStatus = status;
-        notifyApp({
-            wssStatus: {
-                platform: WSS_PLATFORM,
-                status,
-                message: authed ? 'Kick account linked' : 'Sign in with Kick to continue'
-            }
-        });
-    }
+    notifyKickCaptureStatus();
     updateKickAdminControlHint();
     notifyLiteStatus('auth');
 }
@@ -3560,7 +3608,18 @@ function resetKickViewerHeartbeatState() {
     updateKickViewerCountDisplay(null);
 }
 
+function updateCompactChatState() {
+    if (!els.socketState) return;
+    const connected = state.socket.pusherStatus === 'connected'
+        || (supportsLocalSocket() && state.socket.status === 'connected')
+        || (state.bridge.status === 'connected' && !state.bridge.chatDisabled);
+    // The compact layout also reads this across extension isolated worlds.
+    els.socketState.setAttribute('data-connected', connected ? 'true' : 'false');
+}
+
 function updateSocketState(payload = {}) {
+    updateCompactChatState();
+    notifyKickCaptureStatus(payload);
     syncKickViewerHeartbeat(true);
     if (!els.socketState) return;
     els.socketState.style.display = '';
@@ -6453,6 +6512,7 @@ function bridgeEventMatchesCurrentChannel(packet) {
 }
 
 function updateBridgeState() {
+    updateCompactChatState();
     syncKickViewerHeartbeat(true);
     if (!els.bridgeState) return;
     if (state.bridge.status === 'connected') {
@@ -6465,25 +6525,7 @@ function updateBridgeState() {
         els.bridgeState.textContent = 'Bridge disconnected';
         els.bridgeState.className = 'status-chip danger';
     }
-    const status = state.bridge.status || 'disconnected';
-    if (status !== lastBridgeNotifyStatus) {
-        lastBridgeNotifyStatus = status;
-        let message;
-        if (status === 'connected') {
-            message = 'Connected to Kick bridge';
-        } else if (status === 'connecting') {
-            message = 'Connecting to Kick bridge';
-        } else {
-            message = 'Disconnected from Kick bridge';
-        }
-        notifyApp({
-            wssStatus: {
-                platform: WSS_PLATFORM,
-                status,
-                message
-            }
-        });
-    }
+    notifyKickCaptureStatus();
     notifyLiteStatus('bridge');
 }
 
@@ -6607,6 +6649,7 @@ function shouldIgnoreBridgeChatEvent(packet) {
 }
 
 async function forwardChatMessage(evt, bridgeMeta) {
+    const pendingMessage = {};
     try {
         const payload = evt || {};
         const message = payload.message || payload.data?.message || payload.payload?.message || payload;
@@ -6638,8 +6681,14 @@ async function forwardChatMessage(evt, bridgeMeta) {
                 payload.username
             ]);
         const content = extractMessageContent(message) || extractMessageContent(payload) || '';
+        pendingMessage.id = resolvedId == null ? '' : String(resolvedId);
+        pendingMessage.chatname = chatname;
+        pendingKickMessages.add(pendingMessage);
         const badgeCandidates = collectBadgesFromSources(...profileSources);
-        const rawBadges = (actorProfile.badges && actorProfile.badges.length) ? actorProfile.badges : badgeCandidates;
+        // Fresh identity selection/order takes precedence over cached profile badges.
+        const hasFreshBadges = profileSources.some(source => source && [source.identity, source, source.profile, source.membership, source.subscription]
+            .some(value => value && [value.badges, value.badges_v2, value.badge_collection, value.badgeCollection].some(Array.isArray)));
+        const rawBadges = hasFreshBadges ? badgeCandidates : actorProfile.badges || [];
         const badges = formatBadgesForDisplay(rawBadges);
         let chatimg =
             actorProfile.avatar ||
@@ -6693,6 +6742,7 @@ async function forwardChatMessage(evt, bridgeMeta) {
             payload.event_type ||
             'chat';
         resolvePendingKickChatEcho(resolvedId, content, rawEventType, ids);
+        if (pendingMessage.deleted) return;
         const chatmessageHtml = renderKickMessageHtml(message, content, payload);
         const membership = actorProfile.membership || pickFirstString(
             [
@@ -6719,6 +6769,7 @@ async function forwardChatMessage(evt, bridgeMeta) {
         const donationLabel = extractChatDonationLabel(message, payload);
         const normalizedEvent = mapKickChatEventToSocialStream(rawEventType, content, donationLabel);
         const replyDetails = extractReplyDetails(message, payload);
+        // textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
         const textOnlyMode = Boolean(isTextOnlyMode());
         const allowReplies = !settings.excludeReplyingTo && (chatmessageHtml || content);
         const messagePayload = {
@@ -6730,6 +6781,7 @@ async function forwardChatMessage(evt, bridgeMeta) {
             nameColor: nameColor || '',
             membership: membership || '',
             hasDonation: donationLabel,
+            // Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
             textonly: textOnlyMode
         };
         if (resolvedId != null) {
@@ -6762,6 +6814,7 @@ async function forwardChatMessage(evt, bridgeMeta) {
                 messagePayload.initial = replyDetails.label;
             }
             messagePayload.reply = chatmessageHtml;
+            // textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
             if (textOnlyMode) {
                 const prefix = replyDetails.label ? `${replyDetails.label}: ` : '';
                 const baseText = content || '';
@@ -6801,6 +6854,8 @@ async function forwardChatMessage(evt, bridgeMeta) {
         appendChatFeedMessage(messagePayload, content);
     } catch (err) {
         console.error('Failed to handle Kick chat message', err);
+    } finally {
+        pendingKickMessages.delete(pendingMessage);
     }
 }
 
@@ -7308,13 +7363,26 @@ function extractReplyDetails(message, payload) {
         return null;
     };
 
+    let replyDetails = null;
     for (const candidate of candidates) {
         const result = resolve(candidate.value, candidate.explicitId === true);
-        if (result) {
-            return result;
+        if (!result) {
+            continue;
+        }
+        if (!replyDetails) {
+            replyDetails = result;
+        } else if (!replyDetails.messageId || !result.messageId || replyDetails.messageId === result.messageId) {
+            // An ID-only cache miss must not hide quote text supplied elsewhere in the event.
+            replyDetails.messageId = replyDetails.messageId || result.messageId;
+            replyDetails.author = replyDetails.author || result.author || '';
+            replyDetails.text = replyDetails.text || result.text || '';
+            replyDetails.label = buildKickReplyLabel(replyDetails.author, replyDetails.text);
+        }
+        if (replyDetails.author && replyDetails.text) {
+            return replyDetails;
         }
     }
-    return null;
+    return replyDetails;
 }
 
 function forwardDeletedMessage(evt, bridgeMeta) {
@@ -7330,10 +7398,6 @@ function forwardDeletedMessage(evt, bridgeMeta) {
         ],
         ''
     );
-    if (!messageId) {
-        log('Delete event received without message ID.', 'warning');
-        return;
-    }
 
     const actorSources = [
         evt?.sender,
@@ -7357,10 +7421,12 @@ function forwardDeletedMessage(evt, bridgeMeta) {
         ]) ||
         '';
 
-    const payload = {
-        type: 'kick',
-        id: String(messageId)
-    };
+    if (!messageId && !chatname) {
+        log('Delete event received without message ID or user.', 'warning');
+        return;
+    }
+    const payload = { type: 'kick' };
+    if (messageId) payload.id = String(messageId);
     if (chatname) {
         payload.chatname = chatname;
     }
@@ -8282,6 +8348,7 @@ function forwardKicksGifted(eventType, evt, bridgeMeta) {
     };
     const messagePayload = {
         type: 'kick',
+        event: 'gift',
         chatname,
         chatmessage: escapeHtml(chatmessage),
         chatimg: chatimg || '',
@@ -8735,6 +8802,11 @@ function pushMessage(data) {
 }
 
 function pushDeleteMessage(data) {
+    pendingKickMessages.forEach(function(message) {
+        if (data.id ? message.id === String(data.id) : !data.chatname || message.chatname === data.chatname) {
+            message.deleted = true;
+        }
+    });
     // Prefer direct Electron bridge when available.
     if (isElectronEnvironment() && window.ninjafy && window.ninjafy.sendMessage) {
         try {
@@ -9019,6 +9091,26 @@ function appendChatBadges(container, badges) {
     });
 }
 
+function appendKickTextOnlyFeedContent(container, value) {
+    const text = String(value == null ? '' : value);
+    const tokens = /\[(emote|sticker):(\d+):([^\]]+)\]/gi;
+    let lastIndex = 0;
+    let match;
+    while ((match = tokens.exec(text))) {
+        container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+        const img = document.createElement('img');
+        img.src = 'https://files.kick.com/emotes/' + match[2] + '/fullsize';
+        img.alt = match[3];
+        img.title = match[3];
+        img.className = normalizeKickAssetType(match[1]) === 'sticker'
+            ? 'regular-emote kick-sticker'
+            : 'regular-emote';
+        container.appendChild(img);
+        lastIndex = tokens.lastIndex;
+    }
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+}
+
 function appendChatFeedMessage(message, plainText = '') {
     if (!els.chatFeed || !message) return;
     const stick = shouldStickChatFeed();
@@ -9083,13 +9175,17 @@ function appendChatFeedMessage(message, plainText = '') {
     // The local chat feed always renders rich content (emotes as images)
     // regardless of the extension's text-only mode setting.
     const chatHtml = message.chatmessage || '';
-    const richHtml = chatHtml
-        ? replaceKickInlineAssets(chatHtml, { forceRich: true })
-        : '';
-    if (richHtml) {
-        body.innerHTML = richHtml;
+    if (message.textonly === true) {
+        appendKickTextOnlyFeedContent(body, chatHtml || plainTextMessage || '');
     } else {
-        body.textContent = plainTextMessage || '';
+        const richHtml = chatHtml
+            ? replaceKickInlineAssets(chatHtml, { forceRich: true })
+            : '';
+        if (richHtml) {
+            body.innerHTML = richHtml;
+        } else {
+            body.textContent = plainTextMessage || '';
+        }
     }
     details.appendChild(body);
 

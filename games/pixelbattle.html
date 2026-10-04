@@ -2,6 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="description" content="Pixel Battle: an interactive stream activity for Social Stream Ninja. Connect your chat session and add the game to your OBS scene.">
+    <meta name="robots" content="noindex">
+<script src="../js/local-server-url.js"></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pixel Battle - Social Stream Ninja</title>
     <link rel="icon" href="../favicon.ico" />
@@ -24,21 +28,21 @@
             font-family: 'Arial', sans-serif;
             color: white;
         }
-        
+
         body.chroma {
             background: #00ff00;
         }
-        
+
         body.darkmode {
             background: #000000;
         }
-        
+
         #game-container {
             position: relative;
             width: 100vw;
             height: 100vh;
         }
-        
+
         #pixel-canvas {
             position: absolute;
             top: 50%;
@@ -51,24 +55,24 @@
             image-rendering: -moz-crisp-edges;
             image-rendering: crisp-edges;
         }
-        
+
         .pixel {
             position: absolute;
             transition: all 0.2s ease;
             border: 1px solid rgba(255, 255, 255, 0.1);
             cursor: pointer;
         }
-        
+
         .pixel:hover {
             border-color: rgba(255, 255, 255, 0.5);
             transform: scale(1.1);
             z-index: 10;
         }
-        
+
         .pixel-flash {
             animation: pixel-flash 0.5s ease-out;
         }
-        
+
         @keyframes pixel-flash {
             0% { 
                 transform: scale(1);
@@ -83,7 +87,7 @@
                 box-shadow: 0 0 0 rgba(255, 255, 255, 0);
             }
         }
-        
+
         #color-palette {
             position: absolute;
             top: 20px;
@@ -95,7 +99,7 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 100;
         }
-        
+
         .color-swatch {
             display: inline-block;
             width: 30px;
@@ -106,17 +110,17 @@
             cursor: pointer;
             transition: all 0.3s ease;
         }
-        
+
         .color-swatch:hover {
             border-color: #fff;
             transform: scale(1.1);
         }
-        
+
         .color-swatch.active {
             border-color: #fff;
             box-shadow: 0 0 15px currentColor;
         }
-        
+
         #pixel-stats {
             position: absolute;
             top: 20px;
@@ -128,12 +132,12 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 100;
         }
-        
+
         .stat-line {
             margin: 5px 0;
             font-size: 16px;
         }
-        
+
         #artist-leaderboard {
             position: absolute;
             bottom: 20px;
@@ -146,7 +150,7 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 100;
         }
-        
+
         .artist-entry {
             display: flex;
             justify-content: space-between;
@@ -157,13 +161,13 @@
             border-radius: 5px;
             font-size: 14px;
         }
-        
+
         .artist-rank {
             font-weight: bold;
             color: #ffd700;
             margin-right: 10px;
         }
-        
+
         #canvas-tools {
             position: absolute;
             bottom: 20px;
@@ -175,7 +179,7 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 100;
         }
-        
+
         .tool-button {
             display: inline-block;
             padding: 8px 12px;
@@ -188,13 +192,13 @@
             transition: all 0.3s ease;
             font-size: 14px;
         }
-        
+
         .tool-button:hover,
         .tool-button.active {
             background: rgba(255, 255, 255, 0.4);
             border-color: #fff;
         }
-        
+
         #instructions {
             position: absolute;
             bottom: 120px;
@@ -207,12 +211,12 @@
             font-size: 16px;
             z-index: 100;
         }
-        
+
         #instructions strong {
             color: #ff6b7a;
             font-size: 18px;
         }
-        
+
         .drawing-cursor {
             position: absolute;
             width: 20px;
@@ -224,12 +228,12 @@
             z-index: 200;
             animation: cursor-pulse 1s ease-in-out infinite;
         }
-        
+
         @keyframes cursor-pulse {
             0%, 100% { transform: scale(1); opacity: 0.8; }
             50% { transform: scale(1.2); opacity: 1; }
         }
-        
+
         .collaboration-burst {
             position: absolute;
             font-size: 32px;
@@ -239,7 +243,7 @@
             pointer-events: none;
             z-index: 150;
         }
-        
+
         @keyframes collab-burst {
             0% {
                 opacity: 0;
@@ -254,7 +258,7 @@
                 transform: scale(1) rotate(360deg);
             }
         }
-        
+
         #template-selector {
             position: absolute;
             top: 200px;
@@ -266,7 +270,7 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             z-index: 100;
         }
-        
+
         .template-option {
             padding: 5px 10px;
             margin: 2px 0;
@@ -276,7 +280,7 @@
             font-size: 12px;
             transition: all 0.3s ease;
         }
-        
+
         .template-option:hover {
             background: rgba(255, 255, 255, 0.3);
         }
@@ -330,6 +334,7 @@
     <script>
         // URL parameters
         const urlParams = new URLSearchParams(window.location.search);
+    var chatRelay = SocialStreamLocalServer.getChatRelayConfig(urlParams);
         const sessionId = urlParams.get('session') || urlParams.get('room') || 'test';
         const password = urlParams.get('password') || 'false';
 
@@ -769,7 +774,9 @@
         }
 
         function stripHtml(html) {
-            const tmp = document.createElement('div');
+            // Keep the existing div parsing context inside inert template content.
+            const template = document.createElement('template');
+            const tmp = template.content.appendChild(document.createElement('div'));
             tmp.innerHTML = html;
             return tmp.textContent || tmp.innerText || '';
         }
@@ -816,6 +823,7 @@
 
             const username = stripHtml(data.chatname);
             let message = data.chatmessage;
+            // Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
             if (!data.textonly) {
                 message = stripHtml(message);
             }
@@ -831,32 +839,34 @@
         }
 
         // Setup iframe communication (skip when using WebSocket mode)
-        if (!urlParams.has('server')) {
+        if (!urlParams.has('demo') && !chatRelay.enabled) {
+            if (!urlParams.has('demo') && !chatRelay.enabled) {
             const iframe = document.createElement("iframe");
-            iframe.src = `https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&notmobile&password=${encodeURIComponent(password)}&solo&view=${encodeURIComponent(sessionId)}&novideo&noaudio&label=dock&cleanoutput&room=${encodeURIComponent(sessionId)}`;
-            iframe.style.width = "0px";
-            iframe.style.height = "0px";
-            iframe.style.position = "fixed";
-            iframe.style.left = "-100px";
-            iframe.style.top = "-100px";
-            iframe.id = "frame1";
-            document.body.appendChild(iframe);
-            
-            // Listen for messages
-            window.addEventListener("message", function(e) {
-                if (e.source !== iframe.contentWindow) return;
+                iframe.src = `https://vdo.socialstream.ninja/?ln&salt=vdo.ninja&notmobile&password=${encodeURIComponent(password)}&solo&view=${encodeURIComponent(sessionId)}&novideo&noaudio&label=dock&cleanoutput&room=${encodeURIComponent(sessionId)}`;
+                iframe.style.width = "0px";
+                iframe.style.height = "0px";
+                iframe.style.position = "fixed";
+                iframe.style.left = "-100px";
+                iframe.style.top = "-100px";
+                iframe.id = "frame1";
+                document.body.appendChild(iframe);
                 
-                if (e.data && typeof e.data === "object" && e.data.dataReceived && typeof e.data.dataReceived === "object") {
-                    if ("overlayNinja" in e.data.dataReceived) {
-                        processData(e.data.dataReceived.overlayNinja);
+                // Listen for messages
+                window.addEventListener("message", function(e) {
+                    if (e.source !== iframe.contentWindow) return;
+                    
+                    if (e.data && typeof e.data === "object" && e.data.dataReceived && typeof e.data.dataReceived === "object") {
+                        if ("overlayNinja" in e.data.dataReceived) {
+                            processData(e.data.dataReceived.overlayNinja);
+                        }
                     }
-                }
-            });
+                });
+            }
         }
-        
+
         // Handle WebSocket connection
-        if (urlParams.has('server')) {
-            const serverUrl = urlParams.get('server') || 'wss://io.socialstream.ninja';
+        if (!urlParams.has('demo') && chatRelay.enabled) {
+            const serverUrl = chatRelay.url;
             let socketserver = null;
             let reconnectTimeout = null;
 
@@ -866,8 +876,7 @@
                 socketserver.onopen = function() {
                     socketserver.send(JSON.stringify({
                         join: sessionId.split(",")[0],
-                        out: 2,
-                        in: 1
+                        out: chatRelay.out, in: chatRelay.in
                     }));
                 };
 

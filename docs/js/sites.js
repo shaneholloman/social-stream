@@ -1,3 +1,8 @@
+    function siteText(label, values) {
+        if (window.SSNSiteTranslate) return window.SSNSiteTranslate(label, values);
+        return label.replace(/\{(\d+)\}/g, function (match, index) { return values && index < values.length ? values[index] : match; });
+    }
+    function sourceURL(value) { return window.SSNSiteSourceURL ? window.SSNSiteSourceURL(value) : new URL(value, location.href).href; }
 document.addEventListener('DOMContentLoaded', function() {
     const sitesData = [
         {
@@ -1166,9 +1171,8 @@ document.addEventListener('DOMContentLoaded', function() {
 			type: 'popout',
 			instructions: `
 				<ul>
-					<li>URL: https://www.sooplive.com/chat/*</li>
-					<li>URL: https://play.sooplive.com/*?vtype=chat</li>
-					<li>Pop out the chat to use</li>
+					<li>Open https://play.sooplive.com/USERNAME/ with chat visible (legacy play.sooplive.co.kr links are also supported).</li>
+					<li>Browser popouts need their original player kept open. SSApp uses the full player because detached popouts cannot connect.</li>
 				</ul>
 			`
 		},
@@ -1209,6 +1213,59 @@ document.addEventListener('DOMContentLoaded', function() {
 				</ul>
 			`,
 			notes: 'Captures new chat messages, emotes, avatars, name colors, user/message IDs, and optional viewer-count updates.'
+		},
+		{
+			name: 'w.tv',
+			icon: 'wtv.png',
+			description: 'Live streaming platform with pop-out chat.',
+			type: 'popout',
+			instructions: `<ul><li>Open https://w.tv/USERNAME/chat and keep the chat scrolled to the newest messages.</li></ul>`,
+			notes: 'Captures newly rendered chat, name colors, and inline emotes. Older messages, pinned cards, and reply previews are excluded. The popup does not expose a verified stream viewer count.'
+		},
+		{
+			name: 'Prime',
+			icon: 'prime.png',
+			description: 'Live streaming platform with pop-out chat.',
+			type: 'popout',
+			instructions: `<ul><li>Open https://prime.gs/USERNAME?chat_popout=1</li><li>Sign in on Prime if the chat requires it.</li></ul>`,
+			notes: 'Captures newly rendered chat, user IDs, name colors, and inline emotes. Existing history, pinned messages, and reply previews are excluded; no viewer count is inferred from the popup.'
+		},
+		{
+			name: 'Gosh',
+			icon: 'gosh.png',
+			description: 'Live channel chat on Gosh.com.',
+			type: 'standard',
+			instructions: `<ul><li>Open https://gosh.com/USERNAME with the chat visible.</li><li>In the desktop app, use Add other source and paste the channel URL.</li><li>Keep chat scrolled to the newest messages. A separate chat popout is not required.</li></ul>`,
+			notes: 'Captures new chat messages, name colors, and inline images/GIFs. Existing history and system notices are excluded.'
+		},
+		{
+			name: 'Livacha',
+			icon: 'livacha.png',
+			description: 'Live chat rooms on Livacha.com.',
+			type: 'standard',
+			instructions: `<ul><li>Open https://livacha.com/chat/ROOM with chat visible.</li><li>In the desktop app, use Add other source and paste the chat-room URL.</li></ul>`,
+			notes: 'Captures new messages, names, avatars, name colors, and inline images/emotes. Existing history, timestamps, and reaction menus are excluded.'
+		},
+		{
+			name: 'Stream.space (experimental)',
+			icon: 'streamspace.png',
+			description: 'Live streaming platform with pop-out chat.',
+			type: 'popout',
+			instructions: `
+				<ul>
+					<li>Open https://beta.stream.space/chat-popup.php?channel=USERNAME</li>
+					<li>The same popup path on https://stream.space is also recognized.</li>
+				</ul>
+			`,
+			notes: 'Experimental: captures newly rendered chat, emotes, avatars, level badges, and optional viewer counts. The beta chat was stuck loading during validation; live capture and the production popup remain unverified.'
+		},
+		{
+			name: 'Vaughn Live',
+			icon: 'vaughn.png',
+			description: 'Live streaming platform with channel chat.',
+			type: 'standard',
+			instructions: `<ul><li>Open https://vaughn.live/USERNAME with chat visible.</li><li>In the desktop app, use Add other source and paste the channel URL.</li></ul>`,
+			notes: 'Captures individual messages in grouped and compact chat, avatars, name colors, badges, and emotes.'
 		},
 		{
 			name: 'Castyr',
@@ -1754,10 +1811,11 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Site content
             siteItem.innerHTML += `
-                <img src="../sources/images/${site.icon}" alt="${site.name}" onerror="this.src='../sources/images/generic.png';" class="site-icon">
+                <img src="${sourceURL('../sources/images/' + site.icon)}" alt="${site.name}" class="site-icon">
                 <h3>${site.name}</h3>
             `;
             
+            siteItem.querySelector('img').onerror = function () { this.onerror = null; this.src = sourceURL('../sources/images/generic.png'); };
             // Event listener for opening modal
             siteItem.addEventListener('click', () => openSiteModal(site));
             
@@ -1776,7 +1834,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const filteredSites = sitesData.filter(site => 
             site.name.toLowerCase().includes(searchValue) || 
-            site.description.toLowerCase().includes(searchValue)
+            (site.description + ' ' + siteText(site.description)).toLowerCase().includes(searchValue)
         );
         
         populateSites(filteredSites);
@@ -1786,8 +1844,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function openSiteModal(site) {
         // Set modal content
         const modalIcon = document.getElementById('modalIcon');
-        modalIcon.onerror = function() { this.onerror = null; this.src = '../sources/images/generic.png'; };
-        modalIcon.src = `../sources/images/${site.icon}`;
+        modalIcon.onerror = function() { this.onerror = null; this.src = sourceURL('../sources/images/generic.png'); };
+        modalIcon.src = sourceURL('../sources/images/' + site.icon);
         document.getElementById('modalTitle').textContent = site.name;
         document.getElementById('modalDescription').textContent = site.description;
         document.getElementById('modalInstructions').innerHTML = site.instructions;

@@ -1,8 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script type="text/javascript" src="./js/local-server-url.js"></script>
     <meta charset="UTF-8">
+    <meta name="description" content="Events Dashboard. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="icons/favicon.ico" type="image/x-icon">
+  <script type="text/javascript" src="./js/local-server-url.js"></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Events Dashboard</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap">
@@ -612,6 +616,8 @@ body.light-mode .meta-value.badge {
 }
 
 </style>
+<script src="./libs/objects.js"></script>
+<script src="./shared/utils/chatHtml.js"></script>
 </head>
 <body>
 <div id="topbar"></div>
@@ -1823,6 +1829,8 @@ body.light-mode .meta-value.badge {
 		const normalizedEvent = normalizeEventKey(data.event);
 		let name = data.chatname || data.sourceName || `${capitalizeSource(data.type)} Alerts`;
 		let message = data.chatmessage || '';
+		// textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode checks a display copy before rendering.
+		let messageIsHTML = !!message && !data.textonly;
 		let eventTypeText = '';
 		let eventTypeClass = data.hasDonation ? 'event-donation' : 'event-other';
 		let eventSpecificText = '';
@@ -1839,6 +1847,7 @@ body.light-mode .meta-value.badge {
 		}
 
 		if (STATUS_EVENT_TYPES.has(normalizedEvent)) {
+			messageIsHTML = false;
 			eventTypeText = getEventTypeText('status');
 			eventTypeClass = 'event-status';
 			eventSpecificText = getStatusEventLabel(normalizedEvent);
@@ -1860,6 +1869,7 @@ body.light-mode .meta-value.badge {
 			name = data.sourceName || `${capitalizeSource(data.type)} Stats`;
 			forceShow = true;
 		} else if (STREAM_EVENT_TYPES.has(normalizedEvent)) {
+			messageIsHTML = false;
 			eventTypeText = getEventTypeText('stream');
 			if (normalizedEvent === 'stream_online') {
 				eventSpecificText = getTranslation('events-online', 'Online');
@@ -1902,6 +1912,13 @@ body.light-mode .meta-value.badge {
 			forceShow = true;
 		}
 
+        const commerceLabels = { gift: 'sent a gift', giftcontribution: 'contributed to a gift', giftfunded: 'fully funded a gift', purchase: 'purchased an item' };
+        if (Object.prototype.hasOwnProperty.call(commerceLabels, normalizedEvent)) {
+            eventSpecificText = { gift: 'Gift', giftcontribution: 'Gift Contribution', giftfunded: 'Gift Fully Funded', purchase: 'Purchase' }[normalizedEvent];
+            if (!message) message = name + ' ' + commerceLabels[normalizedEvent] + (data.subtitle ? ': ' + data.subtitle : '');
+            forceShow = true;
+        }
+
 		if (!message && normalizedEvent === 'new_follower') {
 			const followVerb = data.type === 'youtube' || data.type === 'youtubeshorts'
 				? getTranslation('alert-just-subscribed', 'just subscribed')
@@ -1917,6 +1934,7 @@ body.light-mode .meta-value.badge {
 		return {
 			name,
 			message,
+			messageIsHTML,
 			eventTypeText,
 			eventTypeClass,
 			eventSpecificText,
@@ -2048,7 +2066,7 @@ body.light-mode .meta-value.badge {
 		let usdValue = 0;
 		if (data.hasDonation) {
 			try {
-				usdValue = convertToUSD(data.hasDonation, data.type);
+				usdValue = getDonationValueUSD(data);
 				
 				// Add value-based class if highlighting is enabled
 				if (highlightValue) {
@@ -2113,11 +2131,12 @@ body.light-mode .meta-value.badge {
 
 		const textNode = document.createElement('div');
 		textNode.className = 'text';
-		if (data.textonly === true) {
+		if (!display.messageIsHTML) {
+			// textonly chat and generated summaries stay literal; tag/entity-looking text is not markup.
 			textNode.textContent = display.message || '';
 		} else {
-			// Renderable HTML mode is sanitized upstream in background.js.
-			textNode.innerHTML = display.message || '';
+			// Check the display copy because direct senders can bypass relay sanitization.
+			textNode.innerHTML = (window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(display.message || '') : fallbackEscapeHtml(display.message || ''));
 		}
 		messageDiv.appendChild(textNode);
 
@@ -2187,12 +2206,17 @@ body.light-mode .meta-value.badge {
     });
 
     function featureEventMessage(dataToFeature) {
+        // Featured output has its own channel; serve socket and P2P viewers.
+        if (dataToFeature !== false) {
+            dataToFeature = Object.assign({}, dataToFeature, { clicked: true, timestamp: Date.now() });
+            delete dataToFeature.id;
+        }
+        sendViaWebSocketFallback(dataToFeature);
         // Handle clearing the featured message
         if (dataToFeature === false) {
             const payload = { overlayNinja: false };
             
             if (iframe && iframe.contentWindow && iframe.connectedPeers) {
-                let sentViaIframe = false;
                 const keys = Object.keys(iframe.connectedPeers);
                 for (let i = 0; i < keys.length; i++) {
                     const uuid = keys[i];
@@ -2200,25 +2224,16 @@ body.light-mode .meta-value.badge {
                     if (label === "overlay" || label === false || typeof label === 'undefined') {
                         try {
                             iframe.contentWindow.postMessage({ sendData: payload, type: "pcs", UUID: uuid }, "*");
-                            sentViaIframe = true;
                         } catch (e) {
                             console.error("Error sending clear message via iframe to peer:", uuid, e);
                         }
                     }
                 }
-                if (!sentViaIframe) {
-                    sendViaWebSocketFallback(false);
-                }
-            } else {
-                sendViaWebSocketFallback(false);
             }
             return;
         }
         
-        const messageToSend = { ...dataToFeature, clicked: true, timestamp: Date.now() };
-        if (messageToSend.id) {
-             delete messageToSend.id;
-        }
+        const messageToSend = dataToFeature;
 
         const payload = { overlayNinja: messageToSend };
 
@@ -2241,28 +2256,19 @@ body.light-mode .meta-value.badge {
             }
             if (sentViaIframe) {
                  log("Featured message sent via iframe.");
-            } else {
-                console.warn('No suitable "overlay" peer found to send featured message to via iframe. Attempting WebSocket.');
-                // Fallback to WebSocket if no iframe peer was found or if sending failed
-                sendViaWebSocketFallback(messageToSend);
             }
-        } else {
-            console.warn('iframe or connectedPeers not ready. Attempting WebSocket to feature message.');
-            sendViaWebSocketFallback(messageToSend);
         }
     }
 
     function sendViaWebSocketFallback(messageToSend) {
         if (socketserver && socketserver.readyState === WebSocket.OPEN) {
             if (messageToSend === false) {
-                socketserver.send(JSON.stringify({ overlayNinja: false }));
-                log("Clear message sent via WebSocket as fallback.");
+                socketserver.send(JSON.stringify({ out: 2, overlayNinja: false }));
+                log("Clear message sent to Featured relay viewers.");
             } else {
-                socketserver.send(JSON.stringify({ content: messageToSend }));
-                log("Featured message sent via WebSocket as fallback.");
+                socketserver.send(JSON.stringify({ out: 2, content: messageToSend }));
+                log("Featured message sent to Featured relay viewers.");
             }
-        } else {
-            console.error('Neither iframe nor WebSocket available to send message.');
         }
     }
 

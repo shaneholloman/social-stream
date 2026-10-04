@@ -1,8 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="description" content="Reactions Overlay. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
+    <meta name="robots" content="noindex">
   <script type="text/javascript" src="./js/local-server-url.js"></script>
-	<meta charset="UTF-8">
+  <script src="./shared/overlay-control-transport.js"></script>
+
 	<meta name="viewport" content="width=device-width,initial-scale=1">
 	<title>Social Stream - Reactions Overlay</title>
 	<link rel="icon" href="./favicon.ico">
@@ -583,6 +587,7 @@ body {
 		}
 	}
 
+    if (label === 'reactions') SSNOverlayControl.connect(urlParams, sessionId, 'reactions', processPayload);
 	function processPayload(raw) {
 		var payload = raw;
 		var eventName;
@@ -600,6 +605,7 @@ body {
 			return false;
 		}
 
+        if (!SSNOverlayControl.accept(payload, 'reactions')) return false;
 		eventName = normalizeEventName(payload.event);
 		if (eventName !== "reaction" && eventName !== "liked" && eventName !== "like") {
 			return false;

@@ -139,28 +139,9 @@ function initDatabase() {
     });
 }
 
-function removeHtmlTagsFromPlainText(value) {
-    return String(value || '')
-        .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, '')
-        .replace(/<template\b[^>]*>[\s\S]*?<\/template>/gi, '')
-        .replace(/<[^>]*>/g, '');
-}
 
-function stripHtmlToPlainText(value) {
-    const text = String(value == null ? '' : value);
-    try {
-        if (typeof DOMParser !== 'undefined') {
-            const doc = new DOMParser().parseFromString(text, 'text/html');
-            if (doc && doc.body) {
-                doc.body.querySelectorAll('script,style,noscript,template').forEach(node => node.remove());
-                return removeHtmlTagsFromPlainText(doc.body.textContent || '');
-            }
-        }
-    } catch (e) {}
-    return removeHtmlTagsFromPlainText(text);
-}
+
+
 
 function escapeHtml(value) {
     return String(value == null ? '' : value)
@@ -177,7 +158,7 @@ function formatTsvField(value) {
 }
 
 function safePlainText(value) {
-    return escapeHtml(stripHtmlToPlainText(value));
+    return escapeHtml(value);
 }
 
 function debounceFilters() {
@@ -559,13 +540,13 @@ function renderMessages() {
     // Stored relay HTML comes from the background.js path where non-text-only chat fields are sanitized
     // before persistence. Text-only messages are deliberately stored raw (see background.js), so their
     // chatmessage must be escaped here — matching how the live overlays (featured/dock) render text-only.
-    const html = messages.map(message => `
+    const html = messages.map(/* History preserves the body format: escape literal text once for this HTML export/template; retain already-sanitized HTML-mode markup. */ message => `
         <div class="message-wrapper" id="message-${message.id}">
             <div class="message">
-                <img src="${message.chatimg || 'https://socialstream.ninja/sources/images/unknown.png'}" alt="Avatar" class="avatar" data-error-hide="message">
+                <img src="${escapeHtml(message.chatimg || 'https://socialstream.ninja/sources/images/unknown.png')}" alt="Avatar" class="avatar" data-error-hide="message">
                 <div class="message-content">
                     <div class="message-header">
-                        <span class="user-name">${message.chatname || 'Anonymous'}</span>
+                        <span class="user-name">${(window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(message.chatname || 'Anonymous') : fallbackEscapeHtml(message.chatname || 'Anonymous'))}</span>
                         ${message.type ? `<img src="https://socialstream.ninja/sources/images/${message.type}.png" alt="${message.type}" class="type-image" data-error-hide="self">` : ''}
                         <span class="timestamp">${formatTimestamp(message.timestamp)}</span>
                     </div>
@@ -787,6 +768,7 @@ function exportMessages(format) {
                         ].join('\t')).join('\n');
                     break;
                 case 'html':
+                    // History preserves the body format: escape literal text once for this HTML export/template; retain already-sanitized HTML-mode markup.
                     content = `
                         <html>
                         <head>
@@ -802,10 +784,10 @@ function exportMessages(format) {
                             <p>Total messages: ${sorted.length}</p>
                             ${sorted.map(m => `
                                 <div class="message">
-                                    <span class="username">${m.chatname}</span>
+                                    <span class="username">${(window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(m.chatname) : fallbackEscapeHtml(m.chatname))}</span>
                                     <span class="timestamp">${new Date(m.timestamp).toLocaleString()}</span>
-                                    <p>${m.chatmessage}</p>
-                                    ${m.hasDonation ? `<p>Donation: ${m.hasDonation}</p>` : ''}
+                                    <p>${m.textonly ? escapeHtml(m.chatmessage || '') : (m.chatmessage || '')}</p>
+                                    ${m.hasDonation ? `<p>Donation: ${escapeHtml(m.hasDonation)}</p>` : ''}
                                 </div>
                             `).join('')}
                         </body>

@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="description" content="Stable Word Cloud Overlay. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
+    <meta name="robots" content="noindex">
+    <script src="./js/local-server-url.js"></script>
+    <script src="./shared/overlay-control-transport.js"></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stable Word Cloud Overlay - Social Stream Ninja</title>
     <link rel="icon" href="./favicon.ico" />
@@ -38,7 +43,7 @@
             filter: url(#glow);
             font-weight: 700;
         }
-		
+
 		/* latin-ext */
 		@font-face {
 		  font-family: 'Sora';
@@ -361,6 +366,7 @@
 		}
 
         function processData(data) {
+            if (!SSNOverlayControl.accept(data, 'wordcloud')) return;
             if (data.content) {
                 data = data.content;
             }
@@ -417,6 +423,7 @@
 
         // Initialize everything
         initializeWordCloud();
+        SSNOverlayControl.connect(urlParams, urlParams.get('session'), 'wordcloud', processData);
         setupIframe();
         window.addEventListener('resize', handleResize);
     })();

@@ -1,6 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <link rel="canonical" href="https://socialstream.ninja/docs/tiktok-signing.html">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Social Stream Ninja">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:url" content="https://socialstream.ninja/docs/tiktok-signing.html">
+    <meta property="og:title" content="TikTok Signing - Social Stream Ninja">
+    <meta property="og:description" content="What the TikTok sign server is, why the desktop app says Sign server unavailable, and how to fix it: wait out rate limits, add an Euler API key, or switch modes.">
+    <meta property="og:image" content="https://socialstream.ninja/media/logo.png">
+    <meta property="og:image:width" content="1024">
+    <meta property="og:image:height" content="1024">
+    <meta property="og:image:alt" content="Social Stream Ninja logo">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:url" content="https://socialstream.ninja/docs/tiktok-signing.html">
+    <meta name="twitter:title" content="TikTok Signing - Social Stream Ninja">
+    <meta name="twitter:description" content="What the TikTok sign server is, why the desktop app says Sign server unavailable, and how to fix it: wait out rate limits, add an Euler API key, or switch modes.">
+    <meta name="twitter:image" content="https://socialstream.ninja/media/logo.png">
+    <meta name="twitter:image:alt" content="Social Stream Ninja logo">
     <script>
         (function() {
             var savedTheme = localStorage.getItem("darkMode");
@@ -10,67 +29,24 @@
             }
         })();
     </script>
-    <meta charset="UTF-8">
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TikTok Signing - Social Stream Ninja</title>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="css/guides.css">
     <link rel="icon" href="../icons/favicon.ico" type="image/x-icon">
     <meta name="description" content="What the TikTok sign server is, why the desktop app says Sign server unavailable, and how to fix it: wait out rate limits, add an Euler API key, or switch modes.">
+<link rel="stylesheet" href="../docs/css/site-shell.css">
+<script src="../docs/js/site-shell.js"></script>
 </head>
 <body>
-    <header>
-        <div class="container">
-            <div class="logo">
-                <a href="../index.html">
-                    <img src="../icons/logo.svg" alt="Social Stream Ninja Logo">
-                    <span>Social Stream Ninja</span>
-                </a>
-            </div>
-            <nav>
-                <ul>
-                    <li><a href="../index.html">Home</a></li>
-                    <li><a href="../docs/features.html">Features</a></li>
-                    <li><a href="../docs/download.html">Download</a></li>
-                    <li><a href="../docs/guides.html" class="active">Guides</a></li>
-                    <li><a href="../docs/commands.html">Commands & API</a></li>
-                    <li><a href="../docs/supported-sites.html">Supported Sites</a></li>
-                    <li><a href="../docs/templates.html">Templates</a></li>
-                    <li><a href="../docs/services.html">Hire</a></li>
-                    <li><a href="../docs/support.html">Support</a></li>
-                </ul>
-            </nav>
-            <div class="header-controls">
-                <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark mode">
-                    <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-                    </svg>
-                    <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <circle cx="12" cy="12" r="5"></circle>
-                        <line x1="12" y1="1" x2="12" y2="3"></line>
-                        <line x1="12" y1="21" x2="12" y2="23"></line>
-                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                        <line x1="1" y1="12" x2="3" y2="12"></line>
-                        <line x1="21" y1="12" x2="23" y2="12"></line>
-                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-                    </svg>
-                </button>
-                <div class="mobile-nav-toggle">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                </div>
-            </div>
-        </div>
-    </header>
+    <header class="site-header"><div class="site-bar"><a class="site-brand" href="../index.html"><img src="../icons/logo.svg" width="32" height="32" alt=""><span>Social Stream Ninja</span></a><nav class="site-nav" id="ssn-site-nav" aria-label="Main navigation"><a href="../index.html">Home</a><a href="../docs/features.html">Features</a><a href="../docs/inspiration.html" class="site-priority-inspiration">Inspiration</a><a href="../docs/download.html">Download</a><a href="../docs/guides.html">Guides</a><a href="../docs/commands.html">Commands &amp; API</a><a href="../docs/supported-sites.html">Supported Sites</a><a href="../docs/overlay-gallery.html" class="site-priority-gallery">Overlay Gallery</a><a href="../docs/services.html" class="site-priority-hire">Hire</a><a href="../docs/support.html">Support</a></nav><div class="site-actions"><button class="site-theme" type="button" aria-label="Switch theme"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none"/></svg></button><button class="site-menu" type="button" aria-label="Open navigation menu" aria-expanded="false" aria-controls="ssn-site-nav"><span aria-hidden="true">&#9776;</span></button></div></div></header>
     <section class="page-hero"><div class="container"><h1>TikTok Signing</h1><p>What the sign server is, why it sometimes fails, and how to get reconnected.</p></div></section>
     <main class="guide-section">
         <div class="container">
             <div class="guide-card">
                 <h2>What Is TikTok Signing?</h2>
-                <p>TikTok requires connection requests to its live chat feed to be cryptographically signed. The desktop app signs these requests through a third-party signing service run by <a href="https://www.eulerstream.com/" target="_blank" rel="noopener">Euler Stream</a>. No account or API key is needed for normal use &mdash; the app uses Euler's free tier automatically.</p>
+                <p>TikTok requires connection requests to its live chat feed to be cryptographically signed. The desktop app signs these requests through a third-party signing service run by <a href="https://www.eulerstream.com/" target="_blank" rel="noopener">Euler Stream</a>. No account or API key is needed for normal use. The app uses Euler's free tier automatically.</p>
                 <p>Because this service sits between the app and TikTok, TikTok sources can stop working even when nothing is wrong on your end: the sign server may be down, rate-limited, or temporarily broken by a TikTok-side change.</p>
             </div>
 
@@ -78,7 +54,7 @@
                 <h2>&quot;Sign Server Unavailable&quot;</h2>
                 <p>This status means the app could not get a valid signature from the signing service. Common causes:</p>
                 <ul class="guide-list">
-                    <li><strong>Rate limits.</strong> The free tier is limited per IP address (a few connections per minute, with hourly and daily caps &mdash; see <a href="https://www.eulerstream.com/docs/api/rate-limits" target="_blank" rel="noopener">Euler's rate limits</a>). Repeatedly deleting and re-adding the source, or rapidly switching modes, burns through the quota and keeps the error going.</li>
+                    <li><strong>Rate limits.</strong> The free tier is limited per IP address (a few connections per minute, with hourly and daily caps; see <a href="https://www.eulerstream.com/docs/api/rate-limits" target="_blank" rel="noopener">Euler's rate limits</a>). Repeatedly deleting and re-adding the source, or rapidly switching modes, burns through the quota and keeps the error going.</li>
                     <li><strong>Sign server outage.</strong> Euler is occasionally down or overloaded. This usually resolves within hours and needs no changes on your side.</li>
                     <li><strong>TikTok changes.</strong> When TikTok updates its live infrastructure, signing can break for everyone until Euler ships a fix.</li>
                 </ul>
@@ -86,7 +62,7 @@
                 <ul class="guide-list">
                     <li>Leave the source connected on Auto and let it retry on its own. Avoid re-adding the source over and over.</li>
                     <li>If it has failed repeatedly, stop for an hour so the per-IP rate limit resets, then reconnect once.</li>
-                    <li>Make sure you are on the latest app version &mdash; TikTok fixes ship frequently.</li>
+                    <li>Make sure you are on the latest app version. TikTok fixes ship frequently.</li>
                     <li>Switch the TikTok source to <strong>Standard</strong> mode (page capture) as a reliable stopgap. It loads the live page directly and does not use the sign server at all.</li>
                     <li>If you hit rate limits often, add your own free Euler API key (below).</li>
                 </ul>
@@ -112,12 +88,12 @@
                         <tr><td data-label="Mode">Local Signer</td><td data-label="How It Works">Signs requests locally in a lightweight TikTok window instead of using Euler.</td><td data-label="Trade-offs">Works best signed into TikTok inside the app; anonymous mode can miss some chat.</td></tr>
                     </tbody>
                 </table>
-                <p>Auto and Polling both rely on the Euler service, so they share its outages and limits.</p>
+                <p><strong>Compatibility (WebSocket)</strong>, called <strong>Polling</strong> in older app versions, uses a signed WebSocket in the current desktop app. It does not provide unsigned HTTP polling and cannot send replies. It uses Euler signing, so it is also affected by that service's outages and limits.</p>
             </div>
 
             <div class="guide-card">
                 <h2>Sending Replies To TikTok</h2>
-                <p>Sending chat messages from the dock back to TikTok requires being signed into your TikTok account inside the desktop app &mdash; the app needs your TikTok session to post as you. If you are not signed in, or the TikTok connection is down, outgoing messages will only reach your other platforms.</p>
+                <p>Sending chat messages from the dock back to TikTok requires being signed into your TikTok account inside the desktop app. The app needs your TikTok session to post as you. If you are not signed in, or the TikTok connection is down, outgoing messages will only reach your other platforms.</p>
                 <p>Note that Euler Proxy mode never supports replies, regardless of sign-in state.</p>
             </div>
 
@@ -128,6 +104,6 @@
         </div>
     </main>
     <footer><div class="container"><div class="footer-bottom"><p>&copy; <span id="current-year">2025</span> Social Stream Ninja. GPLv3.0 License.</p></div></div></footer>
-    <script src="js/main.js"></script><script>document.getElementById("current-year").textContent = new Date().getFullYear();</script>
+    <script data-copy-markdown src="js/main.js"></script><script>document.getElementById("current-year").textContent = new Date().getFullYear();</script>
 </body>
 </html>

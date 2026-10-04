@@ -1,9 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8">
+    <meta charset="UTF-8">
+    <meta name="description" content="Scoreboard. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
+    <meta name="robots" content="noindex">
+<script src="js/local-server-url.js"></script>
+
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta content="text/html;charset=utf-8" http-equiv="Content-Type">
+
 	<meta content="utf-8" http-equiv="encoding">
 	<title>Social Stream - Scoreboard</title>
 	<link rel="icon" href="./favicon.ico">
@@ -754,7 +758,7 @@
 
 		function setupSocket() {
 			if (!(urlParams.has("server") || urlParams.has("server2") || urlParams.has("server3"))) return;
-			var serverURL = urlParams.get("server") || urlParams.get("server2") || urlParams.get("server3") || "wss://io.socialstream.ninja/extension";
+			var serverURL = urlParams.get("server") || urlParams.get("server2") || SocialStreamLocalServer.getRelayUrl(urlParams, "server3", "wss://io.socialstream.ninja/extension");
 			var attempts = 1;
 			var socket = null;
 			function connect() {

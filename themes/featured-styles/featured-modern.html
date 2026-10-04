@@ -2,6 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="description" content="Featured Message - Modern Styles: a Social Stream Ninja chat overlay for OBS. Use your session link to display live messages from your connected chat sources.">
+    <meta name="robots" content="noindex">
+<script src="../../libs/objects.js"></script>
+<script src="../../shared/utils/chatHtml.js"></script>
+<script src="../../shared/utils/chatBadges.js"></script>
+<link rel="stylesheet" href="../../shared/utils/chatBadges.css">
+<script src="../../js/local-server-url.js"></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Featured Message - Modern Styles</title>
     <link rel="icon" href="../../favicon.ico" />
@@ -230,7 +238,7 @@
             line-height: 1.4;
             word-wrap: break-word;
         }
-        
+
         /* Inline images/SVGs in chat messages */
         .text img,
         .text svg {
@@ -243,7 +251,7 @@
             margin: 0 2px;
             display: inline-block;
         }
-        
+
         /* Emote-specific sizing */
         .text img.emote,
         .text svg.emote,
@@ -426,7 +434,7 @@
         .donation-info:empty {
             display: none;
         }
-        
+
         /* Ensure show state persists */
         .message-wrapper.show {
             opacity: 1 !important;
@@ -445,22 +453,23 @@
             .message {
                 padding: 16px;
             }
-            
+
             .avatar {
                 width: 48px;
                 height: 48px;
             }
-            
+
             .username {
                 font-size: 16px;
             }
-            
+
             .text {
                 font-size: 18px;
             }
         }
     </style>
 <link rel="stylesheet" href="../collections.css">
+<link rel="stylesheet" href="artwork.css">
 </head>
 <body>
     <div id="container">
@@ -483,12 +492,19 @@
             document.body.classList.add('collection', 'collection-featured');
         }
 
+        if (['art-cat', 'art-dog', 'art-halloween', 'art-christmas', 'art-music', 'art-forest', 'art-space', 'art-dragon'].indexOf(style) !== -1) {
+            document.body.classList.add('art-featured');
+        }
+
+        if (urlParams.has('staticart')) document.body.classList.add('static-art');
+
         // State
         let messageTimeout = null;
         let currentMessage = null;
 
         // Create VDO.Ninja iframe for receiving messages
         function createIframe() {
+            if (SocialStreamLocalServer.connectLocalRelay(urlParams, roomID, processData, !pseudodock)) return;
 			var iframe = document.createElement("iframe");
 
 			if (pseudodock) {
@@ -633,22 +649,10 @@
                 }
 
                 // Badges
-                if (content.chatbadges && Array.isArray(content.chatbadges)) {
+                if (content.chatbadges) {
                     const badges = document.createElement('div');
                     badges.className = 'badges';
-                    content.chatbadges.forEach(badge => {
-                        if (typeof badge === 'string') {
-                            const img = document.createElement('img');
-                            img.className = 'badge';
-                            img.src = badge;
-                            badges.appendChild(img);
-                        } else if (badge.src) {
-                            const img = document.createElement('img');
-                            img.className = 'badge';
-                            img.src = badge.src;
-                            badges.appendChild(img);
-                        }
-                    });
+                    badges.innerHTML = SocialStreamBadges.render(content.chatbadges);
                     header.appendChild(badges);
                 }
 
@@ -658,8 +662,9 @@
                 if (content.chatmessage) {
                     const text = document.createElement('div');
                     text.className = 'text';
+                    // textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode checks a display copy before rendering.
                     if (content.textonly === true) text.textContent = content.chatmessage;
-                    else text.innerHTML = content.chatmessage;
+                    else text.innerHTML = (window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(content.chatmessage) : fallbackEscapeHtml(content.chatmessage));
                     if (content.textColor) {
                         text.style.color = content.textColor;
                     }

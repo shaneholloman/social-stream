@@ -4,6 +4,7 @@ Always call `ssapp_get_capabilities` or `GET /api/v1/capabilities`. Its command 
 
 | Control API | Minimum SSApp | Available surface |
 | --- | --- | --- |
+| 1.3.1 / MCP 1.2.2 | 0.4.32 | Adds platforms.whatnot with live show URL/videoId input and default WebSocket public-chat capture; requires updated Whatnot page sources and settings; existing source commands and schemas unchanged |
 | 1.3.1 / MCP 1.2.2 | 0.4.24 | Bounds semantic page inspection so unresponsive subframes cannot consume the command timeout; main-page failures return SOURCE_PAGE_UNAVAILABLE; tool schemas unchanged |
 | 1.3.1 / MCP 1.2.2 | 0.4.23 | Returns SSAPP_UNREACHABLE for interrupted HTTP response bodies and drains queued stdout before exiting after client stdin closes; tool schemas and commands are unchanged |
 | 1.3.1 / MCP 1.2.1 | 0.4.22 | Removes the inactive global YouTube sync settings from capabilities and getSettings; updateSettings rejects youtubeAutoAdd, youtubeAutoCleanup, and youtubeCheckInterval. Group Auto-activate remains the supported discovery path. |
@@ -20,7 +21,73 @@ Always call `ssapp_get_capabilities` or `GET /api/v1/capabilities`. Its command 
 | 1.1.0 | 0.4.2 | Versioned responses, request and operation IDs, SSE status events, token-file and stored credentials, visible-app controls, expanded source/settings discovery, and version-aware MCP tools |
 | 1.0.0 | 0.4.2 | Initial authenticated localhost status, capabilities, source lifecycle, supported settings, and headless control |
 
+## Unreleased YouTube default mode
+
+Minimum supported build: the SSApp development checkout based on 0.4.32 containing
+the YouTube default-mode change; no released minimum has been assigned. Check
+`platforms.youtube.defaultConnectionMode` and
+`platforms.youtubeshorts.defaultConnectionMode` rather than the app version alone.
+API/MCP responses continue to expose the running SSApp version.
+
+New YouTube and YouTube Shorts sources and channel groups default to `classic` (Standard),
+including `addSource` requests that omit `connectionMode`. Explicit modes and saved
+sources/groups retain their existing selection.
+
+## Unreleased hosted and local overlay-control correction
+
+### Points leaderboard page synchronization
+
+Updated beta page sources add the read-only `ssnControlRequest: { target: "leaderboard" }`
+request on the leaderboard's existing WebSocket feed and WebRTC connection. The host
+answers with the existing `points_leaderboard` snapshot on that connection. The loyalty
+view and `!leaderboard` display total earned points. This requires the updated host and
+leaderboard page sources; it adds no Local AI `/api/v1` or MCP command. The development
+runtime used for verification is SSApp 0.4.32; no released minimum containing these page
+changes has been assigned.
+
+### Other overlay controls
+
+Minimum verified runtime: SSApp 0.4.28 with the updated Social Stream beta page sources containing `shared/overlay-control-transport.js`. No released minimum containing all changes has been assigned. Remote page revisions can change independently of the app version; do not assume a published 0.4.28 build contains this update. Existing API/MCP responses still expose the running SSApp version.
+
+Actions channel 6 now sends to enabled relay routes alongside connected WebRTC peers. Poll/Credits/Hype controls and snapshots use dedicated channel 7. `ssnControl` carries command IDs and feature targets for duplicate suppression and acknowledgements; `ssnControlRequest` only reads Poll/Hype state. Existing enabled receiver switches and session boundaries apply. A receipt confirms delivery, not OBS visibility or external action completion. Reconnect reads do not replay Credits starts or Poll resets.
+
+Poll also suppresses duplicate copies of the same captured message ID across transports when repeat voting is enabled; distinct messages from the same viewer still count.
+
+Hosted and local Giveaway Manager requests opt into `replyFormat: "commandResult"` for existing protocol-2 giveaway actions, retaining `get` as the request ID. Replies use `{type:"commandResult", action, result}`, correlated by `result.request`. Only opted-in giveaway requests select this envelope; ordinary callbacks and other clients are unchanged. This avoids hosted relays consuming the manager's replies. No mutation is automatically replayed after connection loss.
+
+The Local AI `/api/v1` API and MCP commands, schemas, version numbers and intentional loopback trust boundary are unchanged. Full details and runtime evidence are in `docs/local-server-review.md`.
+
+## Unreleased local relay correction (earlier work)
+
+Minimum supported build: the SSApp development checkout based on 0.4.28 containing the local WebSocket callback correction; a released minimum version has not yet been assigned. A published 0.4.28 build must not be assumed to contain it.
+
+Page-owned callback replies now follow the local relay's existing room/channel routing instead of being consumed without delivery. This repairs confirmations in the OBS control dock and WebSocket API clients. The Local AI `/api/v1` API and MCP schemas, version numbers, and loopback binding are unchanged. The local chat relay remains a separate WebSocket service; it does not implement the hosted API's HTTP or webhook endpoints.
+
+The corresponding beta page sources also route Event Flow visual actions to the local actions channel when Local Server is selected. This is a page routing correction, with no new control command or schema. Existing hosted actions and other labelled targets retain their previous transport.
+
+## Unreleased voice preview
+
+Minimum supported build: an unreleased SSApp build after 0.4.25 containing `ninjafy.voiceControl`; no released minimum version is assigned yet. Feature-detect the bridge rather than assuming support from the version number of a development checkout.
+
+Adds a separate Voice Control page and optional paired OBS dock. This is not a new `/api/v1` or MCP command and does not change the intentionally tokenless Local AI control API. The dock uses its own random loopback port and private revocable token. Do not expose the link in chat, logs, or shared overlays. Event Flow registers exact phrases through a restricted native bridge; ordinary chat cannot invoke host voice triggers.
+
+The unreleased voice preview also cancels queued Start/Arm operations after Stop and ignores overlong speech until a pause. No Local AI API or MCP command changed.
+
+Windows x64 voice commands in this unreleased preview use a pinned local whisper.cpp runtime downloaded on first Start. Stop also cancels runtime preparation/inference. Cohost and the Local AI API remain unchanged; feature-detect ninjafy.voiceControl as above.
+
 ## Skill revisions
+
+### 2026-09-27
+
+- Restored the YouTube/Shorts Standard (`classic`) default for the updated 0.4.32
+  development checkout to reduce shared API quota demand. This supersedes the
+  earlier development WebSocket default; see the unreleased compatibility entry above.
+
+### 2026-09-24
+
+- Documented the Whatnot platform capability, minimum SSApp 0.4.32, and its dependency
+  on updated Social Stream page sources. Existing version fields still report the
+  running app; platform discovery remains authoritative. Auctions and sign-in are deferred.
 
 ### 2026-09-05
 

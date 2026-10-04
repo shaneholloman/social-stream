@@ -2,6 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="description" content="Featured Message - Animated Styles: a Social Stream Ninja chat overlay for OBS. Use your session link to display live messages from your connected chat sources.">
+    <meta name="robots" content="noindex">
+<script src="../../libs/objects.js"></script>
+<script src="../../shared/utils/chatHtml.js"></script>
+<script src="../../shared/utils/chatBadges.js"></script>
+<link rel="stylesheet" href="../../shared/utils/chatBadges.css">
+<script src="../../js/local-server-url.js"></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Featured Message - Animated Styles</title>
     <link rel="icon" href="../../favicon.ico" />
@@ -257,7 +265,7 @@
             white-space: normal;
             animation: typewriterReveal 2s ease-out forwards;
         }
-        
+
         .style-typewriter .text::after {
             content: '';
             position: absolute;
@@ -285,7 +293,7 @@
                 transform: translateX(0);
             }
         }
-        
+
         @keyframes blink {
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0; }
@@ -482,7 +490,7 @@
             width: 100%;
             box-sizing: border-box;
         }
-        
+
         /* Inline images/SVGs in chat messages */
         .text img,
         .text svg {
@@ -495,7 +503,7 @@
             margin: 0 2px;
             display: inline-block;
         }
-        
+
         /* Emote-specific sizing */
         .text img.emote,
         .text svg.emote,
@@ -553,7 +561,7 @@
         }
 
         /* Exit animations - Style-specific exits */
-        
+
         /* Bounce style exit - Implode with particles */
         @keyframes bounceImplode {
             0% {
@@ -702,31 +710,31 @@
             margin-top: 12px;
             border-radius: 8px;
         }
-        
+
         /* Responsive adjustments */
         @media (max-width: 768px) {
             #output {
                 width: 95%;
             }
-            
+
             .message {
                 padding: 16px;
             }
-            
+
             .text {
                 font-size: 16px;
             }
-            
+
             .username {
                 font-size: 18px;
             }
-            
+
             .avatar {
                 width: 48px;
                 height: 48px;
             }
         }
-        
+
         /* Style-specific overflow fixes */
         .style-bounce .message,
         .style-slide .message,
@@ -735,13 +743,13 @@
             overflow: visible;
             min-height: fit-content;
         }
-        
+
         /* Ensure typewriter doesn't clip */
         .style-typewriter .message {
             overflow: visible;
             min-height: fit-content;
         }
-        
+
         .style-typewriter .text::after {
             display: none; /* Remove the CSS cursor in favor of JS one */
         }
@@ -768,6 +776,7 @@
 
         // Create VDO.Ninja iframe
         function createIframe() {
+            if (SocialStreamLocalServer.connectLocalRelay(urlParams, roomID, processData, true)) return;
             const iframe = document.createElement('iframe');
 			iframe.src = "https://vdo.socialstream.ninja/?ln&password=" + encodeURIComponent(password) + "&notmobile&salt=vdo.ninja&label=overlay&exclude=" + roomID + "&scene&novideo&noaudio&cleanoutput&room=" + roomID;
             iframe.style.width = '0px';
@@ -890,17 +899,10 @@
                 }
 
                 // Badges
-                if (content.chatbadges && Array.isArray(content.chatbadges)) {
+                if (content.chatbadges) {
                     const badges = document.createElement('div');
                     badges.className = 'badges';
-                    content.chatbadges.forEach(badge => {
-                        if (typeof badge === 'string') {
-                            const img = document.createElement('img');
-                            img.className = 'badge';
-                            img.src = badge;
-                            badges.appendChild(img);
-                        }
-                    });
+                    badges.innerHTML = SocialStreamBadges.render(content.chatbadges);
                     header.appendChild(badges);
                 }
 
@@ -922,8 +924,9 @@
                     
                     // For typewriter effect, we can still use HTML
                     if (style === 'typewriter') {
+                        // textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode checks a display copy before rendering.
                         if (content.textonly === true) text.textContent = content.chatmessage;
-                        else text.innerHTML = content.chatmessage;
+                        else text.innerHTML = (window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(content.chatmessage) : fallbackEscapeHtml(content.chatmessage));
                         // Add a typewriter cursor effect
                         const cursor = document.createElement('span');
                         cursor.className = 'typewriter-cursor';
@@ -937,8 +940,9 @@
                             }
                         }, 3000);
                     } else {
+                        // textonly=true means literal chatmessage: use textContent or one HTML-template escape, never HTML decoding/filtering. HTML mode checks a display copy before rendering.
                         if (content.textonly === true) text.textContent = content.chatmessage;
-                        else text.innerHTML = content.chatmessage;
+                        else text.innerHTML = (window.SocialStreamChatHTML ? SocialStreamChatHTML.sanitize(content.chatmessage) : fallbackEscapeHtml(content.chatmessage));
                     }
                     
                     contentDiv.appendChild(text);

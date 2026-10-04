@@ -4,6 +4,7 @@ Currencies.ang = { d: 2, s: "NAf" };
 Currencies.xcg = { d: 2, s: "Cg" };
 
 function convertToUSD(valueStr, source = '') {
+  source = String(source || '').toLowerCase();
   // USD value of one currency unit. Floating rates are recent 90-day averages
   // through 2026-08-19 (ECB daily reference rates where available, otherwise
   // effective-dated U.S. Treasury reporting rates). Official USD pegs remain exact.
@@ -202,7 +203,10 @@ function convertToUSD(valueStr, source = '') {
       diamonds: 0.005,
       gift: 0.01,
       rose: 0.01,
-      tiktokgift: 0.01
+      gifts: 0.01,
+      roses: 0.01,
+      tiktokgift: 0.01,
+      tiktokgifts: 0.01
     },
     facebook: {
       star: 0.01,
@@ -251,7 +255,7 @@ function convertToUSD(valueStr, source = '') {
 
   // Extract numeric value, including negative numbers, decimals, and thousands separators.
   const numericMatch = valueStr.match(/-?\d[\d.,]*(?:\s\d{3})*/);
-  if (!numericMatch) return 0;
+  if (!numericMatch) return source === 'tiktok' && valueStr ? 0.01 : 0;
 
   const amount = parseCurrencyAmount(valueStr);
   if (isNaN(amount)) return 0;
@@ -467,11 +471,74 @@ function convertToUSD(valueStr, source = '') {
   if (valueStr.includes('$')) return amount;
 
   if (hasUnknownUnitCandidate()) {
+    // An unpriced TikTok gift is estimated at one coin per gift.
+    if (source === 'tiktok') return amount * platformAdjustments.tiktok.coin;
     return amount * unknownUnitRate;
   }
 
   // Default to USD if no specific currency found
   return amount;
+}
+
+// donoValue is an optional source-supplied USD override, including a deliberate
+// zero. Do not reinterpret it using the display label or provider currency.
+function getDonationValueUSD(data) {
+  if (!data) return 0;
+  const raw = data.donoValue;
+  if (typeof raw === 'number' || (typeof raw === 'string' && raw.trim())) {
+    const captured = Number(typeof raw === 'string' ? raw.replace(/,/g, '') : raw);
+    if (Number.isFinite(captured)) return captured;
+  }
+  const source = String(data.type || data.platform || '').toLowerCase();
+  const meta = data.meta || {};
+  const originalAmounts = [meta, meta.ninjabacker, meta.throne];
+  for (const original of originalAmounts) {
+    if (!original || !original.currency || original.amount === null || original.amount === undefined || original.amount === '') continue;
+    const amount = Number(original.amount);
+    if (Number.isFinite(amount)) return convertToUSD(String(amount) + ' ' + original.currency, source);
+  }
+  const label = data.hasDonation || data.donation || data.donationAmount || '';
+  // Keep legacy USD aliases as a last resort for integrations without a label.
+  if (!label) {
+    for (const value of [data.donationValue, meta.donoValue, meta.donationValue]) {
+      if (typeof value !== 'number' && !(typeof value === 'string' && value.trim())) continue;
+      const amount = Number(value);
+      if (Number.isFinite(amount)) return amount;
+    }
+  }
+  const amount = Number(convertToUSD(label, source));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getCreditsDonationValue(data) {
+  return Math.max(0, getDonationValueUSD(data));
+}
+
+// Private credits bookkeeping, not part of an outgoing chat/gift payload.
+// Persist recent totals so reconnecting an overlay mid-streak does not add the
+// cumulative amount again. Bound retained state per donor.
+function sanitizeCreditsGiftStreaks(value, now = Date.now()) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(entry => entry && typeof entry.id === 'string' && entry.id.length <= 256 &&
+    Number.isFinite(entry.total) && entry.total >= 0 && Number.isFinite(entry.updated) &&
+    entry.updated > now - 30 * 60 * 1000 && entry.updated <= now + 60000
+  ).slice(-128).map(entry => ({ id: entry.id, total: entry.total, updated: entry.updated }));
+}
+
+function getCreditsDonationIncrement(user, data, amount) {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const meta = data && data.meta;
+  if (String(data && data.type || '').toLowerCase() !== 'tiktok' || !meta ||
+      typeof meta.tiktokGiftStreakId !== 'string' || !meta.tiktokGiftStreakId ||
+      meta.tiktokGiftStreakId.length > 256 || !(Number(meta.tiktokGiftCount) > 0)) return amount;
+  const now = Date.now();
+  const entries = sanitizeCreditsGiftStreaks(user.giftStreaks, now);
+  const previous = entries.find(entry => entry.id === meta.tiktokGiftStreakId);
+  const previousTotal = previous ? previous.total : 0;
+  user.giftStreaks = entries.filter(entry => entry.id !== meta.tiktokGiftStreakId);
+  user.giftStreaks.push({ id: meta.tiktokGiftStreakId, total: Math.max(previousTotal, amount), updated: now });
+  user.giftStreaks = user.giftStreaks.slice(-128);
+  return Math.max(0, amount - previousTotal);
 }
 
 // Convert a normalized donation label into any fiat currency supported by the
@@ -537,4 +604,8 @@ function getGiftValue(platform, giftType = 'default') {
   
   const platformGifts = giftValues[platform] || giftValues.twitch;
   return platformGifts[giftType] || platformGifts.default || 4.99;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { convertToUSD, convertCurrency, getDonationValueUSD, getCreditsDonationValue };
 }

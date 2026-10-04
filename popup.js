@@ -164,7 +164,7 @@ window.addEventListener('message', function(event) {
 
 var urlParams = new URLSearchParams(window.location.search);
 const devmode = urlParams.has("devmode");
-var sourcemode = urlParams.get("sourcemode") || false;
+var sourcemode = getSourceModeBase(urlParams.get("sourcemode")) || false;
 var ssapp = false;
 
 if (urlParams.has("ssapp")) {
@@ -704,13 +704,20 @@ if (typeof(chrome.runtime)=='undefined'){
 				// Generate unique callback ID
 				const callbackId = ++callbackIdCounter;
 				const isGetSettingsRequest = !!(data && data.cmd === "getSettings");
-				const timeoutMs = isGetSettingsRequest ? 3000 : 500;
+				const isLLMProviderTestRequest = !!(data && data.cmd === "testLLMProvider");
+				const isAiEventRequest = !!(data && data.cmd === "aiEvent");
+				const timeoutMs = isAiEventRequest ? 195000 : isLLMProviderTestRequest ? 60000 : (isGetSettingsRequest ? 3000 : 500);
 				
 				// Create promise with timeout
 				const promise = new Promise((resolve) => {
 					// Store callback with timeout
 					const timeoutId = setTimeout(() => {
 						pendingCallbacks.delete(callbackId);
+						if (isLLMProviderTestRequest || isAiEventRequest) {
+							// The provider may still be working. Never resubmit a timed-out test.
+							resolve({ success: false, error: isAiEventRequest ? 'AI overlay request timed out.' : 'Connection test timed out.' });
+							return;
+						}
 						if (isGetSettingsRequest) {
 							// For startup hydration, avoid forcing a synchronous fallback from potentially stale cache.
 							// Let periodic retries continue, and allow late async callback responses to update the UI.
@@ -847,6 +854,28 @@ if (typeof(chrome.runtime)=='undefined'){
 	}
 }
 
+async function copyStreamId(event) {
+	var button = event.currentTarget;
+	var sessionId = lastResponse && lastResponse.streamID;
+	var originalLabel = button.innerHTML;
+	button.disabled = true;
+	try {
+		if (!sessionId) {
+			button.textContent = "[stream ID unavailable]";
+			return;
+		}
+		await navigator.clipboard.writeText(sessionId);
+		button.textContent = "[stream ID copied]";
+	} catch (error) {
+		button.textContent = "[copy failed; try again]";
+	} finally {
+		setTimeout(function() {
+			button.innerHTML = originalLabel;
+			button.disabled = false;
+		}, 2000);
+	}
+}
+
 function copyToClipboard(event) {
 	
 	// if (event.target.parentNode.parentNode.querySelector("[data-raw] a[href]")){ // DEPRECATED data-raw
@@ -873,10 +902,43 @@ function copyToClipboard(event) {
 	}
 }
 
+function getEditableGeneratedLinkConfig(targetId) {
+	// Only pages whose controls use an independent getTargetMap namespace belong here.
+	// Template collections, games, and commerce have separate configuration flows.
+	var pages = {
+		dock: ["dock.html", "Main Chat"],
+		overlay: ["featured.html", "Featured Chat (Classic)"],
+		multialerts: ["multi-alerts.html", "Multi-Stream Alert Box"],
+		eventsdashboard: ["events.html", "Events Dashboard"],
+		reactions: ["reactions.html", "Reactions"],
+		emoteswall: ["emotes.html", "Emote Wall"],
+		hypemeter: ["hype.html", "Viewer Count & Chat Activity"],
+		meta: ["meta.html", "Meta Bar"],
+		tipjar: ["tipjar.html", "Tip Jar"],
+		waitlist: ["waitlist.html", "Waitlist"],
+		flowactions: ["actions.html", "Flow Actions"],
+		giveaway: ["giveaway.html", "Giveaway"],
+		poll: ["poll.html", "Poll"],
+		map: ["map.html", "Map"],
+		credits: ["credits.html", "Credits"],
+		leaderboard: ["leaderboard.html", "Leaderboard"],
+		scoreboard: ["scoreboard.html", "Scoreboard"],
+		ticker: ["ticker.html", "Ticker"],
+		wordcloud: ["wordcloud.html", "Word Cloud"],
+		"custom-gif-commands": ["gif.html", "Custom GIF Commands"],
+		timer: ["timer.html", "Timer"],
+		spotify: ["spotify-overlay.html", "Spotify"]
+	};
+	var page = Object.prototype.hasOwnProperty.call(pages, targetId) ? pages[targetId] : null;
+	return page ? { path: page[0], label: page[1] } : null;
+}
+
 function normalizeEditableGeneratedLink(rawUrl, targetId) {
+	var config = getEditableGeneratedLinkConfig(targetId);
+	if (!config) throw new Error("This link editor is not available.");
 	var trimmed = String(rawUrl || "").trim();
 	if (!trimmed) {
-		throw new Error("Paste an existing Main Chat link.");
+		throw new Error("Paste an existing " + config.label + " link.");
 	}
 
 	var targetElement = document.getElementById(targetId);
@@ -897,16 +959,17 @@ function normalizeEditableGeneratedLink(rawUrl, targetId) {
 		throw new Error("Only web or local file links can be edited.");
 	}
 
-	var expectedFile = targetId === "dock" ? "dock.html" : "";
+	var expectedFile = config.path;
 	var fileName = parsed.pathname.split("/").pop().toLowerCase();
 	if (!expectedFile || fileName !== expectedFile) {
-		throw new Error("Paste a Main Chat dock.html link here.");
+		throw new Error("Paste a " + config.label + " " + expectedFile + " link here.");
 	}
 
 	if (!parsed.searchParams.get("session") && !parsed.searchParams.get("room")) {
 		throw new Error("That link is missing its session ID.");
 	}
 
+	if (targetId === "giveaway") parsed.searchParams.set("managed", "");
 	return parsed;
 }
 
@@ -1063,7 +1126,7 @@ function applyImportedGeneratedLink(targetId, parsedUrl) {
 	Array.prototype.slice.call(document.querySelectorAll(numberSelector)).forEach(function(element) {
 		var setting = element.dataset[numberType];
 		var effectiveKey = normalizeParamKey(setting);
-		if (!linkOwnedNumberKeys[effectiveKey]) {
+		if (paramNum === 1 && !linkOwnedNumberKeys[effectiveKey]) {
 			return;
 		}
 		var importedValue = null;
@@ -1156,7 +1219,25 @@ function applyImportedGeneratedLink(targetId, parsedUrl) {
 		if (element.dataset.optionsetting) {
 			handleOptionSetting(element, false);
 		}
+		if (paramNum !== 1 && setting === "ttsprovider") {
+			var providerSettingType = "optionsetting" + paramNum;
+			if (element.dataset[providerSettingType]) {
+				saveImportedLinkControl(element, providerSettingType, element.dataset[providerSettingType], imported.value);
+			}
+			if (paramNum === 2) handleTTSProvider2Visibility(imported.value);
+			if (paramNum === 18) handleTTSProvider18Visibility(imported.value);
+		}
+
 	});
+
+	if (targetId === "overlay") {
+		var presetSelector = document.getElementById("featured-preset-select");
+		if (presetSelector) {
+			presetSelector.value = "";
+			saveImportedLinkControl(presetSelector, "optionsetting", "featuredOverlayStyle", "");
+			applyFeaturedOverlayPreset("");
+		}
+	}
 
 	setGeneratedLink(targetElement, parsedUrl.href);
 	if (targetId === "dock") {
@@ -1176,28 +1257,30 @@ function showImportedLinkStatus(targetId, loadedControlCount) {
 }
 
 function openEditGeneratedLinkDialog(targetId) {
+	var config = getEditableGeneratedLinkConfig(targetId);
+	if (!config) return;
 	var modal = document.createElement("div");
 	modal.className = "arc-modal";
 	modal.setAttribute("role", "dialog");
 	modal.setAttribute("aria-modal", "true");
-	modal.setAttribute("aria-label", "Edit an existing Main Chat link");
+	modal.setAttribute("aria-label", "Edit an existing " + config.label + " link");
 
 	var dialog = document.createElement("div");
 	dialog.className = "arc-dialog";
 
 	var title = document.createElement("p");
-	title.textContent = "Edit an existing Main Chat link";
+	title.textContent = "Edit an existing " + config.label + " link";
 
 	var note = document.createElement("span");
 	note.className = "edit-link-dialog-note";
-	note.textContent = "Paste the old dock.html link. This replaces the current Main Chat customization controls; links already in OBS are not changed.";
+	note.textContent = "Paste the old " + config.path + " link. This replaces only the " + config.label + " link controls. Other overlays and your global stream ID stay unchanged; links already in OBS are not changed.";
 
 	var input = document.createElement("input");
 	input.type = "text";
 	input.className = "arc-input";
-	input.placeholder = "https://socialstream.ninja/dock.html?session=...";
+	input.placeholder = "https://socialstream.ninja/" + config.path + "?session=...";
 	input.autocomplete = "off";
-	input.setAttribute("aria-label", "Existing Main Chat link");
+	input.setAttribute("aria-label", "Existing " + config.label + " link");
 	var currentLinkElement = document.getElementById(targetId);
 	input.value = currentLinkElement && currentLinkElement.raw ? currentLinkElement.raw : "";
 
@@ -1231,7 +1314,7 @@ function openEditGeneratedLinkDialog(targetId) {
 			var loadedControlCount = applyImportedGeneratedLink(targetId, parsedUrl);
 			closeDialog();
 			showImportedLinkStatus(targetId, loadedControlCount);
-			showPopupToast("success", "Main Chat link loaded", "Customize it below, then copy the updated link.");
+			showPopupToast("success", config.label + " link loaded", "Customize it below, then copy the updated link.");
 		} catch (error) {
 			errorBox.textContent = error && error.message ? error.message : "The link could not be loaded.";
 			input.focus();
@@ -1381,6 +1464,7 @@ function miniTranslate(ele, ident = false, direct=false) {
 			" (OBS Browser Source is already transparent by default)"
 		);
 	}
+	if (ele === document.body && window.updateMonetizationLanguage) window.updateMonetizationLanguage();
 }
 
 if (urlParams.has("ln")) {
@@ -3419,18 +3503,19 @@ const SERVER_PARAM_SUPPORT_BY_TARGET = {
   spotify: FULL_SERVER_LINK_SUPPORT,
   map: FULL_SERVER_LINK_SUPPORT,
   aiprompt: { server: true, server2: true, server3: false },
+  aievent: FULL_SERVER_LINK_SUPPORT,
   hypemeter: { server: true, server2: true, server3: false },
   ticker: { server: true, server2: true, server3: false },
   tipjar: { server: true, server2: true, server3: false },
   eventsdashboard: { server: true, server2: true, server3: false },
-  flowactions: { server: true, server2: true, server3: false },
-  timer: { server: true, server2: false, server3: false },
-  giveaway: { server: true, server2: false, server3: false },
+  flowactions: FULL_SERVER_LINK_SUPPORT,
+  timer: { server: true, server2: true, server3: false },
+  giveaway: { server: true, server2: true, server3: false },
   credits: { server: false, server2: true, server3: true },
   leaderboard: { server: false, server2: true, server3: true },
-  waitlist: NO_SERVER_LINK_SUPPORT,
-  wordcloud: NO_SERVER_LINK_SUPPORT,
-  "custom-gif-commands": NO_SERVER_LINK_SUPPORT,
+  waitlist: { server: true, server2: true, server3: false },
+  wordcloud: { server: true, server2: true, server3: false },
+  "custom-gif-commands": { server: true, server2: true, server3: false },
   privatechatbot: NO_SERVER_LINK_SUPPORT
 };
 
@@ -3503,13 +3588,16 @@ function getGameServerParamSupport(contextPath) {
     return FULL_SERVER_LINK_SUPPORT;
   }
   if (gamePath.indexOf("games/") === 0) {
-    return { server: true, server2: false, server3: false };
+    return { server: true, server2: true, server3: false };
   }
   return SERVER_PARAM_SUPPORT_BY_TARGET.games || FULL_SERVER_LINK_SUPPORT;
 }
 
 function getServerParamSupportForTarget(targetId, contextPath) {
   if (targetId === "chatoverlaytemplate") {
+    if (normalizeGeneratedPath(contextPath || getSelectedChatOverlayTemplatePath()) === 'themes/LuckyLootTube/luckyloottube.html') {
+      return { server: true, server2: true, server3: false };
+    }
     return CHAT_OVERLAY_SERVER_PARAM_SUPPORT[normalizeGeneratedPath(contextPath || getSelectedChatOverlayTemplatePath())] || NO_SERVER_LINK_SUPPORT;
   }
   if (targetId === "overlay") {
@@ -3583,6 +3671,17 @@ function syncSupportedServerParamsForTarget(targetId, targetElement, sourceEleme
       targetElement.raw = updateURL(getServerParamToken(paramName, sourceElement, sourceTokens), targetElement.raw);
     }
   });
+  // Explicit auto-show keeps consuming captured chat, even if server is checked.
+  // Manual selections are carried by Dock/Featured without adding an API opt-in.
+  if (targetId === "overlay" && isBothParamChecked("server2") && new URL(targetElement.raw, baseURL).searchParams.has("autoshow")) {
+    targetElement.raw = removeQueryParamWithValue(targetElement.raw, "server");
+  }
+	// Flow Actions has an independent command channel. An explicitly enabled
+	// API receiver can carry actions even when chat forwarding is disabled.
+	if (targetId === "flowactions" && !isBothParamChecked("server") && !isBothParamChecked("server2") && !isBothParamChecked("server3")
+		&& document.querySelector('input[data-setting="socketserver"]')?.checked) {
+		targetElement.raw = updateURL(getServerParamToken("server", sourceElement, sourceTokens), targetElement.raw);
+	}
   targetElement.raw = cleanURL(targetElement.raw);
 }
 
@@ -3725,6 +3824,11 @@ function syncChatOverlayTemplateConfig(templatePath) {
   const normalizedPath = (templatePath || DEFAULT_CHAT_OVERLAY_TEMPLATE).split("?")[0];
   const configId = CHAT_OVERLAY_TEMPLATE_CONFIGS[normalizedPath] || "";
 
+  const membershipOption = document.getElementById("compact-clean-membership-option");
+  if (membershipOption) {
+    membershipOption.style.display = normalizedPath === "themes/compact-clean.html" ? "" : "none";
+  }
+
   document.querySelectorAll(".overlay-config-section").forEach(function(section) {
     section.style.display = "none";
   });
@@ -3803,6 +3907,8 @@ function syncChatOverlayTemplateLinkFromDock() {
 }
 
 function setupPageLinks(hideLinks, baseURL, streamID, password) {
+  const tipjarPreview = document.getElementById('tipjar-style-preview');
+  if (tipjarPreview) tipjarPreview.href = new URL('tipjar-preview.html', baseURL).href;
   // Get any custom parameters from the current URL
   let customParams = getSelectedTranslationLinkParam();
   try {
@@ -3816,6 +3922,7 @@ function setupPageLinks(hideLinks, baseURL, streamID, password) {
     'elevensimilarity', 'elevenstyle', 'elevenspeakerboost', 'elevenrate',
     'googleapikey', 'googlevoice', 'googleaudioprofile', 'googlerate', 'googlelang',
     'geminikey', 'geminimodel', 'voicegemini', 'geminilang', 'geministyle', 'geminiprompt',
+    'fishkey', 'voicefish', 'fishmodel', 'fishspeed', 'fishendpoint',
     'speechifykey', 'speechifyvoice', 'voicespeechify', 'speechifymodel', 'speechifylang', 'speechifyspeed',
     'kokorokey', 'voicekokoro', 'kokorospeed'
   ];
@@ -3855,10 +3962,11 @@ function setupPageLinks(hideLinks, baseURL, streamID, password) {
     { id: "poll", path: "poll.html" },
     { id: "chatbot", path: "bot.html", linkPath: "chatbot.html" },
 	{ id: "cohost", path: "cohost.html", capability: true },
-    { id: "giveaway", path: "giveaway.html" },
+    { id: "giveaway", path: "giveaway.html", defaultParams: "&managed" },
     { id: "credits", path: "credits.html" },
     { id: "privatechatbot", path: "chatbot.html", style: "color:lightblue;" },
     { id: "aiprompt", path: "aiprompt.html" },
+    { id: "aievent", path: "aievent.html" },
     { id: "aioverlay", path: "cohost-overlay.html" },
     { id: "eventsdashboard", path: "events.html" },
 	{ id: "reactions", path: "reactions.html" },
@@ -3905,6 +4013,7 @@ function setupPageLinks(hideLinks, baseURL, streamID, password) {
   });
 
   syncChatOverlayTemplateLinkFromDock();
+  if (window.updateMonetizationLinks) window.updateMonetizationLinks();
   updateAiOverlayGeneratedLinks(hideLinks, baseURL, streamID, password, versionParam);
   
   // Update sample overlay and remote control URLs too
@@ -3913,6 +4022,11 @@ function setupPageLinks(hideLinks, baseURL, streamID, password) {
     sampleOverlay.href = buildGeneratedUrl("sampleoverlay.html", `session=${encodeURIComponent(streamID)}${password}${customParams}${versionParam}`, baseURL);
   }
   
+  ['games_gallery_url', 'games_gallery_menu_url'].forEach(function(id) {
+    const link = document.getElementById(id);
+    if (link) link.href = buildGeneratedUrl("docs/games-gallery.html", `session=${encodeURIComponent(streamID)}${password}`, baseURL);
+  });
+
   const remoteControlUrl = document.getElementById("remote_control_url");
   if (remoteControlUrl) {
     remoteControlUrl.href = buildGeneratedUrl("sampleapi.html", `session=${encodeURIComponent(streamID)}${password}${customParams}${versionParam}`, baseURL);
@@ -3920,7 +4034,7 @@ function setupPageLinks(hideLinks, baseURL, streamID, password) {
 
   const obsControlDockUrl = document.getElementById("obs_control_dock_url");
   if (obsControlDockUrl) {
-    obsControlDockUrl.href = buildGeneratedUrl("obs-control-dock.html", `session=${encodeURIComponent(streamID)}`, baseURL);
+    obsControlDockUrl.href = buildGeneratedUrl("obs-control-dock.html", `session=${encodeURIComponent(streamID)}${getLocalServerConnectionParams()}`, baseURL);
   }
 
 	const streamElementsImporterUrl = document.getElementById("streamelements_importer_link");
@@ -4095,6 +4209,7 @@ function removeTTSProviderParams(url, selectedProvider=null) {
         elevenlabs: ['elevenlabskey', 'elevenlabsmodel', 'elevenlabsvoice', 'elevenlatency','elevenstability','elevensimilarity','elevenstyle','elevenspeakerboost','elevenrate','voice11'],
         google: ['googleapikey', 'googlevoice','googleaudioprofile','googlerate','googlelang'],
         gemini: ['geminikey', 'geminimodel', 'voicegemini', 'geminilang', 'geministyle', 'geminiprompt'],
+        fish: ['fishkey', 'voicefish', 'fishmodel', 'fishspeed', 'fishendpoint'],
         speechify: ['speechifykey', 'speechifyvoice','voicespeechify' ,'speechifymodel','speechifylang','speechifyspeed'],
         kokoro: ['kokorokey', 'voicekokoro', 'kokorospeed'],
         kitten: ['kittenvoice', 'kittenspeed', 'kittensamplerate'],
@@ -4559,6 +4674,9 @@ function update(response, sync = true) {
     
     if (response !== undefined) {
 		if (response.cohostCapability) cohostAccessCapability = response.cohostCapability;
+        if (response.settings) {
+            popupPanelVisibility = (response.settings.popupPanelVisibility || {}).object || {};
+        }
         applyPopupBeginnerMode(getPopupBeginnerMode(response));
 
         // Load profiles if they weren't loaded during init (e.g., due to startup timing)
@@ -4614,7 +4732,7 @@ function update(response, sync = true) {
             document.getElementById("remote_control_url").href = baseURL + "sampleapi.html?session=" + response.streamID + password;
             const obsControlDockUrl = document.getElementById("obs_control_dock_url");
             if (obsControlDockUrl) {
-                obsControlDockUrl.href = baseURL + "obs-control-dock.html?session=" + encodeURIComponent(response.streamID);
+                obsControlDockUrl.href = baseURL + "obs-control-dock.html?session=" + encodeURIComponent(response.streamID) + getLocalServerConnectionParams();
             }
             // The hideLinks variable is not reset to false globally here, its state is managed by the checkbox and classList.
 
@@ -4626,7 +4744,7 @@ function update(response, sync = true) {
                 // A more robust way is if refreshLinks stores the raw URLs on the elements or returns them.
                 // For now, let's assume link elements have an href that needs cleaning.
                 const linkIdsToClean = [
-                    'docklink', 'cohostlink', 'privatechatbotlink', 'chatbotlink', 'aipromptlink', 'aioverlaylink',
+                    'docklink', 'cohostlink', 'privatechatbotlink', 'chatbotlink', 'aipromptlink', 'aieventlink', 'aioverlaylink',
                     'overlaylink', 'emoteswalllink', 'hypemeterlink', 'hypetrainlink', 'metalink', 'waitlistlink',
                     'tipjarlink', 'tickerlink', 'wordcloudlink', 'polllink', 'flowactionslink',
                     'custom-gif-commandslink', 'creditslink', 'giveawaylink', 'gameslink', 'leaderboardlink', 'scoreboard',
@@ -4643,7 +4761,7 @@ function update(response, sync = true) {
                         const originalHref = linkElement.href; // Or from a 'data-raw-url' attribute if refreshLinks sets one
                         const cleanedUrl = removeTTSProviderParams(originalHref);
                         linkElement.href = cleanedUrl;
-                        if (linkElement.innerText !== "Click to open link" || !currentHideLinks) { // Avoid overwriting "Click to open" if links are hidden
+                        if (!currentHideLinks || linkElement.textContent !== "Click to open link") { // Read text without forcing layout between link updates.
                            linkElement.innerText = currentHideLinks ? "Click to open link" : getGeneratedLinkDisplayUrl(linkElement, cleanedUrl);
                         }
                         // If your old `sourceElement.raw` was important, you might need to update a similar attribute
@@ -4730,6 +4848,9 @@ function update(response, sync = true) {
 
         if (("state" in response) && streamID) {
             isExtensionOn = response.state;
+            // The status is dynamic; a later language fetch must not replace it
+            // with the static "Extension active" translation for toggle-on-off.
+            document.getElementById("disableButtonText").removeAttribute("data-translate");
             if (isExtensionOn) {
                 document.body.classList.add("extension-enabled");
                 document.body.classList.remove("extension-disabled");
@@ -4832,13 +4953,12 @@ function processLegacySetting(key, value, sync) {
 
 const OPENCODE_ZEN_MODELS_URL = "https://opencode.ai/zen/v1/models";
 const OPENCODE_ZEN_FREE_MODEL_ORDER = [
-    "big-pickle",
-    "deepseek-v4-flash-free",
+    "nemotron-3.5-lightning-free",
     "mimo-v2.5-free",
-    "qwen3.6-plus-free",
-    "minimax-m3-free",
+    "ling-3.0-flash-fin-free",
     "nemotron-3-ultra-free",
-    "nemotron-3-super-free"
+    "big-pickle",
+    "deepseek-v4-flash-free"
 ];
 const OPENCODE_ZEN_MODEL_CACHE_MS = 60 * 60 * 1000;
 let openCodeModelLoadInFlight = null;
@@ -4860,6 +4980,8 @@ function getOpenCodeFreeModelRank(modelId) {
 
 function isOpenCodeChatCompletionsModel(modelId) {
     const value = String(modelId || "").trim().toLowerCase();
+    if (value.indexOf('muse-') === 0 || value.indexOf('grok-') === 0) return false;
+    if (value.indexOf('go/') === 0) return ['go/glm-5.3-flash', 'go/mimo-v2.5', 'go/deepseek-v4-flash'].indexOf(value) !== -1;
     return isOpenCodeFreeModelId(value) ||
         value === "big-pickle" ||
         value.indexOf("deepseek-") === 0 ||
@@ -4901,12 +5023,16 @@ function populateOpenCodeModelSelect(modelIds) {
     autoOption.value = "auto";
     autoOption.textContent = "Auto - free models only";
     select.appendChild(autoOption);
+    const goAuto = document.createElement('option');
+    goAuto.value = 'go-auto';
+    goAuto.textContent = 'Auto - free first, then Go subscription';
+    select.appendChild(goAuto);
 
     sortOpenCodeModelIds((modelIds || []).filter(isOpenCodeChatCompletionsModel)).forEach(function (id) {
         if (!id) return;
         const option = document.createElement("option");
         option.value = id;
-        option.textContent = isOpenCodeFreeModelId(id) ? id + " (free)" : id;
+        option.textContent = id.indexOf("go/") === 0 ? id.slice(3) + " (Go subscription)" : (isOpenCodeFreeModelId(id) ? id + " (free)" : id);
         select.appendChild(option);
     });
 
@@ -4936,7 +5062,7 @@ async function loadOpenCodeModels(force) {
     setOpenCodeModelStatus("Loading OpenCode models...", "#bbb");
     openCodeModelLoadInFlight = (async function () {
         try {
-            const headers = { "Accept": "application/json" };
+            const headers = { "Accept": "application/json", "x-opencode-session": "ssn-model-discovery" };
             const apiKey = getOpenCodeApiKeyFromPopup();
             if (apiKey) headers.Authorization = "Bearer " + apiKey;
             const response = await fetch(OPENCODE_ZEN_MODELS_URL, {
@@ -4955,6 +5081,16 @@ async function loadOpenCodeModels(force) {
                 throw new Error("No models returned");
             }
             const compatibleModels = models.filter(isOpenCodeChatCompletionsModel);
+            try {
+                const goResponse = await fetch('https://opencode.ai/zen/go/v1/models', { headers: headers });
+                if (goResponse.ok) {
+                    const goPayload = await goResponse.json();
+                    (goPayload.data || []).forEach(function (entry) {
+                        const id = 'go/' + entry.id;
+                        if (isOpenCodeChatCompletionsModel(id)) compatibleModels.push(id);
+                    });
+                }
+            } catch (error) { console.warn('[OpenCode] Go model discovery unavailable.'); }
             const modelList = compatibleModels.length ? compatibleModels : OPENCODE_ZEN_FREE_MODEL_ORDER;
             openCodeModelCache = {
                 fetchedAt: Date.now(),
@@ -5075,6 +5211,135 @@ function getPopupBeginnerMode(response) {
 	return !!(response.settings && response.settings.beginnerMode && response.settings.beginnerMode.setting === true);
 }
 
+var popupPanelVisibility = {};
+var popupPanelSections = null;
+var popupPanelPreview = '';
+
+function getPopupPanelSections() {
+	if (popupPanelSections) return popupPanelSections;
+	popupPanelSections = [];
+	document.querySelectorAll('.container > [data-panel-section]').forEach(function(element) {
+		var id = element.dataset.panelSection;
+		var section = popupPanelSections.find(function(item) { return item.id === id; });
+		if (!section) {
+			section = { id: id, elements: [], heading: null };
+			popupPanelSections.push(section);
+		}
+		section.elements.push(element);
+		var heading = element.querySelector(':scope > h2');
+		if (heading) section.heading = heading;
+	});
+	return popupPanelSections;
+}
+
+function getPopupPanelSection(element) {
+	var part = element && element.closest('[data-panel-section]');
+	return part ? getPopupPanelSections().find(function(section) { return section.id === part.dataset.panelSection; }) : null;
+}
+
+function getPopupPanelSectionLabel(section) {
+	var label = (section.heading.querySelector('.title-group') || section.heading).cloneNode(true);
+	label.querySelectorAll('a, button, label').forEach(function(action) { action.remove(); });
+	label.querySelectorAll('.emoji').forEach(function(emoji) { emoji.appendChild(document.createTextNode(' ')); });
+	return label.textContent.replace(/\s+/g, ' ').trim();
+}
+
+function isPopupPanelBeginnerHidden(section) {
+	return document.body.classList.contains('beginner-mode') && section.heading.parentElement.classList.contains('beginner-advanced');
+}
+
+function isPopupPanelSectionShown(section) {
+	if (typeof popupPanelVisibility[section.id] === 'boolean') return popupPanelVisibility[section.id];
+	return !isPopupPanelBeginnerHidden(section);
+}
+
+function applyPopupPanelVisibility() {
+	var changed = false;
+	getPopupPanelSections().forEach(function(section) {
+		var preview = popupPanelPreview === section.id;
+		var hidden = popupPanelVisibility[section.id] === false && !preview;
+		// Override the beginner preset for entire features it normally omits.
+		var selected = (popupPanelVisibility[section.id] === true || preview) && isPopupPanelBeginnerHidden(section);
+		section.elements.forEach(function(element) {
+			if (element.classList.contains('popup-panel-hidden') !== hidden || element.classList.contains('popup-panel-selected') !== selected) changed = true;
+			element.classList.toggle('popup-panel-hidden', hidden);
+			element.classList.toggle('popup-panel-selected', selected);
+			element.querySelectorAll('.beginner-advanced').forEach(function(child) {
+				child.classList.toggle('popup-panel-selected', selected);
+			});
+		});
+	});
+	var notice = document.getElementById('panelPreviewNotice');
+	notice.hidden = !popupPanelPreview;
+	if (popupPanelPreview) {
+		var section = getPopupPanelSections().find(function(item) { return item.id === popupPanelPreview; });
+		document.getElementById('panelPreviewText').textContent = getTranslation('viewing-hidden-section', 'Viewing a hidden section:') + ' ' + getPopupPanelSectionLabel(section);
+	}
+	if (changed) document.dispatchEvent(new Event('popup-panel-visibility-changed'));
+}
+
+function setupPopupPanelEditor() {
+	var dialog = document.getElementById('panelEditor');
+	var list = document.getElementById('panelSectionList');
+	var save = document.getElementById('savePanelSections');
+	var showAll = document.getElementById('showAllPanelSections');
+	var cancel = document.getElementById('cancelPanelEditor');
+	var error = document.getElementById('panelEditorError');
+	document.getElementById('customizePanel').addEventListener('click', function() {
+		list.textContent = '';
+		error.textContent = '';
+		getPopupPanelSections().forEach(function(section) {
+			var row = document.createElement('div');
+			row.className = 'popup-toggle-row';
+			var toggle = document.createElement('label');
+			toggle.className = 'switch';
+			var input = document.createElement('input');
+			input.type = 'checkbox';
+			input.id = 'panel-section-' + section.id;
+			input.dataset.panelChoice = section.id;
+			input.checked = isPopupPanelSectionShown(section);
+			var slider = document.createElement('span');
+			slider.className = 'slider round';
+			toggle.appendChild(input);
+			toggle.appendChild(slider);
+			var label = document.createElement('label');
+			label.htmlFor = input.id;
+			label.textContent = getPopupPanelSectionLabel(section);
+			row.appendChild(toggle);
+			row.appendChild(label);
+			list.appendChild(row);
+		});
+		dialog.showModal();
+	});
+	showAll.addEventListener('click', function() {
+		list.querySelectorAll('input').forEach(function(input) { input.checked = true; });
+	});
+	cancel.addEventListener('click', function() { dialog.close(); });
+	dialog.addEventListener('cancel', function(event) { if (save.disabled) event.preventDefault(); });
+	save.addEventListener('click', function() {
+		var selection = Object.assign({}, popupPanelVisibility);
+		list.querySelectorAll('input').forEach(function(input) { selection[input.dataset.panelChoice] = input.checked; });
+		save.disabled = showAll.disabled = cancel.disabled = dialog.querySelector('fieldset').disabled = true;
+		error.textContent = '';
+		chrome.runtime.sendMessage({ cmd: 'saveSetting', type: 'json', setting: 'popupPanelVisibility', value: JSON.stringify(selection) }, function(response) {
+			save.disabled = showAll.disabled = cancel.disabled = dialog.querySelector('fieldset').disabled = false;
+			if (chrome.runtime.lastError || !response || response.saved === false || response.error) {
+				error.textContent = getTranslation('panel-save-failed', 'Could not save the panel. Please try again.');
+				return;
+			}
+			popupPanelVisibility = selection;
+			popupPanelPreview = '';
+			applyPopupPanelVisibility();
+			dialog.close();
+		});
+	});
+	document.getElementById('hidePanelPreview').addEventListener('click', function() {
+		popupPanelPreview = '';
+		applyPopupPanelVisibility();
+		document.getElementById('customizePanel').focus();
+	});
+}
+
 var BEGINNER_ADVANCED_OPTION_SELECTORS = {
 	"wrapper-additional-chat-services-options": [
 		'[data-setting="xcapture"]',
@@ -5132,6 +5397,7 @@ var BEGINNER_ADVANCED_OPTION_SELECTORS = {
 		'[data-param1="autoqueuequestions"]',
 		'[data-param1="autopindonations"]',
 		'[data-param1="autoqueuedonations"]',
+		'[data-param1="autoqueuememberships"]',
 		'[data-param1="sync"]',
 		'[data-param1="featuredmode"]',
 		'[data-param1="pinnedonly"]',
@@ -5206,8 +5472,6 @@ var BEGINNER_ADVANCED_OPTION_SELECTORS = {
 		'[data-setting="socketserver"]',
 		'[data-setting="server2additivedelivery"]',
 		'[data-setting="lanonly"]',
-		'[data-setting="ssc"]',
-		'[data-textsetting="sscapikey"]',
 		'[data-setting="videostatspoller"]',
 		'[data-textsetting="videostatsurl"]',
 		'[data-textsetting="videostatspublisher"]',
@@ -5261,6 +5525,8 @@ var BEGINNER_ADVANCED_OPTION_SELECTORS = {
 		'[data-setting="questionKeywords"]',
 		'[data-textsetting="questionKeywords"]',
 		'[data-setting="customJsEnabled"]',
+		'[data-setting="allowExternalGifs"]',
+		'[data-setting="hideExternalGifUrl"]',
 		'[data-setting="giphy"]',
 		'[data-setting="tenor"]',
 		'[data-setting="giphy2"]',
@@ -5303,8 +5569,6 @@ var BEGINNER_ADVANCED_OPTION_SELECTORS = {
 		'[data-setting="socketserver"]',
 		'[data-setting="server2additivedelivery"]',
 		'[data-setting="lanonly"]',
-		'[data-setting="ssc"]',
-		'[data-textsetting="sscapikey"]',
 		'[data-setting="videostatspoller"]',
 		'[data-textsetting="videostatsurl"]',
 		'[data-textsetting="videostatspublisher"]',
@@ -5441,10 +5705,15 @@ function markBeginnerAdvancedSections() {
 }
 
 function applyPopupBeginnerMode(enabled) {
+	var modeChanged = document.body.classList.contains("beginner-mode") !== !!enabled;
 	markBeginnerAdvancedSections();
 	document.body.classList.toggle("beginner-mode", !!enabled);
+	applyPopupPanelVisibility();
 	if (typeof checkImportantChanges === "function" && popupImportantChangesReady === true) {
 		checkImportantChanges();
+	}
+	if (modeChanged) {
+		document.dispatchEvent(new Event("popup-beginner-mode-changed"));
 	}
 }
 
@@ -5597,11 +5866,12 @@ async function testSelectedLLMProvider() {
     output.textContent = '';
 
     try {
-        const response = await sendPopupBackgroundCommand({
+        // Submit once: the generic background-command fallback can repeat a slow request.
+        const response = await sendRuntimeCommandMessage({
             cmd: 'testLLMProvider',
             prompt: 'Reply with one short sentence confirming this chatbot connection works.',
             settingsOverride: collectLLMProviderTestSettings()
-        }, 60000);
+        }, 60000, false);
 
         if (response && response.success) {
             status.textContent = 'Connected';
@@ -5616,7 +5886,7 @@ async function testSelectedLLMProvider() {
     } catch (error) {
         status.textContent = 'Failed';
         status.style.color = '#ff8a8a';
-        output.textContent = error?.message || String(error);
+        output.textContent = error?.message === 'Response timeout' ? 'Connection test timed out.' : (error?.message || String(error));
         console.error('[LLM Test] Provider test threw:', error);
     } finally {
         output.style.display = 'block';
@@ -5637,7 +5907,7 @@ function isOpenAITTSProvider(provider) {
 // Handle TTS provider visibility
 function handleTTSProviderVisibility(provider) {
     // Hide all TTS elements
-    ["systemTTS", "elevenlabsTTS", "googleTTS", "geminiTTS", "speechifyTTS", "kokoroTTS", "kittenTTS", "openaiTTS", "piperTTS", "espeakTTS"].forEach(id => {
+    ["systemTTS", "elevenlabsTTS", "googleTTS", "geminiTTS", "fishTTS", "speechifyTTS", "kokoroTTS", "kittenTTS", "openaiTTS", "piperTTS", "espeakTTS"].forEach(id => {
         document.getElementById(id)?.classList.add("hidden");
     });
     
@@ -5650,6 +5920,8 @@ function handleTTSProviderVisibility(provider) {
         document.getElementById("googleTTS").classList.remove("hidden");
     } else if (provider == "gemini") {
         document.getElementById("geminiTTS").classList.remove("hidden");
+    } else if (provider == "fish") {
+        document.getElementById("fishTTS").classList.remove("hidden");
     } else if (provider == "speechify") {
         document.getElementById("speechifyTTS").classList.remove("hidden");
     } else if (provider == "kokoro") {
@@ -5668,7 +5940,7 @@ function handleTTSProviderVisibility(provider) {
 // Handle secondary TTS provider visibility
 function handleTTSProvider10Visibility(provider) {
     // Hide all TTS10 elements
-    ["systemTTS10", "elevenlabsTTS10", "googleTTS10", "geminiTTS10", "speechifyTTS10", "kokoroTTS10", "kittenTTS10", "openaiTTS10", "piperTTS10", "espeakTTS10"].forEach(id => {
+    ["systemTTS10", "elevenlabsTTS10", "googleTTS10", "geminiTTS10", "fishTTS10", "speechifyTTS10", "kokoroTTS10", "kittenTTS10", "openaiTTS10", "piperTTS10", "espeakTTS10"].forEach(id => {
         document.getElementById(id)?.classList.add("hidden");
     });
     
@@ -5681,6 +5953,8 @@ function handleTTSProvider10Visibility(provider) {
         document.getElementById("googleTTS10").classList.remove("hidden");
     } else if (provider == "gemini") {
         document.getElementById("geminiTTS10").classList.remove("hidden");
+    } else if (provider == "fish") {
+        document.getElementById("fishTTS10").classList.remove("hidden");
     } else if (provider == "speechify") {
         document.getElementById("speechifyTTS10").classList.remove("hidden");
     } else if (provider == "kokoro") {
@@ -5699,7 +5973,7 @@ function handleTTSProvider10Visibility(provider) {
 // Handle featured TTS provider visibility (param2)
 function handleTTSProvider2Visibility(provider) {
     // Hide all TTS2 elements
-    ["systemTTS2", "elevenlabsTTS2", "googleTTS2", "geminiTTS2", "speechifyTTS2", "kokoroTTS2", "kittenTTS2", "openaiTTS2", "piperTTS2", "espeakTTS2"].forEach(id => {
+    ["systemTTS2", "elevenlabsTTS2", "googleTTS2", "geminiTTS2", "fishTTS2", "speechifyTTS2", "kokoroTTS2", "kittenTTS2", "openaiTTS2", "piperTTS2", "espeakTTS2"].forEach(id => {
         document.getElementById(id)?.classList.add("hidden");
     });
     
@@ -5712,6 +5986,8 @@ function handleTTSProvider2Visibility(provider) {
         document.getElementById("googleTTS2").classList.remove("hidden");
     } else if (provider == "gemini") {
         document.getElementById("geminiTTS2").classList.remove("hidden");
+    } else if (provider == "fish") {
+        document.getElementById("fishTTS2").classList.remove("hidden");
     } else if (provider == "speechify") {
         document.getElementById("speechifyTTS2").classList.remove("hidden");
     } else if (provider == "kokoro") {
@@ -5730,7 +6006,7 @@ function handleTTSProvider2Visibility(provider) {
 // Handle Flow Actions TTS provider visibility (param18)
 function handleTTSProvider18Visibility(provider) {
     // Hide all TTS18 elements
-    ["systemTTS18", "elevenlabsTTS18", "googleTTS18", "geminiTTS18", "speechifyTTS18", "kokoroTTS18", "kittenTTS18", "openaiTTS18", "piperTTS18", "espeakTTS18"].forEach(id => {
+    ["systemTTS18", "elevenlabsTTS18", "googleTTS18", "geminiTTS18", "fishTTS18", "speechifyTTS18", "kokoroTTS18", "kittenTTS18", "openaiTTS18", "piperTTS18", "espeakTTS18"].forEach(id => {
         document.getElementById(id)?.classList.add("hidden");
     });
 
@@ -5743,6 +6019,8 @@ function handleTTSProvider18Visibility(provider) {
         document.getElementById("googleTTS18")?.classList.remove("hidden");
     } else if (provider == "gemini") {
         document.getElementById("geminiTTS18")?.classList.remove("hidden");
+    } else if (provider == "fish") {
+        document.getElementById("fishTTS18").classList.remove("hidden");
     } else if (provider == "speechify") {
         document.getElementById("speechifyTTS18")?.classList.remove("hidden");
     } else if (provider == "kokoro") {
@@ -6089,6 +6367,17 @@ function scrollToSetting(targetSection, targetSetting) {
 
 var baseURL = "https://socialstream.ninja/";
 
+function getSourceModeBase(value) {
+	if (!value) return "";
+	try {
+		const parsed = new URL(value);
+		if (!["http:", "https:", "file:", "chrome-extension:", "moz-extension:"].includes(parsed.protocol)) return "";
+		return value;
+	} catch (e) {
+		return "";
+	}
+}
+
 function normalizeGeneratedLinkBase(value) {
 	if (!value || typeof value !== "string") return "";
 	try {
@@ -6391,6 +6680,7 @@ function getTargetMap() {
 		'reactions': 27,
         'hypetrain': 29,
         'aiprompt': 31,
+        'aievent': 32,
     };
 }
 
@@ -6577,10 +6867,8 @@ function handleElementParam(ele, targetId, paramType, sync, value = null) {
                         targetElement.raw = updateURL(`lang=${langValue}`, targetElement.raw);
                         targetElement.raw = updateURL(`voice=${encodeURIComponent(voiceValue)}`, targetElement.raw);
                     } else if (keyOnly === 'speechifylang') {
-                        // Remove existing parameter first
-                        targetElement.raw = removeQueryParamWithValue(targetElement.raw, 'voicespeechify');
-                        // Speechify only uses voice parameter
-                        targetElement.raw = updateURL(`voicespeechify=${voiceValue}`, targetElement.raw);
+                        targetElement.raw = updateURL(`speechifylang=${langValue}`, targetElement.raw);
+                        if (voiceValue) targetElement.raw = updateURL(`voicespeechify=${voiceValue}`, targetElement.raw);
                     } else if (keyOnly.endsWith('lang')) {
                         // Generic handling for other *lang parameters
                         const prefix = keyOnly.slice(0, -4);
@@ -6653,7 +6941,7 @@ function handleElementParam(ele, targetId, paramType, sync, value = null) {
         } else if (keyOnly === 'lang' || keyOnly === 'systemlang') {
             targetElement.raw = removeQueryParamWithValue(targetElement.raw, 'voice');
         } else if (keyOnly === 'speechifylang') {
-            targetElement.raw = removeQueryParamWithValue(targetElement.raw, 'voicespeechify');
+            // Speechify voice ID is independent of the optional language override.
         } else if (keyOnly.endsWith('lang')) {
             // Generic handling for other *lang parameters
             const prefix = keyOnly.slice(0, -4);
@@ -6952,8 +7240,8 @@ function handleOptionParam(ele, targetId, paramType, sync) {
                     targetElement.raw = updateURL(`googlelang=${langValue}`, targetElement.raw);
                     targetElement.raw = updateURL(`voicegoogle=${voiceValue}`, targetElement.raw);
                 } else if (paramValue === 'speechifylang') {
-                    // Speechify doesn't use separate lang param, just voice
-                    targetElement.raw = updateURL(`voicespeechify=${voiceValue}`, targetElement.raw);
+                    targetElement.raw = updateURL(`speechifylang=${langValue}`, targetElement.raw);
+                    if (voiceValue) targetElement.raw = updateURL(`voicespeechify=${voiceValue}`, targetElement.raw);
                 } else if (paramValue === 'lang' || paramValue === 'systemlang') {
                     // System TTS uses generic lang and voice
                     targetElement.raw = updateURL(`lang=${langValue}`, targetElement.raw);
@@ -7124,6 +7412,10 @@ function handleSetting(ele, sync) {
         }
     }
     
+    if (ele.dataset.setting === "socketserver") {
+        syncSupportedServerParamsForTarget("flowactions", document.getElementById("flowactions"), document.getElementById("dock"), "actions.html");
+        refreshLinks();
+    }
     if (ele.dataset.setting === "hideyourlinks") {
         refreshLinks();
     }
@@ -7194,13 +7486,14 @@ function refreshGeneratedConnectionLinks(paramName, value) {
         setGeneratedLink(element, replaceGeneratedConnectionParam(element.raw, paramName, value));
     });
 
-    ['sampleoverlay', 'remote_control_url', 'obs_control_dock_url'].forEach(function(elementId) {
+    ['sampleoverlay', 'remote_control_url', 'obs_control_dock_url', 'games_gallery_url', 'games_gallery_menu_url'].forEach(function(elementId) {
         const link = document.getElementById(elementId);
         if (!link || !link.href) return;
         link.href = replaceGeneratedConnectionParam(link.href, paramName, value);
     });
 
     refreshLinks();
+    if (window.updateMonetizationLinks) window.updateMonetizationLinks();
 }
 
 function handleSpecialSettings(ele, sync) {
@@ -7364,7 +7657,7 @@ function handleOptionSetting(ele, sync) {
         const suffix = settingType === 'optionsetting2' ? '2' : (settingType === 'optionsetting10' ? '10' : (settingType === 'optionsetting18' ? '18' : ''));
         const ttsProviderElements = [
             `systemTTS${suffix}`, `elevenlabsTTS${suffix}`, `googleTTS${suffix}`, `geminiTTS${suffix}`,
-            `speechifyTTS${suffix}`, `kokoroTTS${suffix}`, `kittenTTS${suffix}`, `openaiTTS${suffix}`, `piperTTS${suffix}`, `espeakTTS${suffix}`
+            `fishTTS${suffix}`, `speechifyTTS${suffix}`, `kokoroTTS${suffix}`, `kittenTTS${suffix}`, `openaiTTS${suffix}`, `piperTTS${suffix}`, `espeakTTS${suffix}`
         ];
         
         ttsProviderElements.forEach(id => {
@@ -7934,6 +8227,50 @@ function validateRoomId(roomId) {
 
 let overlayPreviewSequence = 0;
 
+function attachMultiAlertSoundLibrary(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input || !window.SSNSoundLibrary || document.getElementById(inputId + '-library')) return;
+    const container = document.createElement('div');
+    container.style.width = input.closest('.ssn-alert-setup') ? '100%' : '95%';
+    const custom = document.createElement('details');
+    custom.className = 'ssn-sound-custom';
+    const summary = document.createElement('summary');
+    summary.textContent = '📎 Custom sound URL / upload';
+    custom.appendChild(summary);
+    const inputRow = input.parentElement;
+    inputRow.insertAdjacentElement('beforebegin', container);
+    inputRow.insertAdjacentElement('beforebegin', custom);
+    custom.appendChild(inputRow);
+    window.SSNSoundLibrary.attach({
+        container, input, id: inputId, label: ({
+            'multi-alert-custombeep': 'Default alert sound',
+            'multi-alert-followsound': 'Follow sound',
+            'multi-alert-subsound': 'Subscription sound',
+            'multi-alert-donosound': 'Donation sound',
+            'multi-alert-bitssound': 'Bits / cheer sound',
+            'multi-alert-raidsound': 'Raid sound',
+            'multi-alert-auctionsound': 'Auction win sound',
+            'multi-alert-hypesound': 'Hype train sound'
+        })[inputId] || '🔊 Sound (optional)',
+        getValue: () => input.value,
+        setValue: value => {
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            const enabled = document.querySelector('[data-param25="beep"]');
+            if (enabled && !enabled.checked) {
+                enabled.checked = true;
+                enabled.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        },
+        getVolume: () => {
+            const enabled = document.querySelector('[data-param25="beepvolume"]');
+            const volume = document.querySelector('[data-numbersetting25="beepvolume"]');
+            return enabled && enabled.checked && volume ? Number(volume.value) / 100 : 0.35;
+        }
+    });
+}
+
 const overlayPreviewConfigs = Object.freeze({
     multialerts: {
         frameId: 'multi-alerts-preview-frame',
@@ -7945,7 +8282,7 @@ const overlayPreviewConfigs = Object.freeze({
 });
 
 const overlayPreviewState = {
-    multialerts: { pending: null, timer: null, muted: false }
+    multialerts: { pending: null, timer: null, muted: false, loading: false, playOnLoad: false }
 };
 
 function getLocalOverlayUrl(path) {
@@ -8116,7 +8453,42 @@ function buildOverlayPreviewUrl(previewKey) {
     return previewUrl.toString();
 }
 
-function syncOverlayPreview(previewKey) {
+function syncAlertEffectSummaries() {
+    for (let index = 1; index <= 3; index++) {
+        const prefix = 'multi-alert-effect' + index;
+        const summary = document.getElementById(prefix + '-summary');
+        if (!summary) continue;
+        const value = key => document.getElementById(prefix + '-' + key).value.trim();
+        const media = value('media'), sound = value('sound');
+        const parts = [];
+        if (value('state') === 'false') parts.push('Paused');
+        if (!media && !sound) parts.push('Not configured');
+        else {
+            const type = document.getElementById(prefix + '-type');
+            parts.push(type.options[type.selectedIndex].textContent);
+            const min = value('min'), max = value('max');
+            if (min || max) {
+                if (!['donation', 'bits'].includes(type.value) || (min && (!Number.isFinite(Number(min)) || Number(min) < 0)) || (max && (!Number.isFinite(Number(max)) || Number(max) < 0)) || (min && max && Number(min) > Number(max))) parts.push('Check amount limits');
+                else parts.push(min && max && Number(min) === Number(max) ? 'exactly $' + Number(min) + ' USD' : (min && max ? '$' + Number(min) + '–$' + Number(max) + ' USD' : min ? '$' + Number(min) + '+ USD' : 'up to $' + Number(max) + ' USD'));
+            }
+            if (media) parts.push('Media');
+            if (sound) {
+                const entry = window.SSNSoundLibrary && window.SSNSoundLibrary.sounds.find(item => item.url === sound);
+                parts.push(entry ? entry.name : 'Custom sound');
+            } else parts.push('Default sound');
+        }
+        summary.textContent = parts.join(' · ');
+    }
+}
+
+function syncOverlayPreview(previewKey, force = false) {
+    syncAlertEffectSummaries();
+    for (let index = 1; index <= 3; index++) {
+        const toggle = document.getElementById('multi-alert-effect' + index + '-enabled');
+        const saved = document.getElementById('multi-alert-effect' + index + '-state');
+        if (toggle && saved) toggle.checked = saved.value !== 'false';
+    }
+    if (window.SSNSoundLibrary) window.SSNSoundLibrary.syncAll();
     const config = overlayPreviewConfigs[previewKey];
     if (!config) {
         return;
@@ -8127,6 +8499,12 @@ function syncOverlayPreview(previewKey) {
         return;
     }
 
+    // The closed preview should not parse an overlay or create an AudioContext
+    // on every menu opening. Once loaded, keep it in sync even when collapsed.
+    const section = frame.closest('.collapsible');
+    const toggle = section && section.querySelector('input.collapsible-input');
+    if (!force && !frame.dataset.currentPreviewUrl && toggle && !toggle.checked) return;
+
     const nextUrl = buildOverlayPreviewUrl(previewKey);
     if (frame.dataset.currentPreviewUrl === nextUrl) {
         replayOverlayPreview(previewKey, { silent: true });
@@ -8134,6 +8512,7 @@ function syncOverlayPreview(previewKey) {
     }
 
     frame.dataset.currentPreviewUrl = nextUrl;
+    overlayPreviewState[previewKey].loading = true;
     frame.src = nextUrl;
 }
 
@@ -8186,6 +8565,7 @@ function sendOverlayPreview(previewKey, descriptor) {
 
     state.pending = descriptor;
     if (descriptor === false) {
+        state.playOnLoad = false;
         if (state.timer) {
             clearTimeout(state.timer);
             state.timer = null;
@@ -8196,6 +8576,13 @@ function sendOverlayPreview(previewKey, descriptor) {
         return;
     }
 
+    syncOverlayPreview(previewKey, true);
+    if (state.loading) {
+        // Keep an explicit first test (including its sound) until the lazy frame
+        // is ready. Ordinary settings refreshes still replay silently.
+        state.playOnLoad = true;
+        return;
+    }
     replayOverlayPreview(previewKey, { silent: false });
 }
 
@@ -8529,6 +8916,7 @@ function attachReactionTestButton() {
                 chatmessage: '<span class="reaction-heart">👍</span>',
                 chatimg: '',
                 contentimg: '',
+                // Chat body representation only: true is literal text without added HTML; false permits sanitized HTML. This is not a trust flag for other fields.
                 textonly: false,
                 platform: 'youtube',
                 type: 'youtube',
@@ -8553,8 +8941,17 @@ function attachOverlayPreviewControls(previewKey, buttonConfigs = []) {
 
     const frame = document.getElementById(config.frameId);
     if (frame) {
+        const section = frame.closest('.collapsible');
+        const toggle = section && section.querySelector('input.collapsible-input');
+        if (toggle) toggle.addEventListener('change', () => {
+            if (toggle.checked) syncOverlayPreview(previewKey);
+        });
         frame.addEventListener('load', () => {
-            replayOverlayPreview(previewKey, { silent: true });
+            const state = overlayPreviewState[previewKey];
+            state.loading = false;
+            const silent = !state.playOnLoad;
+            state.playOnLoad = false;
+            replayOverlayPreview(previewKey, { silent });
         });
     }
 
@@ -8611,6 +9008,13 @@ function refreshLinks(){
     return;
   }
 
+  // Also recalculate after changing auto-show/presets, not just transport toggles.
+  const selectionSource = document.getElementById("dock");
+  const selectionTokens = collectServerParamTokens(selectionSource);
+  ["dock", "overlay"].forEach(function(targetId) {
+    syncSupportedServerParamsForTarget(targetId, document.getElementById(targetId), selectionSource, null, selectionTokens);
+  });
+
   let hideLinks = false;
   document.querySelectorAll("input[data-setting='hideyourlinks']").forEach(x=>{
     if (x.checked){
@@ -8649,6 +9053,7 @@ function refreshLinks(){
       'creditslink': 'credits',
       'privatechatbotlink': 'privatechatbot',
       'aipromptlink': 'aiprompt',
+      'aieventlink': 'aievent',
       'eventsdashboardlink': 'eventsdashboard',
       'reactionslink': 'reactions',
       'custom-gif-commandslink': 'custom-gif-commands',
@@ -8894,6 +9299,33 @@ async function openHostedMediaUploadForInput(inputElement, popupName = 'uploadMe
     };
 
     window.addEventListener('message', handler);
+}
+
+function setupDockBeepPreview() {
+    const button = document.getElementById('dock-loud-beep-preview');
+    const status = document.getElementById('dock-loud-beep-status');
+    if (!button || !status) return;
+    let audio = null;
+    button.onclick = function() {
+        if (!audio) audio = new Audio('./audio/tone-loud.wav');
+        const enabled = document.querySelector('[data-param1="beepvolume"]');
+        const volume = document.getElementById('dock-beep-volume-range');
+        const requestedVolume = enabled && enabled.checked && volume ? parseInt(volume.value, 10) / 100 : 1;
+        audio.volume = Number.isFinite(requestedVolume) ? Math.min(1, Math.max(0, requestedVolume)) : 1;
+        audio.currentTime = 0;
+        button.disabled = true;
+        function finish(message) {
+            button.disabled = false;
+            status.textContent = message;
+        }
+        audio.onended = function() { finish('Preview finished.'); };
+        audio.onerror = function() { finish('Could not play the beep preview.'); };
+        status.textContent = 'Playing preview at ' + Math.round(audio.volume * 100) + '% volume.';
+        audio.play().catch(function() { finish('Could not play the beep preview.'); });
+    };
+    window.addEventListener('pagehide', function() {
+        if (audio) audio.pause();
+    });
 }
 
 function triggerCustomGifPreview(entry) {
@@ -9706,6 +10138,10 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                 rate: getParam('kokorospeed') ? getNumber('kokorospeed', 1.0) : 1.0,
             },
             
+            piper: {
+                speed: getParam('piperspeed') ? getNumber('piperspeed', 1.0) : 1.0
+            },
+
             // Kitten TTS settings
             kitten: {
                 voice: getId('kittenVoiceSelect')?.selectedOptions[0]?.value || "expr-voice-4-f",
@@ -9746,13 +10182,20 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
 				speakingRate: getParam('elevenrate') ? getNumber('elevenrate', 1.0) : 1.0
 			},
             
+            fish: {
+                endpoint: (getId('fishEndpoint')?.value || getText('fishendpoint') || '').trim(),
+                key: (getId('fishAPIKey')?.value || getText('fishkey') || '').trim(),
+                voice: (getId('fishVoiceID')?.value || getText('voicefish') || '').trim(),
+                model: getOption('fishmodel', 's2.1-pro-free'),
+                speed: getParam('fishspeed') ? Math.max(0.5, Math.min(2, getNumber('fishspeed', 1))) : 1
+            },
             // Speechify settings
             speechify: {
                 key: getId('speechifyAPIKey')?.value || getText('speechifykey'),
                 voice: getId('speechifyVoiceID')?.value || getText('voicespeechify'),
-                lang: getParam('speechifylang') ? getOption('speechifylang', 'en-US') : 'en-US',
+                lang: getParam('speechifylang') ? getOption('speechifylang', 'en-US') : undefined,
                 speed: getParam('speechifyspeed') ? getNumber('speechifyspeed', 1.0) : 1.0,
-                model: getParam('speechifymodel') ? getOption('speechifymodel', 'simba-english') : 'simba-english'
+                model: getParam('speechifymodel') ? getOption('speechifymodel', 'simba-3.0') : 'simba-3.0'
             },
             
             // OpenAI settings
@@ -9821,7 +10264,9 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
     },
     
     testTTS(section = "") {
-        const testPhrase = "The quick brown fox jumps over the lazy dog";
+        const testPhrase = getLocalTtsSample(this.getProviderSelect(section)?.value,
+            document.getElementById('kokoroVoiceSelect' + section)?.value,
+            document.getElementById('piperVoiceSelect' + section)?.value);
         const provider = this.getProviderSelect(section)?.value || "system";
         if (provider === "system") {
             populateSystemVoiceDropdowns();
@@ -9833,7 +10278,11 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
             this.showFeedback("A TTS test is already running. Cancel it before starting another test.", 'warning', section, 0);
             return;
         }
-        if (provider === 'piper' || provider === 'espeak') {
+        if (provider === 'piper' && this.piperPreviewBusy) {
+            this.showFeedback("Piper is finishing the previous test. Try again in a moment.", 'info', section);
+            return;
+        }
+        if (provider === 'espeak') {
             let warningMsg = getTranslation("tts-test-not-available", "Testing is not available for {provider}. This TTS provider works during streaming only.");
             warningMsg = warningMsg.replace('{provider}', serviceName);
             this.showFeedback(warningMsg, 'error', section);
@@ -9856,7 +10305,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
         // Add success feedback after audio plays
         if (this.audio) {
             this.audio.onended = () => {
-                this.showFeedback(`${serviceName} test completed successfully`, 'success', section);
+                this.showFeedback(`Audio played here. Check OBS playback separately.`, 'success', section);
                 this.audio.onended = originalOnEnded;
                 this.finishedAudio();
             };
@@ -9872,6 +10321,9 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
             }
             if (provider === 'elevenlabs' && !settings.elevenLabs.key) {
                 throw new Error('ElevenLabs API key is required');
+            }
+            if (provider === 'fish' && !settings.fish.key && !settings.fish.endpoint) {
+                throw new Error('Fish Audio API key is required');
             }
             if (provider === 'speechify' && !settings.speechify.key) {
                 throw new Error('Speechify API key is required');
@@ -9909,6 +10361,8 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                 if (!this.premiumQueueActive) {
                     await this.elevenLabsTTS(text, settings, section);
                 } 
+            } else if (settings.service === "fish" && (settings.fish.key || settings.fish.endpoint)) {
+                if (!this.premiumQueueActive) await this.fishTTS(text, settings, section);
             } else if ((settings.service == "speechify") && settings.speechify.key) {
                 if (!this.premiumQueueActive) {
                     await this.speechifyTTS(text, settings, section);
@@ -9925,6 +10379,8 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                 if (!this.premiumQueueActive) {
                     await this.kokoroTTS(text, settings, section);
                 }
+            } else if (settings.service == "piper") {
+                await this.piperTTS(text, settings, section);
             } else if (settings.service == "kitten") {
                 if (!this.premiumQueueActive) {
                     await this.kittenTTS(text, settings, section);
@@ -9936,7 +10392,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                 this.finishedAudio();
             }
         } catch (error) {
-            this.showFeedback(`Error: ${error.message}`, 'error');
+            this.showFeedback(`Error: ${error.message}`, 'error', section);
             this.finishedAudio();
             console.error(error);
         }
@@ -9972,7 +10428,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                 audioElement.src = this.activeAudioUrl;
                 audioElement.volume = Math.max(0, Math.min(1, Number(settings.volume) || 0));
                 audioElement.onended = () => {
-                    this.showFeedback("System TTS test completed successfully", "success", section);
+                    this.showFeedback("Audio played here. Check OBS playback separately.", "success", section);
                     this.finishedAudio(section);
                 };
                 audioElement.onerror = () => {
@@ -9988,7 +10444,9 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
             }
         }
 
-        if (!window.speechSynthesis) return;
+        if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+            throw new Error("System speech is unavailable here. Choose another TTS provider.");
+        }
         
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = settings.system.lang;
@@ -9997,6 +10455,9 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
         utterance.pitch = settings.system.pitch;
         
         const voices = this.voices && this.voices.length ? this.voices : populateSystemVoiceDropdowns();
+        if (!voices || !voices.length) {
+            throw new Error("No system voices are available yet. Retry, or choose another TTS provider.");
+        }
         if (voices && settings.system.voice) {
             const matchingVoice = resolvePopupSystemVoice(voices, settings.system.voice, settings.system.lang);
             if (matchingVoice) {
@@ -10004,6 +10465,22 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
             }
         }
         
+        this.activeSystemUtterance = utterance;
+        this.premiumQueueActive = true;
+        this.setTestRunning(section, true, "Generating...");
+        utterance.onstart = () => {
+            if (this.activeSystemUtterance === utterance) this.setTestRunning(section, true, "Playing...");
+        };
+        utterance.onend = () => {
+            if (this.activeSystemUtterance !== utterance) return;
+            this.showFeedback("Browser reported speech complete. Check OBS playback separately.", "success", section);
+            this.finishedAudio(section);
+        };
+        utterance.onerror = (event) => {
+            if (this.activeSystemUtterance !== utterance) return;
+            this.showFeedback("System voice could not speak (" + (event.error || "unknown error") + "). Try another voice or provider.", "error", section);
+            this.finishedAudio(section);
+        };
         window.speechSynthesis.speak(utterance);
     },
 	
@@ -10012,7 +10489,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
             this.premiumQueueActive = true;
             this.cancelRequested = false;
             this.setTestRunning(section, true, "Loading...");
-			if (ssapp){
+			if (ssapp && !/^(ef_dora|em_alex|em_santa|pf_dora|pm_alex|pm_santa)$/.test(settings.kokoro.voice)){
 				try {
                     this.setTestRunning(section, true, "Generating...");
                     this.showFeedback("Generating Kokoro test audio in the desktop app...", 'info', section, 0);
@@ -10032,7 +10509,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
                     this.activeAudioUrl = URL.createObjectURL(audioBlob);
 					audioElement.src = this.activeAudioUrl;
 					audioElement.onended = () => {
-                        this.showFeedback("Kokoro TTS test completed successfully", 'success', section);
+                        this.showFeedback("Audio played here. Check OBS playback separately.", 'success', section);
                         this.finishedAudio(section);
                     };
 					
@@ -10048,11 +10525,12 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
 			
 			if (!kokoroTtsInstance) {
                 this.showFeedback("Loading Kokoro TTS. First use may download a large model and can take a while.", 'warning', section, 0);
-				const initialized = await initKokoro();
+				const initialized = await initKokoro(true);
                 if (this.cancelRequested) {
                     return;
                 }
 				if (!initialized) {
+                    this.showFeedback("Kokoro could not load. Retry, or choose Piper for a lighter voice.", "error", section, 0);
 					this.finishedAudio(section);
 					return;
 				}
@@ -10066,7 +10544,7 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
 			const audioElement = document.createElement("audio");
             this.activeAudioElement = audioElement;
 			audioElement.onended = () => {
-                this.showFeedback("Kokoro TTS test completed successfully", 'success', section);
+                this.showFeedback("Audio played here. Check OBS playback separately.", 'success', section);
                 this.finishedAudio(section);
             };
 			
@@ -10113,6 +10591,71 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
 		}
 	},
     
+    async piperTTS(text, settings, section = "") {
+        const token = {};
+        this.localPiperTest = token;
+        this.piperPreviewBusy = true;
+        this.premiumQueueActive = true;
+        this.setTestRunning(section, true, "Loading...");
+        this.showFeedback("Loading Piper. First use downloads the selected voice.", 'info', section, 0);
+        try {
+            if (!window.ProperPiperTTS) {
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = './thirdparty/piper/piper-tts-proper.js';
+                    script.onload = resolve;
+                    script.onerror = () => { script.remove(); reject(new Error('Could not load Piper')); };
+                    document.head.appendChild(script);
+                });
+            }
+            if (!window.ort) {
+                await new Promise((resolve, reject) => {
+                    const script = document.createElement('script');
+                    script.src = './thirdparty/ort.min.js';
+                    script.onload = resolve;
+                    script.onerror = () => { script.remove(); reject(new Error('Could not load the speech runtime')); };
+                    document.head.appendChild(script);
+                });
+            }
+            const voice = document.getElementById('piperVoiceSelect' + section)?.value || 'en_US-hfc_female-medium';
+            if (!this.piperPreview || this.piperPreview.voiceId !== voice) {
+                if (this.piperPreview?.session?.release) await this.piperPreview.session.release();
+                this.piperPreview = new window.ProperPiperTTS(voice);
+            }
+            const instance = this.piperPreview;
+            await instance.init();
+            if (this.localPiperTest !== token) return;
+            this.setTestRunning(section, true, "Generating...");
+            this.showFeedback('Generating Piper preview...', 'info', section, 0);
+            const blob = await instance.synthesize(text, settings.piper?.speed || 1.0);
+            if (this.localPiperTest !== token) return;
+            const audio = document.createElement('audio');
+            this.activeAudioElement = audio;
+            this.activeAudioUrl = URL.createObjectURL(blob);
+            audio.src = this.activeAudioUrl;
+            audio.volume = Math.max(0, Math.min(1, Number(settings.volume) || 0));
+            audio.onended = () => {
+                if (this.localPiperTest !== token) return;
+                this.showFeedback("Audio played here. Check OBS playback separately.", 'success', section);
+                this.finishedAudio(section);
+            };
+            audio.onerror = () => {
+                if (this.localPiperTest !== token) return;
+                this.showFeedback("Piper audio could not be played", 'error', section);
+                this.finishedAudio(section);
+            };
+            this.setTestRunning(section, true, "Playing...");
+            this.showFeedback('Playing Piper preview...', 'info', section, 0);
+            await audio.play();
+        } catch (error) {
+            if (this.localPiperTest !== token) return;
+            this.showFeedback("Piper: " + error.message, 'error', section, 0);
+            this.finishedAudio(section);
+        } finally {
+            this.piperPreviewBusy = false;
+        }
+    },
+
     async kittenTTS(text, settings) {
         try {
             const baseUrl = chrome.runtime.getURL('');
@@ -10428,20 +10971,73 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
 	},
 
     
+    async fishTTS(text, settings, section = this.currentTtsSection || "") {
+        this.premiumQueueActive = true;
+        this.setTestRunning(section, true, "Generating...");
+        const audio = document.createElement("audio");
+        this.activeAudioElement = audio;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        try {
+            const bridge = settings.fish.endpoint;
+            const data = bridge
+                ? { input: text, voice: settings.fish.voice || "", model: settings.fish.model, response_format: "mp3", speed: settings.fish.speed }
+                : { text: text, format: "mp3", prosody: { speed: settings.fish.speed } };
+            if (!bridge && settings.fish.voice) data.reference_id = settings.fish.voice;
+            const headers = { "Content-Type": "application/json", "Accept": "audio/mpeg" };
+            if (settings.fish.key) headers.Authorization = "Bearer " + settings.fish.key;
+            if (!bridge) headers.model = settings.fish.model;
+            const response = await fetch(bridge || "https://api.fish.audio/v1/tts", {
+                method: "POST", headers: headers,
+                body: JSON.stringify(data), signal: controller.signal
+            });
+            if (!response.ok) throw new Error("Fish Audio request failed with HTTP " + response.status);
+            const blob = await response.blob();
+            if (!blob.size) throw new Error("Fish Audio returned empty audio");
+            if (this.activeAudioElement !== audio) return;
+            this.activeAudioUrl = URL.createObjectURL(blob);
+            audio.src = this.activeAudioUrl;
+            audio.volume = Math.max(0, Math.min(1, Number(settings.volume) || 0));
+            audio.onended = () => {
+                if (this.activeAudioElement !== audio) return;
+                this.showFeedback("Audio played here. Check OBS playback separately.", "success", section);
+                this.finishedAudio(section);
+            };
+            audio.onerror = () => {
+                if (this.activeAudioElement !== audio) return;
+                this.showFeedback("Fish Audio playback failed.", "error", section);
+                this.finishedAudio(section);
+            };
+            this.setTestRunning(section, true, "Playing...");
+            await audio.play();
+        } catch (error) {
+            if (this.activeAudioElement !== audio) return;
+            this.showFeedback(error.name === "AbortError" ? "Fish Audio request timed out. Try again." : error.message, "error", section);
+            this.finishedAudio(section);
+        } finally {
+            clearTimeout(timeout);
+        }
+    },
+
     speechifyTTS(text, settings) {
         this.premiumQueueActive = true;
-        const url = "https://api.sws.speechify.com/v1/audio/speech";
+        const url = "https://api.speechify.ai/v1/audio/speech";
+        // Speechify uses SSML percentage adjustments, not a top-level speed field.
+        const speed = Math.max(0.5, Math.min(3, parseFloat(settings.speechify.speed) || 1));
+        const rate = Math.round((speed - 1) * 100);
+        const escapedText = String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+        const input = '<speak><prosody rate="' + (rate >= 0 ? '+' : '') + rate + '%">' + escapedText + '</prosody></speak>';
         
         const data = {
-            input: `<speak>${text}</speak>`,
+            input: input,
             voice_id: settings.speechify.voice || "henry",
             model: settings.speechify.model,
             audio_format: "mp3",
-            speed: settings.speechify.speed,
             language: settings.speechify.lang
         };
         
-        this.fetchAudioContent(url, {
+        return this.fetchAudioContent(url, {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${settings.speechify.key}`,
@@ -10548,6 +11144,13 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
     cancelTest(section = this.currentTtsSection || "") {
         if (!this.premiumQueueActive) return;
         this.cancelRequested = true;
+        if (this.activeSystemUtterance) {
+            this.activeSystemUtterance.onstart = null;
+            this.activeSystemUtterance.onend = null;
+            this.activeSystemUtterance.onerror = null;
+            this.activeSystemUtterance = null;
+            try { window.speechSynthesis.cancel(); } catch (e) {}
+        }
         try {
             if (this.activeAudioElement) {
                 this.activeAudioElement.pause();
@@ -10565,6 +11168,13 @@ const TTSManager = {  // this is for testing the audio I think; not for managing
     },
 
     finishTtsTest(section = this.currentTtsSection || "", keepCancelFlag = false) {
+        this.localPiperTest = null;
+        if (this.activeSystemUtterance) {
+            this.activeSystemUtterance.onstart = null;
+            this.activeSystemUtterance.onend = null;
+            this.activeSystemUtterance.onerror = null;
+            this.activeSystemUtterance = null;
+        }
         if (this.activeAudioUrl) {
             try {
                 URL.revokeObjectURL(this.activeAudioUrl);
@@ -10650,11 +11260,11 @@ async function initKokoroWithFallback(preferredDevice) {
 	throw lastError || new Error("Unable to initialize Kokoro TTS");
 }
 
-async function initKokoro() {
-	if (ssapp) return false;
+async function initKokoro(browserOnly = false) {
+	if (ssapp && !browserOnly) return false;
 	if (kokoroDownloadInProgress) return false;
 	
-	if (!KokoroTTS) {
+	if (!KokoroTTS || !kokoroTtsInstance) {
 		try {
 			const kokoroAssets = getKokoroAssets();
 			kokoroDownloadInProgress = true;
@@ -10999,6 +11609,7 @@ async function testThermalPrinterAlignment() {
 }
 
 document.addEventListener("DOMContentLoaded", async function(event) {
+    setupPopupPanelEditor();
     reorderGlobalSettingsSections();
     loadSourcesListFromRuntimeManifest();
 	setupDynamicCustomUrlControls();
@@ -11299,6 +11910,8 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		updateSettings(newCommandEntry, true);
 	});
 	
+	document.getElementById("copy-stream-id").onclick = copyStreamId;
+
 	document.querySelectorAll("[data-copy]").forEach(ele=>{
 		ele.onclick = copyToClipboard;
 	});
@@ -11326,6 +11939,76 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 	]);
 	attachTipJarTestDonationButtons();
 	attachReactionTestButton();
+	for (let index = 1; index <= 3; index++) {
+		const prefix = 'multi-alert-effect' + index;
+		const enabled = document.getElementById(prefix + '-enabled');
+		const savedState = document.getElementById(prefix + '-state');
+		const status = document.getElementById(prefix + '-status');
+		const setField = function(key, value) {
+			const input = document.getElementById(prefix + '-' + key);
+			input.value = value;
+			input.dispatchEvent(new Event('change', { bubbles: true }));
+		};
+		document.getElementById(prefix + '-clear-sound').addEventListener('click', function() {
+			if (window.SSNSoundLibrary) window.SSNSoundLibrary.stop();
+			setField('sound', '');
+			status.textContent = 'Sound cleared. Default alert audio still applies.';
+		});
+		document.getElementById(prefix + '-reset').addEventListener('click', function() {
+			if (window.SSNSoundLibrary) window.SSNSoundLibrary.stop();
+			['media', 'sound', 'min', 'max', 'state'].forEach(key => setField(key, ''));
+			setField('type', 'donation');
+			status.textContent = 'Alert reset. Other alerts are unchanged.';
+		});
+		['type', 'media', 'sound', 'min', 'max', 'state'].forEach(function(key) {
+			document.getElementById(prefix + '-' + key).addEventListener('input', syncAlertEffectSummaries);
+			document.getElementById(prefix + '-' + key).addEventListener('change', syncAlertEffectSummaries);
+		});
+		enabled.addEventListener('change', function() {
+			savedState.value = enabled.checked ? '' : 'false';
+			savedState.dispatchEvent(new Event('change', { bubbles: true }));
+			status.textContent = enabled.checked ? 'Alert enabled.' : 'Alert paused. Settings kept.';
+		});
+		document.getElementById(prefix + '-preset').addEventListener('click', function() {
+			const values = { type: 'donation', min: '100', max: '100', state: '' };
+			if (!document.getElementById(prefix + '-sound').value.trim()) values.sound = './audio/alerts/voice-thank-you.wav';
+			Object.keys(values).forEach(function(key) {
+				const input = document.getElementById(prefix + '-' + key);
+				input.value = values[key];
+				input.dispatchEvent(new Event('change', { bubbles: true }));
+			});
+			const audio = document.querySelector('[data-param25="beep"]');
+			if (!audio.checked) { audio.checked = true; audio.dispatchEvent(new Event('change', { bubbles: true })); }
+			document.getElementById(prefix + '-min').closest('details').open = true;
+			status.textContent = 'Exactly $100 USD. Sound ready; add media if you like.';
+		});
+		document.getElementById(prefix + '-test').addEventListener('click', function() {
+			if (!enabled.checked) { status.textContent = 'Enable this alert before testing.'; enabled.focus(); return; }
+			const category = document.getElementById(prefix + '-type').value || 'donation';
+			const minText = document.getElementById(prefix + '-min').value.trim();
+			const maxText = document.getElementById(prefix + '-max').value.trim();
+			const min = minText ? Number(minText) : null;
+			const max = maxText ? Number(maxText) : null;
+			if ((min !== null && (!Number.isFinite(min) || min < 0)) ||
+				(max !== null && (!Number.isFinite(max) || max < 0)) ||
+				(min !== null && max !== null && min > max) ||
+				((min !== null || max !== null) && category !== 'donation' && category !== 'bits')) {
+				alert('Use a valid amount range for donations/bits, or leave both amount fields blank for other events.');
+				return;
+			}
+			const descriptor = buildMultiAlertPreviewDescriptor(category);
+			if (category === 'donation' || category === 'bits') {
+				const amount = min !== null ? min : (max !== null ? max : 100);
+				descriptor.overrides.hasDonation = category === 'bits' ? String(amount * 100) + ' bits' : '$' + amount + ' USD';
+				descriptor.overrides.donoValue = amount;
+			}
+			document.getElementById('wrapper-multi-alert-preview-options').checked = true;
+			const preview = document.getElementById('multi-alerts-preview-frame');
+			preview.scrollIntoView({ block: 'center' });
+			preview.focus({ preventScroll: true });
+			sendOverlayPreview('multialerts', descriptor);
+		});
+	}
 
 	var previewPlatformSelect = document.getElementById('multi-alert-preview-platform');
 	if (previewPlatformSelect) {
@@ -11647,6 +12330,24 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		if (/\bcolor\b|\bcolour\b|\bhue\b|\bbackground\b|\bpagebg\b|\bchroma\b|\btextcolor\b|\bnamecolor\b|\bstroke\b|\bglow\b/.test(text)) {
 			synonyms.push('color colour hue background foreground fill text page chroma stroke glow');
 		}
+        // Expand specific concepts only, so generic searches do not match every row.
+        var aliases = [
+            [/\btts\b|\btext to speech\b/, 'tts text to speech read aloud read chat speech synthesis'],
+            [/\bfont\b/, 'font typeface typography lettering'],
+            [/\bfont size\b|\bfontsize\b/, 'text size lettering size bigger text smaller text'],
+            [/\bopacity\b|\btransparent\b|\btransparency\b/, 'opacity transparency transparent see through'],
+            [/\bprofanity\b|\bswear\b|\bbad words\b/, 'profanity swear swearing bad words cursing language filter'],
+            [/\bblacklist\b|\bblocklist\b/, 'blacklist blocklist blocked denylist'],
+            [/\bwhitelist\b|\ballowlist\b/, 'whitelist allowlist allowed'],
+            [/\bavatar\b|\bprofile picture\b|\bprofile image\b/, 'avatar profile picture profile image user picture'],
+            [/\btimestamp\b|\btime stamp\b/, 'timestamp time stamp message time'],
+            [/\bemotes?\b|\bemoticons?\b/, 'emote emotes emoticon emoticons']
+        ];
+        aliases.forEach(function(alias) {
+            if (alias[0].test(text)) {
+                synonyms.push(alias[1]);
+            }
+        });
 		if (synonyms.length) {
 			parts.push(synonyms.join(' '));
 		}
@@ -11789,8 +12490,25 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		if (!element) {
 			return 'Open matching option';
 		}
-		var preferred = element.querySelector ? element.querySelector('label:not(.switch), h3, h4, h5, button span, a, span') : null;
-		var label = (preferred && preferred.textContent) || element.textContent || element.getAttribute('title') || element.getAttribute('placeholder') || '';
+		// Read the complete row: its first span may be an icon or an empty switch slider.
+		var parts = [];
+		var walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+		var node;
+		while ((node = walker.nextNode())) {
+			var parent = node.parentElement;
+			if (parent && !shouldSkipPopupSearchText(parent) && !parent.closest('.switch, .popup-control-icon, [aria-hidden="true"]') && !isPopupSearchExplicitlyHidden(parent)) {
+				parts.push(node.nodeValue);
+			}
+		}
+		var label = parts.join(' ').replace(/\s+/g, ' ').trim() || element.getAttribute('aria-label') || element.getAttribute('title') || element.getAttribute('placeholder') || '';
+		if (!label && /^(input|select|textarea)$/i.test(element.tagName || '')) {
+			var controlLabel = element.labels && element.labels[0];
+			var previous = element.previousElementSibling;
+			if (!controlLabel && previous && /^(label|span)$/i.test(previous.tagName) && !isPopupSearchExplicitlyHidden(previous)) {
+				controlLabel = previous;
+			}
+			label = controlLabel ? controlLabel.textContent : normalizePopupSearchText(getPopupSearchTargetKeys(element).split('|')[0]);
+		}
 		label = String(label).replace(/\s+/g, ' ').trim();
 		if (!label) {
 			label = 'Open matching option';
@@ -11838,11 +12556,22 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		var target = record && record.element;
 		var wrapper = record && record.wrapper;
 		closePopupSearch();
+		// Search covers all settings; leave the enabled-only view before revealing one.
+		setPopupEnabledFilter(false);
+		var panelSection = getPopupPanelSection(target);
+		popupPanelPreview = panelSection && !isPopupPanelSectionShown(panelSection) ? panelSection.id : '';
+		applyPopupPanelVisibility();
 		if (wrapper) {
 			openPopupSearchSection(wrapper);
 		}
 		if (!target || !document.contains(target)) {
 			return;
+		}
+		// Reveal optional subsections as well as the outer menu accordion.
+		var section = target;
+		while (section && section !== document.body) {
+			if (section.tagName === 'DETAILS') section.open = true;
+			section = section.parentElement;
 		}
 		setPopupSearchMatch(target);
 		target.scrollIntoView({block: 'center'});
@@ -11854,6 +12583,11 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 
 	function renderPopupSearchResults(records, totalMatches) {
 		clearPopupSearchResults();
+        var toolbar = document.getElementById('popupSearchToolbar');
+        if (toolbar && popupSearchResults) {
+            popupSearchResults.style.top = Math.ceil(toolbar.getBoundingClientRect().bottom + 4) + 'px';
+        }
+
 		if (!popupSearchResults) {
 			return;
 		}
@@ -11877,6 +12611,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			button.setAttribute('data-search-targets', getPopupSearchTargetKeys(record.element));
 			button.textContent = getPopupSearchResultLabel(record.element);
 			var sectionText = getPopupSearchResultSection(record.wrapper);
+			var panelSection = getPopupPanelSection(record.element);
+			if (panelSection && !isPopupPanelSectionShown(panelSection)) {
+				sectionText += (sectionText ? ' · ' : '') + getTranslation('hidden-section', 'Hidden section');
+			}
 			if (sectionText) {
 				var section = document.createElement('span');
 				section.className = 'popup-search-result-section';
@@ -11895,9 +12633,10 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			return false;
 		}
 		return element.id === 'searchInput' ||
-			element.id === 'searchIcon' ||
+			element.id === 'popupSearchToolbar' ||
 			element.id === 'popupSearchNoResults' ||
 			element.id === 'popupSearchResults' ||
+			element.id === 'panelEditor' ||
 			element.id === 'activeIcon' ||
 			element.id === 'languageIcon' ||
 			element.id === 'language-selector-container';
@@ -11928,8 +12667,9 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 				(node.style && node.style.display === 'none')) {
 				return true;
 			}
+			if (node.classList && node.classList.contains('popup-panel-hidden')) return true;
 			if (beginnerMode && node.classList &&
-				(node.classList.contains('beginner-advanced') ||
+				((node.classList.contains('beginner-advanced') && !node.classList.contains('popup-panel-selected')) ||
 					node.classList.contains('beginner-advanced-option') ||
 					node.classList.contains('beginner-static-advanced-option'))) {
 				return true;
@@ -12279,8 +13019,6 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		}
 		if (popupSearchInput) {
 			popupSearchInput.value = '';
-			popupSearchInput.style.display = 'none';
-			popupSearchInput.style.width = '0';
 		}
 		clearPopupSearchHidden();
 		clearPopupSearchMatches();
@@ -12291,6 +13029,19 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		restorePopupSearchScrollContext();
 		popupSearchIndex = null;
 	}
+
+	function refreshPopupSearchIndex() {
+		popupSearchIndex = null;
+		if (popupSearchTimer) {
+			clearTimeout(popupSearchTimer);
+			popupSearchTimer = null;
+		}
+		if (popupSearchInput && popupSearchInput.value.trim()) {
+			applyPopupSearchNow(popupSearchInput.value);
+		}
+	}
+	document.addEventListener('popup-beginner-mode-changed', refreshPopupSearchIndex);
+	document.addEventListener('popup-panel-visibility-changed', refreshPopupSearchIndex);
 
 	if (popupSearchInput) {
 		popupSearchInput.addEventListener('input', function() {
@@ -12320,43 +13071,34 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		if (!searchInput) {
 			return;
 		}
-		if (searchInput.style.display === 'none' || searchInput.style.display === '') {
-			searchInput.style.display = 'block';
-			searchInput.style.width = 'calc(100% - 35px)'; // Match this with your CSS width
-			searchInput.focus(); // Optional: Focus on the input field when it's shown
-		} else {
-			searchInput.focus();
-			searchInput.select();
-		}
+		searchInput.focus();
+		searchInput.select();
 	}
 
 	document.addEventListener('keydown', function(e) {
+		if (document.getElementById('panelEditor').open) return;
 		if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
 			e.preventDefault();
 			openPopupSearch();
 		} else if (e.key === 'Escape') {
 			var searchInput = popupSearchInput || document.getElementById('searchInput');
-			if (searchInput && window.getComputedStyle(searchInput).display !== 'none') {
+			if (searchInput && (document.activeElement === searchInput || document.body.classList.contains('popup-searching'))) {
 				e.preventDefault();
 				closePopupSearch();
 			}
 		}
 	});
 
-	document.getElementById('searchIcon').addEventListener('click', function() {
-		var searchInput = popupSearchInput || document.getElementById('searchInput');
-		if (searchInput.style.display === 'none' || searchInput.style.display === '') {
-			openPopupSearch();
-		} else {
-			closePopupSearch();
-		}
-	});
-	
+
 	var activeToggle = false;
 	var activeToggleOpenState = null;
 	var activeToggleScrollY = null;
-	document.getElementById('activeIcon').addEventListener('click', function() {
-		activeToggle = !activeToggle;
+	function setPopupEnabledFilter(enabled) {
+		if (activeToggle === enabled) {
+			return;
+		}
+		activeToggle = enabled;
+		document.getElementById('activeIcon').setAttribute('aria-pressed', String(enabled));
 		if (activeToggle) {
 			// Remember open sections and scroll position so toggling off restores them
 			activeToggleOpenState = [];
@@ -12372,12 +13114,12 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 				ele.checked = true;
 			});
 			
-			document.querySelectorAll('button:not(.showalways)').forEach(function(item) {
-				item.style.display = 'none';
+			document.querySelectorAll('button:not(.showalways):not(.popup-search-result)').forEach(function(item) {
+				item.classList.add('popup-enabled-filter-hidden');
 			});
 
 			document.querySelectorAll('.wrapper').forEach(w => {
-				var menuItems = w.querySelectorAll('.options_group > div');
+				var menuItems = w.querySelectorAll('.options_group > div, .options_group > details');
 				var matches = 0;
 				menuItems.forEach(function(item) {
 					var checkbox = item.querySelector('input[type="checkbox"]');
@@ -12398,22 +13140,22 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 
 					if (isActive) {
 						matches += 1;
-						item.style.display = '';
+						item.classList.remove('popup-enabled-filter-hidden');
 					} else {
-						item.style.display = 'none';
+						item.classList.add('popup-enabled-filter-hidden');
 					}
 				});
 				
 				if (!matches) {
-					w.style.display = "none";
+					w.classList.add('popup-enabled-filter-hidden');
 				} else {
-					w.style.display = "";
+					w.classList.remove('popup-enabled-filter-hidden');
 				}
 			});
 		} else {
 			
-			document.querySelectorAll('button:not(.showalways)').forEach(function(item) {
-				item.style.display = '';
+			document.querySelectorAll('button:not(.showalways):not(.popup-search-result)').forEach(function(item) {
+				item.classList.remove('popup-enabled-filter-hidden');
 			});
 			// Reset to original state
 			if (activeToggleOpenState) {
@@ -12429,16 +13171,20 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 				});
 			}
 			document.querySelectorAll('.wrapper').forEach(ele => {
-				ele.style.display = "";
+				ele.classList.remove('popup-enabled-filter-hidden');
 			});
-			document.querySelectorAll('.options_group > div').forEach(ele => {
-				ele.style.display = "";
+			document.querySelectorAll('.options_group > div, .options_group > details').forEach(ele => {
+				ele.classList.remove('popup-enabled-filter-hidden');
 			});
 			if (typeof activeToggleScrollY === 'number') {
 				restorePopupScrollTop(activeToggleScrollY);
 				activeToggleScrollY = null;
 			}
 		}
+	}
+
+	document.getElementById('activeIcon').addEventListener('click', function() {
+		setPopupEnabledFilter(!activeToggle);
 	});
 	
 	const uploadBadwordsButton = document.getElementById('uploadBadwordsButton');
@@ -12480,6 +13226,9 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		manageUserPointsBtn.addEventListener('click', async function() {
 			const username = await prompt("Enter username to manage points for:");
 			if (!username) return;
+			const platform = await prompt("Enter platform/source type (for example: youtube, twitch, or default):");
+			if (!platform || !platform.trim()) return;
+			const type = platform.trim();
 			
 			const action = await prompt("Enter action (add/subtract/set):");
 			if (!action || !['add', 'subtract', 'set'].includes(action.toLowerCase())) {
@@ -12494,17 +13243,18 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 				return;
 			}
 			
-				if (confirm(`Are you sure you want to ${action} ${points} points ${action === 'subtract' ? 'from' : 'to'} ${username}?`)) {
+				if (confirm(`Are you sure you want to ${action} ${points} points ${action === 'subtract' ? 'from' : 'to'} ${username} (${type})?`)) {
 					chrome.runtime.sendMessage({
 						cmd: "manageUserPoints",
 						username: username,
+						type: type,
 						action: action.toLowerCase(),
 						points: points
 					}, function(response) {
 						if (response && response.success) {
 							const available = Number.isFinite(response?.available) ? response.available : undefined;
 							const total = Number.isFinite(response?.points) ? response.points : undefined;
-							let summary = `Successfully ${action === 'set' ? 'set' : action + 'ed'} ${points} points ${action === 'subtract' ? 'from' : 'for'} ${username}.`;
+							let summary = `Successfully ${action === 'set' ? 'set' : action + 'ed'} ${points} points ${action === 'subtract' ? 'from' : 'for'} ${username} (${type}).`;
 							if (available !== undefined) summary += ` Available: ${available}`;
 							if (total !== undefined) summary += ` | Total: ${total}`;
 							alert(summary);
@@ -13292,7 +14042,7 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			overlayLink.style.display = '';
 
 			const getGameBaseParams = function(rawUrl, gamePath) {
-				const keepParams = ['session', 'room', 'password', 'v'];
+				const keepParams = ['session', 'room', 'password', 'v', 'localserver', 'localserverport'];
 				const cleanParams = new URLSearchParams();
 				if (rawUrl && rawUrl.includes('?')) {
 					const params = new URLSearchParams(rawUrl.split('?')[1]);
@@ -13743,6 +14493,8 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 	}
 
 
+	setupDockBeepPreview();
+
 	// Handle custom beep upload buttons
 	const uploadBeepBtn = document.getElementById('uploadBeepBtn');
 	if (uploadBeepBtn) {
@@ -13778,6 +14530,7 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		{ btnId: 'uploadHypeSoundBtn', inputId: 'multi-alert-hypesound' }
 	];
 	alertSoundUploads.forEach(({ btnId, inputId }) => {
+		attachMultiAlertSoundLibrary(inputId);
 		const btn = document.getElementById(btnId);
 		if (btn) {
 			btn.onclick = function() {
@@ -13785,6 +14538,15 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 			};
 		}
 	});
+	for (let index = 1; index <= 3; index++) {
+		['Media', 'Sound'].forEach(function(kind) {
+			if (kind === 'Sound') attachMultiAlertSoundLibrary('multi-alert-effect' + index + '-sound');
+			const btnId = 'uploadMultiEffect' + index + kind + 'Btn';
+			document.getElementById(btnId).onclick = function() {
+				openHostedMediaUploadForInput(document.getElementById('multi-alert-effect' + index + '-' + kind.toLowerCase()), btnId);
+			};
+		});
+	}
 
 	const hostedMediaUploads = [
 		{ btnId: 'uploadDefaultAvatarBtn', inputId: 'default_avatar' },
@@ -13821,3 +14583,37 @@ document.addEventListener("DOMContentLoaded", async function(event) {
 		};
 	}
 });
+
+function getLocalTtsSample(provider, kokoroVoice, piperVoice) {
+    const voice = provider === 'kokoro' ? kokoroVoice : provider === 'piper' ? piperVoice : '';
+    if (/^(e[fm]_|es_)/.test(voice || '')) return 'Hola, gracias por participar. ¿Qué jugamos hoy?';
+    if (/^(p[fm]_|pt_BR)/.test(voice || '')) return 'Olá, obrigado por participar. O que vamos jogar hoje?';
+    if (/^pt_PT/.test(voice || '')) return 'Olá, obrigado por participares. O que vamos jogar hoje?';
+    return 'The quick brown fox jumps over the lazy dog';
+}
+function setupLocalTtsLanguageFilters() {
+    document.querySelectorAll('select[id^="kokoroVoiceSelect"], select[id^="piperVoiceSelect"]').forEach(function(voices) {
+        if (document.getElementById(voices.id + 'Language')) return;
+        const filter = document.createElement('select');
+        filter.id = voices.id + 'Language';
+        filter.setAttribute('aria-label', 'Filter voices by language');
+        filter.style.cssText = 'display:block;max-width:100%;margin:6px 0';
+        const choices = [['', 'All languages'], ['en', 'English'], ['es', 'Spanish'], ['pt', 'Portuguese']];
+        choices.forEach(function(choice) { filter.add(new Option(choice[1], choice[0])); });
+        voices.parentNode.insertBefore(filter, voices);
+        voices.addEventListener('change', function() { filter.dispatchEvent(new Event('change')); });
+        filter.addEventListener('change', function() {
+            Array.prototype.forEach.call(voices.options, function(option) {
+                const id = option.value;
+                const language = /^(a[fm]_|b[fm]_|en_)/.test(id) ? 'en' : /^(e[fm]_|es_)/.test(id) ? 'es' : /^(p[fm]_|pt_)/.test(id) ? 'pt' : '';
+                // Preserve the saved voice even if it is outside the current filter.
+                option.hidden = !!filter.value && language !== filter.value && !option.selected;
+            });
+            voices.querySelectorAll('optgroup').forEach(function(group) {
+                group.hidden = Array.prototype.every.call(group.children, function(option) { return option.hidden; });
+            });
+        });
+    });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupLocalTtsLanguageFilters);
+else setupLocalTtsLanguageFilters();

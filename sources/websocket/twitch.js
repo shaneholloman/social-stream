@@ -281,6 +281,7 @@ const recentTwitchChatEchoIds = new Map();
 const TWITCH_CHAT_SEND_TIMEOUT_MS = Number(globalThis.__SSAPP_TWITCH_CHAT_SEND_TIMEOUT_MS__) || 15000;
 const TWITCH_CHAT_ECHO_TIMEOUT_MS = Number(globalThis.__SSAPP_TWITCH_CHAT_ECHO_TIMEOUT_MS__) || 10000;
 const twitchDisplayNameByLogin = new Map();
+const pendingTwitchMessages = new Set();
 const TWITCH_DELAYTWITCH_MS = 3000;
 const TWITCH_DELETE_DELAY_BUFFER_MS = 50;
 const WEBSOCKET_READY_STATE = {
@@ -1902,7 +1903,13 @@ function ensureClientFactory() {
 		}
 	}
 
-	function pushDeleteMessage(data) {
+	function pushDeleteMessage(data, username) {
+		// Deletes can arrive while profile lookups, moderation delay, or PluralMind are pending.
+		pendingTwitchMessages.forEach(function(message) {
+			if (data.id ? message.id === data.id : !username || message.username === normalizeTwitchLogin(username)) {
+				message.deleted = true;
+			}
+		});
 		sendDeleteMessage(data);
 		if (settings && settings.delaytwitch) {
 			setTimeout(function() {
@@ -1933,10 +1940,7 @@ function ensureClientFactory() {
 			if (!deletePayload.id && !deletePayload.username && !deletePayload.chatname) {
 				return;
 			}
-			if (!deletePayload.id) {
-				deletePayload.onlyLast = true;
-			}
-			pushDeleteMessage(deletePayload);
+			pushDeleteMessage(deletePayload, username);
 		});
 
 		client.on('ban', function(chan, username) {
@@ -1947,7 +1951,7 @@ function ensureClientFactory() {
 					deletePayload.username = username;
 					deletePayload.meta = { pluralmind: true };
 				}
-				pushDeleteMessage(deletePayload);
+				pushDeleteMessage(deletePayload, username);
 			}
 		});
 
@@ -1959,7 +1963,7 @@ function ensureClientFactory() {
 					deletePayload.username = username;
 					deletePayload.meta = { pluralmind: true };
 				}
-				pushDeleteMessage(deletePayload);
+				pushDeleteMessage(deletePayload, username);
 			}
 		});
 	}
@@ -2451,7 +2455,7 @@ async function ensureChatClientInstance() {
 					deletePayload.username = payload.user;
 					deletePayload.meta = { pluralmind: true };
 				}
-				pushDeleteMessage(deletePayload);
+				pushDeleteMessage(deletePayload, payload.user);
 			}
 			if (!activeSubscriptions.has('channel.ban')) {
 				pushTwitchBanMetaEvent({
@@ -3194,11 +3198,23 @@ async function ensureChatClientInstance() {
 	function replaceEmotesWithImages(text, twitchEmotes = null, isBitMessage = false) {
 		let workingText = typeof text === 'string' ? text : '';
 		if (workingText && twitchEmotes) {
+			// Capture contract: textonly=true means a literal chatmessage string, not HTML.
+			// Do not add formatting tags or HTML-encode it; viewer-typed <i> / &amp; stays literal.
+			// HTML mode may include markup for the normal relay checks. The flag applies only to chatmessage.
+			// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 			workingText = renderNativeEmotesWithFallback(
 				workingText,
 				twitchEmotes,
 				Boolean(settings.textonlymode)
 			);
+		} else /* textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode. */ if (!settings.textonlymode) {
+			workingText = escapeHtml(workingText);
+		}
+		// Only transform text segments, never attributes in generated emote HTML.
+		function mapText(transform) {
+			// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
+			workingText = settings.textonlymode ? transform(workingText) :
+				workingText.split(/(<[^>]+>)/g).map(part => part.startsWith('<') ? part : transform(part)).join('');
 		}
 		
 		// Handle cheermotes (bit emotes) if this is a bit message
@@ -3207,9 +3223,10 @@ async function ensureChatClientInstance() {
 			// Matches patterns like: Cheer100, 4Head100, Kappa1000, etc.
 			const cheermoteRegex = /\b(Cheer|Kappa|Kreygasm|SwiftRage|4Head|PJSalt|MrDestructoid|TriHard|NotLikeThis|FailFish|VoHiYo|PogChamp|FrankerZ|HeyGuys|DansGame|EleGiggle|BibleThump|Jebaited|SeemsGood|LUL|VoteYea|VoteNay|HotPokket|OpieOP|FutureMan|FBCatch|TBAngel|PeteZaroll|TwitchUnity|CoolStoryBob|PopCorn|KAPOW|PowerUpR|PowerUpL|DarkMode|HSCheers|PurpleStar|FBPass|FBRun|FBChallenge|RedCoat|GreenTeam|PurpleTeam|HolidayCheer|BitBoss|Streamlabs)(\d+)\b/gi;
 			
-			workingText = workingText.replace(cheermoteRegex, (match, emoteName, bitAmount) => {
+			mapText(text => text.replace(cheermoteRegex, (match, emoteName, bitAmount) => {
 				const amount = parseInt(bitAmount);
 				
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				if (settings.textonlymode) {
 					// In text-only mode, just show the cheermote as text with a space before the number
 					return emoteName + ' ' + amount;
@@ -3234,7 +3251,7 @@ async function ensureChatClientInstance() {
 				
 				// Return the cheermote image with the bit amount displayed after it
 				return `<img src="${cheermoteUrl}" alt="${escapeHtml(emoteName + ' ' + amount)}" title="${escapeHtml(emoteName + ' ' + amount)}" class="regular-emote"/><strong style="color: ${color}; margin-left: 2px;">${amount}</strong>`;
-			});
+			}));
 		}
 		
 		// Then handle third-party emotes (BTTV, 7TV, FFZ)
@@ -3242,19 +3259,25 @@ async function ensureChatClientInstance() {
 			return workingText;
 		}
 		
-		return workingText.replace(/(?<=^|\s)(\S+?)(?=$|\s)/g, (match, emoteMatch) => {
-			const emote = EMOTELIST[emoteMatch];
+		mapText(text => text.replace(/(?<=^|\s)(\S+?)(?=$|\s)/g, (match, emoteMatch) => {
+			// HTML-mode text was escaped once above; dictionary keys are literal.
+			// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
+			const emoteName = settings.textonlymode ? emoteMatch : emoteMatch.replace(/&(amp|lt|gt|quot|#0?39);/g,
+				(entity, name) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", '#039': "'" })[name]);
+			const emote = EMOTELIST[emoteName];
 			if (emote) {
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				if (settings.textonlymode) {
 					// In text-only mode, just return the emote text
 					return emoteMatch;
 				}
-				const escapedMatch = escapeHtml(emoteMatch);
+				const escapedMatch = escapeHtml(emoteName);
 				const isZeroWidth = typeof emote !== "string" && emote.zw;
-				return `<img src="${typeof emote === 'string' ? emote : emote.url}" alt="${escapedMatch}" title="${escapedMatch}" class="${isZeroWidth ? 'zero-width-emote-centered' : 'regular-emote'}"/>`;
+				return `<img src="${escapeHtml(typeof emote === 'string' ? emote : emote.url)}" alt="${escapedMatch}" title="${escapedMatch}" class="${isZeroWidth ? 'zero-width-emote-centered' : 'regular-emote'}"/>`;
 			}
 			return match;
-		});
+		}));
+		return workingText;
 	}
 
 	function fallbackParseTwitchEmotes(source) {
@@ -3290,10 +3313,13 @@ async function ensureChatClientInstance() {
 		return [];
 	}
 
+	// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 	function legacyRenderNativeEmotes(text, emotesSource, textOnlyMode) {
+		// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
+		if (textOnlyMode) return text;
 		const parsed = fallbackParseTwitchEmotes(emotesSource);
 		if (!parsed.length) {
-			return text;
+			return escapeHtml(text);
 		}
 		const flattened = parsed
 			.flatMap(({ id, positions }) =>
@@ -3313,22 +3339,22 @@ async function ensureChatClientInstance() {
 			)
 			.sort((a, b) => b.start - a.start);
 		if (!flattened.length) {
-			return text;
+			return escapeHtml(text);
 		}
-		let result = text;
+		const parts = [];
+		let endIndex = text.length;
 		flattened.forEach(({ emoteId, start, end }) => {
+			if (start < 0 || end >= endIndex) return;
 			const emoteName = text.substring(start, end + 1);
-			if (textOnlyMode) {
-				result = result.substring(0, start) + emoteName + result.substring(end + 1);
-			} else {
-				const emoteUrl = `https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0`;
-				const emoteImg = `<img src="${emoteUrl}" alt="${escapeHtml(emoteName)}" title="${escapeHtml(emoteName)}" class="regular-emote"/>`;
-				result = result.substring(0, start) + emoteImg + result.substring(end + 1);
-			}
+			const emoteUrl = `https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(emoteId)}/default/dark/2.0`;
+			parts.push(escapeHtml(text.substring(end + 1, endIndex)));
+			parts.push(`<img src="${emoteUrl}" alt="${escapeHtml(emoteName)}" title="${escapeHtml(emoteName)}" class="regular-emote"/>`);
+			endIndex = start;
 		});
-		return result;
+		return escapeHtml(text.substring(0, endIndex)) + parts.reverse().join('');
 	}
 
+	// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 	function renderNativeEmotesWithFallback(text, emoteSource, textOnlyMode) {
 		if (!text || !emoteSource) {
 			return text;
@@ -3336,31 +3362,26 @@ async function ensureChatClientInstance() {
 		if (typeof renderTwitchNativeEmotes === 'function') {
 			try {
 				return renderTwitchNativeEmotes(text, emoteSource, {
+					// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 					textOnly: textOnlyMode,
 					escapeHtml,
 					imageClassName: 'regular-emote',
-					textIsSafe: false
+					// In plain mode the helper returns text, so it must not encode it.
+					// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
+					textIsSafe: textOnlyMode
 				});
 			} catch (error) {
 				console.warn('Falling back to legacy Twitch emote renderer', error);
 			}
 		}
+		// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 		return legacyRenderNativeEmotes(text, emoteSource, textOnlyMode);
 	}
 
 	function escapeHtml(unsafe) {
 		try {
-			// Unescape the text
-			var tempDiv = document.createElement('div');
-			tempDiv.innerHTML = unsafe;
-			var unescapedText = tempDiv.textContent || tempDiv.innerText || "";
-			
-			if (settings.textonlymode) {
-				return unescapedText;
-			}
-
-			// Re-escape the text
-			return unescapedText
+			// This helper is only for HTML output, including the local preview.
+			return String(unsafe == null ? "" : unsafe)
 				.replace(/&/g, "&amp;")
 				.replace(/</g, "&lt;")
 				.replace(/>/g, "&gt;")
@@ -3369,6 +3390,21 @@ async function ensureChatClientInstance() {
 		} catch (e) {
 			return "";
 		}
+	}
+
+	function getTwitchMessageText(payload, trailing) {
+		if (!payload) return trailing || ""; // Raw IRC text.
+		if (payload.rawMessage != null) return payload.rawMessage;
+		// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
+		if (payload.textonly) return payload.chatmessage || "";
+		// Compatibility with providers that supply rendered HTML but no raw body.
+		var template = document.createElement('template');
+		template.innerHTML = payload.chatmessage || trailing || "";
+		template.content.querySelectorAll('script,style,noscript,template').forEach(node => node.remove());
+		template.content.querySelectorAll('img').forEach(node => {
+			node.parentNode.replaceChild(document.createTextNode(node.getAttribute('alt') || ''), node);
+		});
+		return template.content.textContent || "";
 	}
 	
 	let globalBadges = null;
@@ -3565,6 +3601,7 @@ async function ensureChatClientInstance() {
 
 
 	async function processMessage(parsedMessage) {
+		const pendingMessage = {};
 		try {
 		//console.log("Processing message:", parsedMessage);
 		const normalizedPayload = parsedMessage.__normalizedPayload || null;
@@ -3572,7 +3609,10 @@ async function ensureChatClientInstance() {
 		const normalizedEventTypeLower =
 			typeof normalizedEventType === 'string' ? normalizedEventType.toLowerCase() : '';
 		const user = parsedMessage.prefix.split('!')[0];
-		let message = normalizedPayload?.rawMessage ?? parsedMessage.trailing;
+		pendingMessage.id = parsedMessage.tags && parsedMessage.tags.id;
+		pendingMessage.username = normalizeTwitchLogin(user);
+		pendingTwitchMessages.add(pendingMessage);
+		let message = getTwitchMessageText(normalizedPayload, parsedMessage.trailing);
 		// Clean channel name from params (remove # prefix)
 		if (parsedMessage.params[0]) {
 			channel = parsedMessage.params[0].replace(/^#/, '');
@@ -3675,12 +3715,17 @@ async function ensureChatClientInstance() {
 				userId: normalizedPayload?.userId || parsedMessage.tags?.['user-id'],
 				username: user,
 				message: replaceEmotesWithImages(message, parsedMessage.tags?.emotes, !!parsedMessage.tags?.bits),
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				textOnly: !!settings.textonlymode
 			});
 			if (pluralmindResult) {
 				resolvedDisplayName = pluralmindResult.name;
 				message = pluralmindResult.body;
 			}
+		}
+
+		if (pendingMessage.deleted) {
+			return;
 		}
 
 		// Parse reply if enabled
@@ -3695,7 +3740,7 @@ async function ensureChatClientInstance() {
 		var span = document.createElement("div");
 		let badgeHtml = '';
 		badgeList.forEach(badgeUrl => {
-			badgeHtml += `<img class="chat-badge" src="${badgeUrl}" alt="">`;
+			badgeHtml += `<img class="chat-badge" src="${escapeHtml(badgeUrl)}" alt="">`;
 		});
 		
 		let displayMessage = escapeHtml(message);
@@ -3761,6 +3806,7 @@ async function ensureChatClientInstance() {
 		if (replyMessage) {
 			data.initial = replyMessage;
 			data.reply = originalMessage;
+			// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 			if (settings.textonlymode) {
 				data.chatmessage = replyMessage + ": " + renderedMessage;
 			} else {
@@ -3796,12 +3842,18 @@ async function ensureChatClientInstance() {
 			data.timestamp = normalizedPayload.timestamp;
 		}
 		data.hasDonation = hasDonation;
+		if (hasDonation) {
+			data.donoValue = Number(parsedMessage.tags.bits) / 100;
+			data.meta = data.meta || {};
+			data.meta.bits = Number(parsedMessage.tags.bits);
+		}
 		if (sourceInfo.image) {
 			data.sourceImg = sourceInfo.image;
 		}
 		if (sourceInfo.name) {
 			data.sourceName = sourceInfo.name;
 		}
+		// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 		data.textonly = settings.textonlymode || false;
 		data.type = "twitch";
 		
@@ -3816,9 +3868,13 @@ async function ensureChatClientInstance() {
 		
 		} catch(e){
 			console.error(e);
+		} finally {
+			pendingTwitchMessages.delete(pendingMessage);
 		}
 		//console.log(data);
-		pushMessage(data);
+		if (!pendingMessage.deleted) {
+			pushMessage(data);
+		}
 	}
 
 	function addEvent(description) {
@@ -3849,6 +3905,7 @@ async function ensureChatClientInstance() {
 		let eventData = {
 			type: "twitch",
 			event: true,
+			// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 			textonly: settings.textonlymode || false
 		};
 		
@@ -4800,8 +4857,10 @@ async function cleanupCurrentConnection() {
 			bits: event.bits,
 			chatmessage: getEventSubMessageText(event.message),
 			hasDonation: formatBitAmount(event.bits),
+			donoValue: Number(event.bits) / 100,
 			meta: { userId: event.user_id, bits: event.bits },
 			title: getTranslation("cheers", "CHEERS"),
+			// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 			textonly: settings.textonlymode || false
 		});
 		addEvent(`Cheer: ${event.user_name || 'Anonymous'} cheered ${event.bits} bits`);
@@ -4864,6 +4923,7 @@ async function cleanupCurrentConnection() {
 				bits,
 				powerUp: details.powerUp
 			},
+			// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 			textonly: settings.textonlymode || false
 		});
 		addEvent(`Power-up: ${userName} used ${details.title} (${formatBitAmount(bits)})`);
@@ -4895,6 +4955,7 @@ async function cleanupCurrentConnection() {
 				userid: event.user_id,
 				timestamp: event.followed_at,
 				meta: { userId: event.user_id, followedAt: event.followed_at },
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			});
 			if (typeof lastKnownFollowers === 'number') {
@@ -4924,6 +4985,7 @@ async function cleanupCurrentConnection() {
 				tier: event.tier,
 				isGift: event.is_gift,
 				meta: { userId: event.user_id, tier: event.tier, isGift: event.is_gift },
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			});
 			if (typeof lastKnownSubscribers === 'number') {
@@ -4950,6 +5012,7 @@ async function cleanupCurrentConnection() {
 						streakMonths: event.streak_months,
 						cumulativeMonths: event.cumulative_months
 					},
+					// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 					textonly: settings.textonlymode || false
 				});
 				addEvent(`Resub: ${event.user_name} (${event.cumulative_months} months)`);
@@ -4970,6 +5033,7 @@ async function cleanupCurrentConnection() {
 					total: event.total,
 					tier: event.tier,
 					meta: { userId: event.user_id, total: event.total, tier: event.tier },
+					// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 					textonly: settings.textonlymode || false
 				});
 				// Add to recent events
@@ -5015,6 +5079,7 @@ async function cleanupCurrentConnection() {
 						status: event.status,
 						alias: 'channel_points'
 					},
+					// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 					textonly: settings.textonlymode || false
 				});
 				
@@ -5036,6 +5101,7 @@ async function cleanupCurrentConnection() {
 						fromLogin: event.from_broadcaster_user_login,
 						viewers: event.viewers
 					},
+					// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 					textonly: settings.textonlymode || false
 				});
 				addEvent(`Raid: ${event.from_broadcaster_user_name} with ${event.viewers} viewers`);
@@ -5048,7 +5114,7 @@ async function cleanupCurrentConnection() {
 					deletePayload.username = event.user_login;
 					deletePayload.meta = { pluralmind: true };
 				}
-				pushDeleteMessage(deletePayload);
+				pushDeleteMessage(deletePayload, event.user_login);
 				pushTwitchBanMetaEvent({
 					username: event.user_login,
 					displayName: event.user_name,

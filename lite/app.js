@@ -8,6 +8,8 @@ import { YoutubeStreamingPlugin } from './plugins/youtubeStreamingPlugin.js';
 import { TwitchPlugin } from './plugins/twitchPlugin.js';
 import { TikTokPlugin } from './plugins/tiktokPlugin.js';
 import { KickPlugin } from './plugins/kickPlugin.js';
+import { FacebookPlugin } from './plugins/facebookPlugin.js';
+import { FACEBOOK_ENABLED } from './features.js';
 
 const overlayToggleDefs = [
   { key: 'transparent', id: 'session-opt-transparent', params: ['transparent'] },
@@ -1333,7 +1335,7 @@ function toPlainText(value) {
   if (!value) {
     return '';
   }
-  const div = document.createElement('div');
+  const div = document.createElement('template').content.appendChild(document.createElement('div'));
   div.innerHTML = value;
   return div.textContent || div.innerText || '';
 }
@@ -1690,6 +1692,7 @@ function createTestMessage() {
     chatimg: baseCandidate.chatimg || '',
     timestamp: now,
     event,
+    // textonly=true carries literal chatmessage text: do not HTML-parse/encode it or add emotes. HTML mode uses the provider/adapter safety boundary; Lite bypasses background.js.
     textonly: Boolean(baseCandidate.textonly),
     raw: rawData
   };
@@ -1754,8 +1757,10 @@ function createTestMessage() {
   if (baseCandidate.title) {
     message.title = baseCandidate.title;
   }
-  if (baseCandidate.donoValue) {
-    message.donoValue = baseCandidate.donoValue;
+  const usdValue = typeof baseCandidate.donoValue === 'number' ? baseCandidate.donoValue :
+    (typeof baseCandidate.donoValue === 'string' && baseCandidate.donoValue.trim() ? Number(baseCandidate.donoValue.replace(/,/g, '')) : NaN);
+  if (Number.isFinite(usdValue)) {
+    message.donoValue = usdValue;
   }
 
   return message;
@@ -2178,6 +2183,16 @@ function init() {
         onStatus: ({ plugin, state }) => addActivity({ kind: 'debug', plugin, message: `Status changed: ${state}`, timestamp: Date.now() })
       })
     ];
+    if (FACEBOOK_ENABLED) {
+      plugins.push(new FacebookPlugin({
+        messenger,
+        icon: '../sources/images/facebook.png',
+        debug: debugEnabled,
+        autoConnect: true,
+        onActivity: addActivity,
+        onStatus: ({ plugin, state }) => addActivity({ kind: 'debug', plugin, message: `Status changed: ${state}`, timestamp: Date.now() })
+      }));
+    }
     mountAllPlugins();
   } else {
     plugins = [];

@@ -127,9 +127,16 @@ class EventFlowSystem {
 
     getDonationNumericValue(message) {
         if (!message) return null;
+        if (typeof getDonationValueUSD === 'function' &&
+            (message.donoValue !== undefined || message.hasDonation || message.donation || message.donationAmount)) {
+            return getDonationValueUSD(message);
+        }
 
-        const explicitValue = this.parseDonationNumericValue(message.donoValue);
-        if (explicitValue !== null) return explicitValue;
+        const raw = message.donoValue;
+        if (typeof raw === 'number' || (typeof raw === 'string' && raw.trim())) {
+            const explicitValue = Number(typeof raw === 'string' ? raw.replace(/,/g, '') : raw);
+            if (Number.isFinite(explicitValue)) return explicitValue;
+        }
 
         const legacyValue = this.parseDonationLabelValue(message.donationAmount, message.type);
         if (legacyValue !== null) return legacyValue;
@@ -1772,6 +1779,81 @@ class EventFlowSystem {
 		});
 	}
     
+    // Only the native background bridge calls this path. Ordinary chat cannot mark
+    // itself trusted, even if it copies all fields of a host voice payload.
+    async processVoiceCommand(payload) {
+        if (!payload || typeof payload.text !== 'string' || !Number.isFinite(payload.expiresAt) || Date.now() > payload.expiresAt) return;
+        const flow = this.flows.find(f => f.active && f.id === payload.flowId);
+        if (!flow) return;
+        const trigger = flow.nodes.find(n => n.id === payload.nodeId && n.type === 'trigger' && n.triggerType === 'voicePhrase');
+        const normalizeVoice = value => String(value || '').normalize('NFKC').toLocaleLowerCase().replace(/[.,!?;:]/g, '').replace(/\s+/g, ' ').trim();
+        if (!trigger || normalizeVoice(trigger.config.phrase) !== normalizeVoice(payload.text)) return;
+        const message = {chatname:'Host', chatmessage:payload.text, type:'hostvoice', /* textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload. */ textonly:true};
+        if (!this.voiceMessages) this.voiceMessages = new WeakMap();
+        this.voiceMessages.set(message, payload);
+        try { await this.evaluateFlow(flow, message); } finally { this.voiceMessages.delete(message); }
+    }
+
+    // Only flows that explicitly opt in with a named API trigger are callable.
+    getWorkflowTriggers() {
+        const triggers = [];
+        for (const flow of this.flows || []) {
+            if (!flow.active) continue;
+            const names = new Set();
+            for (const node of flow.nodes || []) {
+                const name = node.type === 'trigger' && node.triggerType === 'apiTrigger'
+                    && typeof node.config?.trigger === 'string' ? node.config.trigger.trim() : '';
+                if (!name || name.length > 100 || names.has(name)) continue;
+                names.add(name);
+                triggers.push({ flowId: flow.id, flowName: flow.name, trigger: name });
+            }
+        }
+        return triggers;
+    }
+
+    createWorkflowMessage(trigger, data) {
+        const message = {
+            type: 'api', event: 'workflow_trigger', chatname: 'Stream Deck / API',
+            chatmessage: '', /* textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload. */ textonly: true,
+            meta: { workflow: { trigger, data: JSON.parse(JSON.stringify(data || {})) } }
+        };
+        if (!this.workflowMessages) this.workflowMessages = new WeakMap();
+        this.workflowMessages.set(message, trigger);
+        return message;
+    }
+
+    triggerWorkflow(value) {
+        if (typeof value === 'string') {
+            const text = value.trim();
+            if (text[0] === '{') {
+                try { value = JSON.parse(text); } catch (_) { return { ok: false, code: 'INVALID_VALUE', message: 'Workflow value must be a trigger name or valid JSON.' }; }
+            } else value = { trigger: text };
+        }
+        if (!value || typeof value !== 'object' || Array.isArray(value)
+            || Object.keys(value).some(key => !['trigger', 'flowId', 'data'].includes(key))
+            || typeof value.trigger !== 'string' || !value.trigger.trim() || value.trigger.trim().length > 100
+            || (value.flowId !== undefined && (typeof value.flowId !== 'string' || !value.flowId.trim()))
+            || (value.data !== undefined && (!value.data || typeof value.data !== 'object' || Array.isArray(value.data)))) {
+            return { ok: false, code: 'INVALID_VALUE', message: 'Use a trigger name (1–100 characters), optional flowId, and optional data object.' };
+        }
+        try {
+            if (JSON.stringify(value).length > 32768) return { ok: false, code: 'INVALID_VALUE', message: 'Workflow value must fit within 32,768 characters.' };
+        } catch (_) {
+            return { ok: false, code: 'INVALID_VALUE', message: 'Workflow data must be JSON serializable.' };
+        }
+        const trigger = value.trigger.trim();
+        const matches = this.getWorkflowTriggers().filter(item => item.trigger === trigger && (!value.flowId || item.flowId === value.flowId));
+        if (!matches.length) return { ok: false, code: 'WORKFLOW_NOT_FOUND', message: 'No enabled, saved workflow has this Stream Deck / API trigger.' };
+        matches.forEach(item => {
+            const flow = this.flows.find(candidate => candidate.id === item.flowId);
+            const message = this.createWorkflowMessage(trigger, value.data);
+            Promise.resolve().then(() => this.evaluateFlow(flow, message)).catch(error => {
+                console.warn('[Event Flow] Workflow failed:', item.flowName, error);
+            }).finally(() => this.workflowMessages.delete(message));
+        });
+        return { ok: true, trigger, matchedFlows: matches.length, flows: matches, status: 'accepted' };
+    }
+
     async processMessage(message) {
         
         if (!message) {
@@ -1865,7 +1947,9 @@ class EventFlowSystem {
         const execution = this.flowExecutions.get(flow.id);
         const canContinue = () => !execution.cancelled
             && (this.flows.find(candidate => candidate.id === flow.id) || flow).active !== false;
-        const nodeActivationStates = {}; 
+        const nodeActivationStates = {};
+        const nodeMessages = new Map();
+        let stateMessageModified = false;
         if (resumeNodeId) {
             const downstream = new Set([resumeNodeId]);
             const pending = [resumeNodeId];
@@ -1882,6 +1966,7 @@ class EventFlowSystem {
                 if (!downstream.has(node.id) || node.type === 'trigger') nodeActivationStates[node.id] = false;
             }
             nodeActivationStates[resumeNodeId] = true;
+            nodeMessages.set(resumeNodeId, { ...(message || {}) });
         }
 
         // --- Pass 1: Evaluate all base triggers ---
@@ -1890,6 +1975,7 @@ class EventFlowSystem {
             if (node.type === 'trigger' && !resumeNodeId) {
               //console.log(`[EvaluateFlow "${flow.name}"] Evaluating Trigger Node ID: ${node.id}, Type: ${node.triggerType}`);
                 nodeActivationStates[node.id] = await this.evaluateTrigger(node, message, flow);
+                nodeMessages.set(node.id, { ...(message || {}) });
               //console.log(`[EvaluateFlow "${flow.name}"] Trigger Node ID: ${node.id} Activation State: ${nodeActivationStates[node.id]}`);
             }
         }
@@ -1917,6 +2003,7 @@ class EventFlowSystem {
                       //console.log(`[EvaluateFlow "${flow.name}"] Evaluating Logic Node ID: ${node.id} (${node.logicType}) with inputs: ${JSON.stringify(inputValues)} from nodes: ${JSON.stringify(inputNodeIds)}`);
                         const result = await this.evaluateSpecificLogicNode(node.logicType, inputValues, node.config, message);
                         nodeActivationStates[node.id] = result;
+                        nodeMessages.set(node.id, { ...(message || {}) });
                         
                       //console.log(`[EvaluateFlow "${flow.name}"] Logic Node ID: ${node.id} Activation State: ${nodeActivationStates[node.id]}`);
                         madeChangeInLoop = true;
@@ -1937,10 +2024,12 @@ class EventFlowSystem {
                         
                         // If the state node modifies or passes the message, update it
                         if (result.passMessage && result.modifiedMessage) {
-                            // Update the message for downstream nodes
+                            // Update the message for downstream nodes and later flows.
+                            stateMessageModified = stateMessageModified || message !== result.modifiedMessage;
                             message = result.modifiedMessage;
                         }
                         
+                        nodeMessages.set(node.id, { ...(message || {}) });
                       //console.log(`[EvaluateFlow "${flow.name}"] State Node ID: ${node.id} Activation State: ${nodeActivationStates[node.id]}`);
                         madeChangeInLoop = true;
                     }
@@ -1951,174 +2040,160 @@ class EventFlowSystem {
             console.warn(`[EvaluateFlow "${flow.name}"] Flow evaluation exceeded max iterations for logic nodes.`);
         }
 
+        // Control actions may target a state node that depends on that action's
+        // output. Initialize the resource without activating it, so first-event
+        // Set Gate/Set Counter operations do not silently target missing state.
+        for (const node of flow.nodes) {
+            if (node.type === 'state' && !Object.prototype.hasOwnProperty.call(nodeActivationStates, node.id)) {
+                await this.evaluateStateNode(node, message, false, flow);
+            }
+        }
+
         // --- Pass 3: Execute actions ---
       //console.log(`[EvaluateFlow "${flow.name}"] Pass 3: Executing Actions. Current node states:`, JSON.stringify(nodeActivationStates));
         // Ensure we always have a mutable message object even when running on scheduler ticks (message can be null)
         const baseMessage = message ? { ...message } : {};
-        let overallResult = { modified: false, message: baseMessage, blocked: false }; 
+        let overallResult = { modified: stateMessageModified, message: baseMessage, blocked: false };
         const nodeMap = new Map(flow.nodes.map(node => [node.id, node]));
         const executedActions = new Set(); // Track which actions have been executed
+        const pointRedemptions = new Map(); // Charges belonging to this event's direct AI rewards.
 
-        // Process actions in topological order (following connections)
-        const executeActionChain = async (actionId) => {
-            if (!canContinue()) return;
-            if (executedActions.has(actionId)) {
-                return; // Already executed this action
-            }
-            
-            const node = nodeMap.get(actionId);
-            if (!node || node.type !== 'action') {
-                return;
-            }
-            
-            if (overallResult.blocked) {
-              //console.log(`[EvaluateFlow "${flow.name}"] Message already blocked. Skipping action node ${node.id} (${node.actionType}).`);
-                return; 
-            }
-            
-            // Execute this action
-            executedActions.add(actionId);
-            const actionResult = await this.executeAction(node, overallResult.message, flow, execution);
-            if (!canContinue()) return;
-            
-            if (actionResult) {
-                // Handle returnNow - mark message for immediate return
-                if (actionResult.returnNow) {
-                    overallResult.returnNow = true;
-                  //console.log(`[EvaluateFlow "${flow.name}"] Action Node ID: ${node.id} RETURN NOW - message will be returned immediately.`);
-                }
-
-                if (actionResult.blocked) {
-                    overallResult.blocked = true;
-                  //console.log(`[EvaluateFlow "${flow.name}"] Action Node ID: ${node.id} BLOCKED the message.`);
-                }
-
-                if (actionResult.modified && actionResult.message) {
-                    overallResult.message = { ...actionResult.message };
-                    overallResult.modified = true;
-                  //console.log(`[EvaluateFlow "${flow.name}"] Action Node ID: ${node.id} MODIFIED the message.`);
-                }
-
-                // Handle async continuation - schedule downstream and return immediately
-                if (actionResult.continueAsync) {
-                    let downstreamConnections = flow.connections.filter(conn => conn.from === actionId);
-                    if (downstreamConnections.length > 0) {
-                        // Capture current state for async execution
-                        let asyncMessage = { ...overallResult.message };
-
-                        // Schedule downstream actions to run asynchronously
-                        setTimeout(async () => {
-                            // Create a separate execution context for async chain
-                            const asyncExecutedActions = new Set(executedActions);
-                            let asyncBlocked = false;
-
-                            const executeAsyncChain = async (asyncActionId) => {
-                                if (!canContinue()) return;
-                                if (asyncExecutedActions.has(asyncActionId)) return;
-                                if (asyncBlocked) return; // Stop if blocked
-
-                                const asyncNode = nodeMap.get(asyncActionId);
-                                if (!asyncNode || asyncNode.type !== 'action') return;
-
-                                asyncExecutedActions.add(asyncActionId);
-                                const asyncResult = await this.executeAction(asyncNode, asyncMessage, flow, execution);
-                                if (!canContinue()) return;
-
-                                // Handle action results - mirror synchronous behavior
-                                if (asyncResult) {
-                                    if (asyncResult.blocked) {
-                                        asyncBlocked = true;
-                                        return; // Stop processing this branch
-                                    }
-                                    if (asyncResult.modified && asyncResult.message) {
-                                        asyncMessage = { ...asyncResult.message };
-                                    }
-                                    // If this action also wants to continue async, it will spawn its own setTimeout
-                                    if (asyncResult.continueAsync) {
-                                        // Already running async, so just continue normally
-                                        // but could implement nested async here if needed
-                                    }
-                                }
-
-                                // Continue to downstream actions
-                                const asyncDownstream = flow.connections.filter(conn => conn.from === asyncActionId);
-                                for (const conn of asyncDownstream) {
-                                    if (asyncBlocked) return;
-                                    const downNode = nodeMap.get(conn.to);
-                                    if (downNode && downNode.type === 'action') {
-                                        await executeAsyncChain(conn.to);
-                                    }
-                                }
-                            };
-
-                            for (const conn of downstreamConnections) {
-                                if (asyncBlocked) break;
-                                const downstreamNode = nodeMap.get(conn.to);
-                                if (downstreamNode && downstreamNode.type === 'action') {
-                                    await executeAsyncChain(conn.to);
-                                }
-                            }
-                        }, 0);
-                    }
-                    return; // Return immediately, downstream runs async
-                }
-            }
-
-            // Find and execute downstream actions (synchronous path)
-            let downstreamConnections = flow.connections.filter(conn => conn.from === actionId);
-            // Prioritize lightweight/control actions before heavy ones (e.g., delay)
-            const priorityOf = (node) => {
-                if (!node || node.type !== 'action') return 50;
-                switch (node.actionType) {
-                    case 'setGateState':
-                    case 'resetStateNode':
-                    case 'setCounter':
-                    case 'incrementCounter':
-                    case 'checkCounter':
-                    case 'rememberUser':
-                    case 'forgetUser':
-                    case 'clearUserMemory':
-                    case 'pickRandomUser':
-                        return 0; // control/state updates first
-                    case 'delay':
-                        return 100; // run after immediate controls
-                    default:
-                        return 50; // normal actions
-                }
-            };
-            downstreamConnections.sort((a, b) => {
-                const an = nodeMap.get(a.to);
-                const bn = nodeMap.get(b.to);
-                return priorityOf(an) - priorityOf(bn);
-            });
-            for (const conn of downstreamConnections) {
-                const downstreamNode = nodeMap.get(conn.to);
-                if (downstreamNode && downstreamNode.type === 'action') {
-                    await executeActionChain(conn.to);
-                }
+        // Actions can feed logic/state nodes too. Resolve each output once, after
+        // its prerequisites settle; an async fork publishes its output only when
+        // its deferred continuation runs. Shared guards prevent joined branches
+        // from executing an action or incrementing a state node more than once.
+        const resolvingNodes = new Set();
+        const hasOutput = id => Object.prototype.hasOwnProperty.call(nodeActivationStates, id);
+        const inputIds = id => flow.connections.filter(conn => conn.to === id).map(conn => conn.from);
+        const priorityOf = node => {
+            if (!node || node.type !== 'action') return 50;
+            switch (node.actionType) {
+                case 'setGateState':
+                case 'resetStateNode':
+                case 'setCounter':
+                case 'incrementCounter':
+                case 'checkCounter':
+                case 'rememberUser':
+                case 'forgetUser':
+                case 'clearUserMemory':
+                case 'pickRandomUser':
+                    return 0;
+                case 'delay':
+                    return 100;
+                default:
+                    return 50;
             }
         };
+        const continueFrom = async (nodeId, context) => {
+            const connections = flow.connections.filter(conn => conn.from === nodeId);
+            connections.sort((a, b) => priorityOf(nodeMap.get(a.to)) - priorityOf(nodeMap.get(b.to)));
+            for (const connection of connections) {
+                if (!canContinue() || context.blocked) return;
+                await executeNodeChain(connection.to, context);
+            }
+        };
+        const executeNodeChain = async (nodeId, context) => {
+            if (!canContinue() || context.blocked || hasOutput(nodeId) || resolvingNodes.has(nodeId)) return;
+            const node = nodeMap.get(nodeId);
+            if (!node || !['action', 'logic', 'state'].includes(node.type)) return;
+            if (node.type === 'action' && executedActions.has(nodeId)) return;
 
-        // Start execution from actions connected to activated triggers/logic/state
-        for (const node of flow.nodes) {
-            if (node.type === 'action' && !executedActions.has(node.id)) {
-                const inputConnections = flow.connections.filter(conn => conn.to === node.id);
-                const inputNodeIds = inputConnections.map(conn => conn.from);
-                
-                const shouldExecute = inputNodeIds.some(inputId => {
-                    const inputNode = nodeMap.get(inputId);
-                    // Allow actions to be driven by triggers, logic, or state nodes
-                    return (
-                        inputNode &&
-                        (inputNode.type === 'trigger' || inputNode.type === 'logic' || inputNode.type === 'state') &&
-                        nodeActivationStates[inputId] === true
-                    );
-                });
+            const inputs = inputIds(nodeId);
+            const allInputsEvaluated = inputs.every(hasOutput);
+            const inputActive = inputs.some(id => nodeActivationStates[id] === true);
+            // Action inputs are OR joins. Logic/state nodes need the complete
+            // input vector, including false outputs from inactive actions.
+            if (node.type === 'action' ? (!inputActive && !allInputsEvaluated) : !allInputsEvaluated) return;
 
-                if (shouldExecute) {
-                    await executeActionChain(node.id);
+            resolvingNodes.add(nodeId);
+            if (node.type !== 'action') {
+                // Joined signals retain the first active input's emitted payload
+                // (or the first input for false signals), independent of completion order.
+                const parentContext = context;
+                const payloadInput = inputs.find(id => nodeActivationStates[id] === true) || inputs[0];
+                if (inputs.length > 1 && nodeMessages.has(payloadInput)) {
+                    // Carry the selected payload locally. An inactive join must
+                    // not undo edits made on an unrelated active branch.
+                    context = { ...context, message: { ...nodeMessages.get(payloadInput) }, modified: false };
+                }
+                try {
+                    if (node.type === 'logic') {
+                        nodeActivationStates[nodeId] = await this.evaluateSpecificLogicNode(
+                            node.logicType, inputs.map(id => nodeActivationStates[id]), node.config, context.message);
+                    } else {
+                        const stateResult = await this.evaluateStateNode(node, context.message, inputActive, flow);
+                        nodeActivationStates[nodeId] = stateResult.active;
+                        if (stateResult.passMessage && stateResult.modifiedMessage) {
+                            context.modified = context.modified || context.message !== stateResult.modifiedMessage;
+                            context.message = stateResult.modifiedMessage;
+                        }
+                    }
+                } finally {
+                    resolvingNodes.delete(nodeId);
+                }
+                nodeMessages.set(nodeId, { ...context.message });
+                if (canContinue()) await continueFrom(nodeId, context);
+                if (context !== parentContext) {
+                    if (context.modified) {
+                        parentContext.message = context.message;
+                        parentContext.modified = true;
+                    }
+                    if (context.blocked) parentContext.blocked = true;
+                    if (context.returnNow) parentContext.returnNow = true;
+                }
+                return;
+            }
+
+            executedActions.add(nodeId);
+            if (!inputActive) {
+                nodeActivationStates[nodeId] = false;
+                nodeMessages.set(nodeId, { ...context.message });
+                resolvingNodes.delete(nodeId);
+                await continueFrom(nodeId, context);
+                return;
+            }
+
+            let actionResult;
+            try {
+                actionResult = await this.executeAction(node, context.message, flow, execution, pointRedemptions);
+            } finally {
+                resolvingNodes.delete(nodeId);
+            }
+            if (!canContinue()) return;
+            if (actionResult) {
+                if (actionResult.returnNow) context.returnNow = true;
+                if (actionResult.blocked) context.blocked = true;
+                if (actionResult.modified && actionResult.message) {
+                    context.message = { ...actionResult.message };
+                    context.modified = true;
+                }
+                // A stopped branch publishes no output; a NOT gate must not
+                // turn a failed/aborted action into a successful continuation.
+                if (actionResult.stopChain) return;
+                if (actionResult.continueAsync && !context.background) {
+                    const asyncContext = { message: { ...context.message }, modified: false, blocked: false, background: true };
+                    setTimeout(() => {
+                        if (!canContinue()) return;
+                        nodeActivationStates[nodeId] = true;
+                        nodeMessages.set(nodeId, { ...asyncContext.message });
+                        continueFrom(nodeId, asyncContext).catch(error => {
+                            console.warn('[Event Flow] Async continuation failed:', error);
+                        });
+                    }, 0);
+                    return;
                 }
             }
+            if (context.blocked) return;
+            nodeActivationStates[nodeId] = true;
+            nodeMessages.set(nodeId, { ...context.message });
+            await continueFrom(nodeId, context);
+        };
+
+        // Initial trigger/logic/state outputs are available from the first two
+        // passes. Starting all actions also resolves inactive branches to false,
+        // so joins do not wait forever for actions whose triggers did not match.
+        for (const node of flow.nodes) {
+            if (node.type === 'action') await executeNodeChain(node.id, overallResult);
         }
       //console.log(`[EvaluateFlow "${flow.name}"] Finished. Overall Result:`, JSON.stringify(overallResult));
         return overallResult;
@@ -2128,8 +2203,8 @@ class EventFlowSystem {
         // Simple HTML stripping function that preserves emoji alt text
         if (!html || typeof html !== 'string') return html;
         
-        // Create a temporary element to use browser's HTML parsing
-        const tmp = document.createElement('div');
+        // Parse in inert template content so extraction cannot execute image handlers.
+        const tmp = document.createElement('template').content.appendChild(document.createElement('div'));
         tmp.innerHTML = html;
         
         // Replace img tags with their alt text (especially for emojis)
@@ -2141,6 +2216,18 @@ class EventFlowSystem {
         // Get text content and clean up extra whitespace
         const text = tmp.textContent || tmp.innerText || '';
         return text.replace(/\s\s+/g, ' ').trim();
+    }
+
+    // Read only own JSON fields; never traverse prototypes through user-entered paths.
+    getMessageProperty(message, path) {
+        const parts = String(path || '').split('.');
+        let value = message;
+        for (const part of parts) {
+            if (!part || ['__proto__', 'prototype', 'constructor'].includes(part) ||
+                !value || typeof value !== 'object' || !Object.prototype.hasOwnProperty.call(value, part)) return undefined;
+            value = value[part];
+        }
+        return value;
     }
 
     normalizeEventType(eventType) {
@@ -2202,6 +2289,13 @@ class EventFlowSystem {
     
     async evaluateTrigger(triggerNode, message, flow = null) {
         const { triggerType, config } = triggerNode;
+        if (triggerType === 'apiTrigger') {
+            const trigger = message && this.workflowMessages && this.workflowMessages.get(message);
+            return !!trigger && trigger === String(config?.trigger || '').trim();
+        }
+        const voice = message && this.voiceMessages && this.voiceMessages.get(message);
+        if (voice) return triggerType === 'voicePhrase' && triggerNode.id === voice.nodeId && Date.now() <= voice.expiresAt;
+        if (triggerType === 'voicePhrase') return false;
         // Boolean activity markers are valid payloads, but are not named events.
         const messageEvent = message && typeof message.event === 'string' ? message.event.toLowerCase() : '';
         // Scheduler ticks have no chat payload. Do not match message filters or
@@ -2224,6 +2318,7 @@ class EventFlowSystem {
         let messageText = message && message.chatmessage;
         if (message && messageText && typeof messageText === 'string') {
             // If textonly flag is set, the message is already plain text
+            // Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
             if (!message.textonly) {
                 // Check if we've already cleaned this message (cache the result)
                 if (!message.textContent) {
@@ -2525,7 +2620,7 @@ class EventFlowSystem {
                 const rawCompareValue = config.value;
 
                 // Get the property value from the message
-                let msgValue = message[prop];
+                let msgValue = this.getMessageProperty(message, prop);
 
                 // Handle special cases for message length and word count
                 if (prop === 'donationAmount' || prop === 'donoValue' ||
@@ -3189,8 +3284,8 @@ class EventFlowSystem {
 			}
 		}
 
-		return text.replace(/\{(\w+)\}/gi, (match, key) => {
-			const val = messageData[key.toLowerCase()];
+		return text.replace(/\{(\w+(?:\.\w+)*)\}/gi, (match, key) => {
+			const val = key.indexOf('.') !== -1 ? this.getMessageProperty(message, key) : messageData[key.toLowerCase()];
 			if (val === undefined || val === null) return '';
 			if (typeof val === 'object') {
 				try {
@@ -3245,7 +3340,7 @@ class EventFlowSystem {
 	 * @returns {string} Rendered JSON body
 	 */
 	renderWebhookBody(template, message) {
-		if (typeof template !== 'string' || !/\{\w+\}/i.test(template)) {
+		if (typeof template !== 'string' || !/\{\w+(?:\.\w+)*\}/i.test(template)) {
 			return template;
 		}
 
@@ -3255,7 +3350,7 @@ class EventFlowSystem {
 		});
 	}
 
-	sanitizeSendMessage(text, textonly = false, alt = false, mode = 'safe') {
+	sanitizeSendMessage/* Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary. */ (text, textonly = false, alt = false, mode = 'safe') {
 		if (!text || !text.trim()) {
 			return alt || text;
 		}
@@ -3264,6 +3359,7 @@ class EventFlowSystem {
 		// Only use it in 'safe' mode since it applies full sanitization
 		if (typeof this.sanitizeRelay === 'function' && mode === 'safe') {
 			try {
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				const cleaned = this.sanitizeRelay(text, textonly, alt);
 				if (cleaned || !alt) {
 					return cleaned;
@@ -3276,6 +3372,7 @@ class EventFlowSystem {
 
 		// Fallback: minimal sanitizer that mirrors the background behavior (including emoji alt preservation)
 		const emojiMap = new Map();
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		if (!textonly) {
 			const tempDiv = document.createElement('div');
 			tempDiv.innerHTML = text;
@@ -3345,8 +3442,45 @@ class EventFlowSystem {
 		return text.trim();
 	}
     
-    async executeAction(actionNode, message, flow = null, execution = null) {
+    async executeCommunityCheer() {
+        if (typeof this.sendTargetP2P !== 'function') return false;
+        // Reuse the established show-text overlay vocabulary, with a fixed bounded preset.
+        const payload = { actionType: 'show_text', text: 'Cheer!', textProcessed: true,
+            x: 50, y: 40, width: 60, fontSize: 48, fontFamily: 'Arial', color: '#ffffff',
+            backgroundColor: 'rgba(0,0,0,0.8)', duration: 3000, animation: 'none', clearFirst: false };
+        const sent = await this.sendTargetP2P({ overlayNinja: payload }, 'actions', { retry: false });
+        return sent === true; // Transport acceptance, never proof that OBS displayed it.
+    }
+
+    requestCommerceControl(request) {
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (reply) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(reply && typeof reply === 'object' ? reply : { error: 'Product control did not return a result.' });
+            };
+            const timer = setTimeout(() => finish({ error: 'Product control timed out. Check SSN before retrying.' }), 8000);
+            try {
+                if (typeof window.handleMonetizationRequest === 'function') {
+                    Promise.resolve(window.handleMonetizationRequest(request)).then(finish, error => finish({ error: error && error.message || String(error) }));
+                } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+                    chrome.runtime.sendMessage(request, reply => {
+                        const error = chrome.runtime.lastError;
+                        finish(error ? { error: error.message || 'Product control is unavailable.' } : reply);
+                    });
+                } else if (this.sendMessageToBackground) {
+                    Promise.resolve(this.sendMessageToBackground(request)).then(finish, error => finish({ error: error && error.message || String(error) }));
+                } else finish({ error: 'Product control is unavailable.' });
+            } catch (error) { finish({ error: error && error.message || String(error) }); }
+        });
+    }
+
+    async executeAction(actionNode, message, flow = null, execution = null, pointRedemptions = null) {
         const { actionType, config } = actionNode;
+        const originalChatmessage = message && message.chatmessage;
+        const originalTextonly = message && message.textonly;
         //console.log(`[ExecuteAction] Node: ${actionNode.id}, Type: ${actionType}, Config: ${JSON.stringify(config)}`);
         let result = { modified: false, message, blocked: false };
         
@@ -3484,6 +3618,53 @@ class EventFlowSystem {
                 };
                 result.modified = true;
                 break;
+
+            case 'showAiEventOverlay': {
+                const profile = String(config.profile || 'default');
+                const charge = pointRedemptions && pointRedemptions.get(actionNode.id);
+                if (charge) {
+                    pointRedemptions.delete(actionNode.id);
+                    let delivered = false;
+                    try {
+                        if (!window.SSNAiEventBackground) throw new Error('Paid AI overlay rewards must run on the SSN host.');
+                        await window.SSNAiEventBackground.trigger({ profile, variation: config.variation, message, prepare: true, expiresAt: charge.expiresAt });
+                        delivered = true;
+                        if (charge.operationId && !(await charge.system.pointRedemption(charge.name, charge.type, charge.amount, charge.operationId, 'complete')).success) throw new Error('AI overlay point settlement was not confirmed.');
+                    } catch (error) {
+                        if (!delivered) {
+                            const refunded = await charge.system.refundPoints(charge.name, charge.type, charge.amount, charge.operationId);
+                            if (!refunded.success) throw new Error('AI overlay failed, but its point refund could not be confirmed.');
+                            if (typeof window.requestPointsLeaderboardBroadcast === 'function') window.requestPointsLeaderboardBroadcast('ai-overlay-refund', { immediate: true });
+                            throw new Error(error.message + ' The reward points were returned.');
+                        }
+                        throw error;
+                    }
+                    break;
+                }
+                if (window.SSNAiEventBackground) {
+                    await window.SSNAiEventBackground.trigger({ profile, variation: config.variation, message });
+                    break;
+                }
+                if (!this.sendTargetP2P && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+                    await new Promise((resolve, reject) => {
+                        chrome.runtime.sendMessage({ cmd: 'aiEventFlow', action: 'show', profile, variation: config.variation, message }, response => {
+                            if (chrome.runtime.lastError || !response || response.error) reject(new Error(response && response.error || 'SSN is unavailable.'));
+                            else resolve(response.value);
+                        });
+                    });
+                    break;
+                }
+                const meta = message && message.meta && typeof message.meta === 'object' && !Array.isArray(message.meta)
+                    ? { ...message.meta } : (message && message.meta !== undefined ? { value: message.meta } : {});
+                meta.aiEventOverlay = { profile };
+                if (config.variation) meta.aiEventOverlay.variation = String(config.variation);
+                if (this.sendTargetP2P) {
+                    if (await this.sendTargetP2P({ ...(message || {}), meta }, 'aievent-' + profile, { retry: false }) === false) throw new Error('AI overlay is not connected.');
+                } else {
+                    throw new Error('Open the local Event Flow editor in SSN.');
+                }
+                break;
+            }
 
             case 'featureMessage': {
                 const currentMeta = (message && typeof message.meta === 'object' && message.meta !== null && !Array.isArray(message.meta))
@@ -3880,6 +4061,7 @@ class EventFlowSystem {
 				break;
                 
             case 'addPoints':
+                if (message && message.meta && message.meta.economyTest) break;
 				try {
 					if (!this.pointsSystem && typeof window !== 'undefined' && typeof window.pointsSystemReady === 'function') {
 						await window.pointsSystemReady();
@@ -3907,31 +4089,64 @@ class EventFlowSystem {
 				break;
                 
             case 'spendPoints':
+                if (message && message.meta && message.meta.economyTest) break;
 				try {
 					if (!this.pointsSystem && typeof window !== 'undefined' && typeof window.pointsSystemReady === 'function') {
 						await window.pointsSystemReady();
 						this.pointsSystem = window.pointsSystem || this.pointsSystem;
 					}
 					const system = this.pointsSystem;
-					if (system && config.amount > 0) {
-						const spendResult = await system.spendPoints( // Capture the result
-							message.chatname,
-							message.type,
-							config.amount
-						);
+                    if (!system || !Number.isFinite(config.amount) || config.amount <= 0) throw new Error('Points system or amount is unavailable.');
+                    if (system && config.amount > 0) {
+						const next = flow && pointRedemptions ? flow.connections.filter(connection => connection.from === actionNode.id) : [];
+						const reward = next.length === 1 && flow.connections.filter(connection => connection.to === next[0].to).length === 1 && flow.nodes.find(node => node.id === next[0].to && node.actionType === 'showAiEventOverlay');
+						const charge = reward ? { system, name: message.chatname, type: message.type, amount: config.amount, expiresAt: Date.now() + 240000,
+							operationId: Number.isSafeInteger(config.amount) ? 'ai-flow-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) : undefined } : null;
+						const spendArgs = [message.chatname, message.type, config.amount];
+						if (charge && charge.operationId) spendArgs.push(charge.operationId, 240000);
+						const spendResult = await system.spendPoints.apply(system, spendArgs);
 
 						if (!spendResult.success) {
 							result.blocked = true; // This will stop subsequent actions in this flow path.
 							result.message = { ...message, pointsSpendError: spendResult.message };
 							result.modified = true;
-						} else if (typeof window !== 'undefined' && typeof window.requestPointsLeaderboardBroadcast === 'function') {
-							window.requestPointsLeaderboardBroadcast('action-spend', { immediate: true });
+						} else {
+							if (charge) pointRedemptions.set(reward.id, charge);
+							if (typeof window !== 'undefined' && typeof window.requestPointsLeaderboardBroadcast === 'function') window.requestPointsLeaderboardBroadcast('action-spend', { immediate: true });
 						}
 					}
 				} catch (e) {
 					console.warn('[ExecuteAction - spendPoints] failed', e);
+                    result.stopChain = true;
 				}
 				break;
+
+            case 'giveawayControl': {
+                const allowed = ['entergiveaway','buygiveawaytickets','grantgiveawaytickets','closegiveaway','drawgiveaway','cancelgiveaway','getgiveawaystate'];
+                let reply;
+                try {
+                    if (!allowed.includes(config.command)) throw new Error('Choose a giveaway action.');
+                    if (message && message.meta && message.meta.economyTest) {
+                        reply = {ok:true,simulated:true,message:'Simulation only: no entries or points changed.'};
+                    } else {
+                        if (typeof window.handleGiveawayAction !== 'function') throw new Error('Giveaway actions must run on the SSN host.');
+                        if (!this.economyEpoch) this.economyEpoch = Date.now() + '-' + Math.random();
+                        const sourceId = message && message.meta && message.meta.messageId;
+                        const localId = message && message.id;
+                        if (!sourceId && localId === undefined) throw new Error('A captured message ID is required for safe giveaway automation.');
+                        const operationId = 'flow:' + JSON.stringify([flow.id,actionNode.id,sourceId || this.economyEpoch + ':' + localId,message.type]);
+                        reply = await window.handleGiveawayAction(config.command,{giveawayId:config.giveawayId || 'default',count:Number(config.count || 1),side:config.side || undefined,operationId:operationId},message);
+                    }
+                } catch (error) { reply = {ok:false,error:error.message}; }
+                if(message && message.meta != null && (typeof message.meta!=='object' || Array.isArray(message.meta)))result.giveawayControlResult=reply;
+                else {
+                    const meta={...(message && message.meta || {}),giveawayControlResult:reply};
+                    if(['entergiveaway','buygiveawaytickets','grantgiveawaytickets'].includes(config.command))meta.giveawayHandled=Array.from(new Set([...(Array.isArray(meta.giveawayHandled)?meta.giveawayHandled:[]),config.giveawayId || 'default']));
+                    result.message = {...message,meta:meta};result.modified = true;
+                }
+                if (!reply.ok) result.stopChain = true;
+                break;
+            }
                 
             case 'customJs':
                 if (!this.allowEvalCustomJs) {
@@ -4063,6 +4278,34 @@ class EventFlowSystem {
 				}
 				break;
 
+            case 'commerceControl': {
+                const request = { cmd: 'monetization', action: 'commerceControl', command: config.command || 'show', url: config.url || '', seconds: Number(config.seconds || 0) };
+                let reply;
+                if (['boardSave','boardSpot','boardVisibility','saleAdd','saleRemove','salesClear','salesSettings'].includes(request.command)) {
+                    try {
+                        const data = typeof config.data === 'string' ? JSON.parse(config.data || '{}') : (config.data || {});
+                        if (!data || typeof data !== 'object' || Array.isArray(data) || JSON.stringify(data).length > 16000) throw new Error('Use a JSON object for board and sales fields.');
+                        request.data = {};
+                        for (const key of Object.keys(data)) {
+                            if (['__proto__','prototype','constructor'].includes(key)) throw new Error('Invalid commerce field.');
+                            request.data[key] = typeof data[key] === 'string' ? this.replaceTemplateVars(data[key], message) : data[key];
+                        }
+                    } catch (error) { reply = { error:error.message }; }
+                }
+                if (!reply) reply = await this.requestCommerceControl(request);
+                const controlResult = reply.error || !reply.commerceState || typeof reply.commerceState !== 'object' || Array.isArray(reply.commerceState)
+                    ? { success: false, error: String(reply.error || 'Product control did not return its state.') }
+                    : { success: true, commerce: reply.commerceState };
+                if (message?.meta != null && (typeof message.meta !== 'object' || Array.isArray(message.meta))) {
+                    result.commerceControlResult = controlResult;
+                } else {
+                    result.message = { ...(message || {}), meta: { ...(message?.meta || {}), commerceControlResult: controlResult } };
+                    result.modified = true;
+                }
+                // Stop dependent actions without suppressing the original purchase or tip.
+                if (!controlResult.success) result.stopChain = true;
+                break;
+            }
 			case 'showText':
 				{
 					const actionPayload = {
@@ -4788,6 +5031,12 @@ class EventFlowSystem {
                 break;
         }
         
+        // Text caches belong to the exact message/format they were derived from.
+        // Capture the originals before running custom code, which may mutate in place.
+        if (result.message && (result.message.chatmessage !== originalChatmessage ||
+            result.message.textonly !== originalTextonly)) {
+            delete result.message.textContent;
+        }
         return result;
     }
 }

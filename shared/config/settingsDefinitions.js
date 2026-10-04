@@ -94,11 +94,6 @@ const SETTINGS_DEFINITIONS = Object.freeze({
     category: "chat_bot",
     description: "By default the bot is told not if it doesn't see value in doing so. You can disable that instruction here though"
   },
-  "autoLiveYoutube": {
-    type: "boolean",
-    category: "miscellaneous_options_for_sites",
-    description: "Deprecated. YouTube Live Chat is now selected automatically unless disableAutoLiveYoutube is enabled."
-  },
   "disableAutoLiveYoutube": {
     type: "boolean",
     category: "miscellaneous_options_for_sites",
@@ -774,6 +769,16 @@ const SETTINGS_DEFINITIONS = Object.freeze({
     category: "configure_llm_api",
     description: "Gemini model identifier to call (for example gemini-2.5-flash)."
   },
+  "allowExternalGifs": {
+    type: "boolean",
+    category: "giphy_tenor_support",
+    description: "Display the first direct HTTP(S) GIF link in chat, including .gif URLs with query parameters. Disabled by default; no API key required. External images are not content-filtered."
+  },
+  "hideExternalGifUrl": {
+    type: "boolean",
+    category: "giphy_tenor_support",
+    description: "Hide a detected external GIF link in the dock and featured overlay only after its image loads. Preserve other text and keep the link on failure. Disabled by default."
+  },
   "giphy": {
     type: "boolean",
     category: "giphy_tenor_support",
@@ -901,8 +906,8 @@ const SETTINGS_DEFINITIONS = Object.freeze({
   },
   "hypemode": {
     type: "boolean",
-    category: "must_enable_the_trigger_to_use",
-    description: "Enable to the hype meter's processing"
+    category: "viewer_count_and_chat_activity_overlay",
+    description: "Track active chatters"
   },
   "identifyQuestions": {
     type: "boolean",
@@ -1527,7 +1532,7 @@ const SETTINGS_DEFINITIONS = Object.freeze({
   "speechifyspeed": {
     type: "number",
     category: "speechify_tts_options",
-    description: "Playback speed multiplier for Speechify TTS voices."
+    description: "Speechify speaking speed multiplier (0.5-3), applied through SSML prosody."
   },
   "speed": {
     type: "number",
@@ -1629,6 +1634,7 @@ const SETTINGS_DEFINITIONS = Object.freeze({
     category: "giphy_tenor_support",
     description: "Deprecated Tenor API key; retained for saved-settings compatibility. Set giphyKey instead."
   },
+  // Chat body representation only: true is literal text without added HTML; false permits sanitized HTML. This is not a trust flag for other fields.
   "textonlymode": {
     type: "boolean",
     category: "other_filters",

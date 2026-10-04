@@ -1,15 +1,20 @@
 <!DOCTYPE html>
 <html lang="en" style="font-size: 10px; font-family: Roboto, Arial, sans-serif">
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta content="text/html;charset=utf-8" http-equiv="Content-Type" />
+    <meta name="description" content="YouTube: a chat source connection page for Social Stream Ninja. Use it with the app or extension to bring chat into your session.">
+    <meta name="robots" content="noindex">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
     <meta content="utf-8" http-equiv="encoding" />
     <title>Social Stream - YouTube</title>
-    <link rel="icon" href="https://www.youtube.com/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="../images/youtube.png" type="image/png">
     <link rel="stylesheet" type="text/css" href="youtube.css" /> 
     <link rel="stylesheet" href="websocket-responsive.css">
+    <link rel="stylesheet" href="../../shared/compact-source-layout.css?v=20260916-review">
+    <script src="../../shared/utils/compactSourceLayout.js?v=20260916-setup" defer></script>
 </head>
-<body>
+<body data-compact-source="youtube">
     <div class="container">
         <div id="quota-warning" class="quota-warning hidden">
             <span id="quota-warning-text">We've hit the default YouTube API quota. In the desktop app, you can add your own YouTube project to use your own quota.</span>
@@ -2352,6 +2357,10 @@ function enableBackgroundKeepAlive() {
 			membership: "",
 			type: getYouTubeSourceType(),
 			event: "new_follower",
+			// Capture contract: textonly=true means a literal chatmessage string, not HTML.
+			// Do not add formatting tags or HTML-encode it; viewer-typed <i> / &amp; stays literal.
+			// HTML mode may include markup for the normal relay checks. The flag applies only to chatmessage.
+			// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 			textonly: settings.textonlymode || false,
 			meta: {
 				source: "youtube.myRecentSubscribers",
@@ -2389,6 +2398,7 @@ function enableBackgroundKeepAlive() {
 			membership: "",
 			type: getYouTubeSourceType(),
 			event: "new_follower",
+			// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 			textonly: settings.textonlymode || false,
 			meta: {
 				source: "youtube.myRecentSubscribers",
@@ -2570,9 +2580,10 @@ function enableBackgroundKeepAlive() {
 		if (!value) {
 			return '';
 		}
-		const temp = document.createElement('div');
+		// Template contents stay inert; detached divs can still run image handlers.
+		const temp = document.createElement('template');
 		temp.innerHTML = value;
-		return (temp.textContent || temp.innerText || '').trim();
+		return (temp.content.textContent || '').trim();
 	}
 
 	function truncatePreviewText(text, maxLength) {
@@ -2931,6 +2942,7 @@ function enableBackgroundKeepAlive() {
 	
 	function escapeHtml(unsafe) {
 		try {
+			// Plain capture returns literal characters for text rendering; HTML mode escapes text for markup construction. Do not HTML-sanitize the plain string.
 			if (settings.textonlymode || false) {
 				return unsafe;
 			}
@@ -3159,6 +3171,7 @@ function enableBackgroundKeepAlive() {
 			const emojiInfo = channelShortcutMap.get(match) || shortcutMap.get(match);
 			if (!emojiInfo) return match;
 			
+			// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 			if (settings.textonlymode || false) {
 				if (emojiInfo.isCustom) return '';
 				return emojiInfo.id;
@@ -3168,6 +3181,7 @@ function enableBackgroundKeepAlive() {
 			}
 		});
 	  
+		// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 		if (!settings.textonlymode || false) {
 		// Helper function to convert emoji sequences to their combined URLs
 			function processEmojiSequence(text) {
@@ -3232,6 +3246,7 @@ function enableBackgroundKeepAlive() {
 				if (!emojiInfo || !emojiInfo.url) {
 					return match;
 				}
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				if (settings.textonlymode || false) {
 					if (emojiInfo.isCustom) return '';
 					return emojiInfo.id || '';
@@ -3561,7 +3576,7 @@ function enableBackgroundKeepAlive() {
 
 	function scheduleLiveChatStreamReconnect(delayMs = 2000) {
 		if (!liveChatId || fetchTimeout || liveChatStreamActive || liveChatStreamAbortController) return;
-		updateLiveChatStreamIndicator('reconnecting');
+		if (!liveChatPollingFallbackActive) updateLiveChatStreamIndicator('reconnecting');
 		fetchTimeout = setTrackedTimeout(startLiveChatStream, delayMs, !isPageVisible);
 	}
 
@@ -3885,6 +3900,9 @@ function enableBackgroundKeepAlive() {
 				throw new Error('YouTube live chat stream response is not readable.');
 			}
 			const reader = response.body.getReader();
+			if (liveChatStreamAbortController === controller && !controller.signal.aborted) {
+				document.getElementById('textarea').setAttribute('data-connected', 'true');
+			}
 			const decoder = new TextDecoder();
 			while (true) {
 				const result = await reader.read();
@@ -4024,6 +4042,8 @@ function enableBackgroundKeepAlive() {
 	}
 
 	function processQueuedMessageData(messageData) {
+		pendingYouTubeMessages.delete(messageData);
+		if (cancelledYouTubeMessages.has(messageData)) return;
 		processMessage(messageData);
 
 		// If page isn't visible, queue for later DOM rendering
@@ -4177,6 +4197,26 @@ function enableBackgroundKeepAlive() {
 		return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 	}
 
+	const deletedYouTubeMessageIds = new Set();
+	const pendingYouTubeMessages = new Set();
+	const cancelledYouTubeMessages = new WeakSet();
+	function forwardYouTubeDelete(data) {
+		if (data.meta && data.meta.messageId) {
+			deletedYouTubeMessageIds.add(String(data.meta.messageId));
+			if (deletedYouTubeMessageIds.size > 2000) deletedYouTubeMessageIds.delete(deletedYouTubeMessageIds.values().next().value);
+		}
+		function matchesMessage(message) {
+			return data.meta && data.meta.messageId
+				? String(message.messageId) === String(data.meta.messageId)
+				: data.userid ? message.authorChannelId === data.userid : message.authorName === data.chatname;
+		}
+		pendingYouTubeMessages.forEach(function(message) {
+			if (matchesMessage(message)) cancelledYouTubeMessages.add(message);
+		});
+		messageQueue = messageQueue.filter(message => !matchesMessage(message));
+		window.dispatchEvent(new CustomEvent('youtubeDelete', { detail: data, bubbles: true }));
+	}
+
 	function processYouTubeUserBanned(item) {
 		try {
 			const snippet = item && item.snippet ? item.snippet : {};
@@ -4214,6 +4254,9 @@ function enableBackgroundKeepAlive() {
 				endsAt
 			};
 
+			if (meta.userId || displayName) {
+				forwardYouTubeDelete({ type: meta.platform, userid: meta.userId, chatname: displayName });
+			}
 			pushMessage(applySourceIdentity({
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "user_banned",
@@ -4232,6 +4275,7 @@ function enableBackgroundKeepAlive() {
 		const recommendedInterval = data.pollingIntervalMillis || youtubeRecommendedInterval || 5000;
 		youtubeRecommendedInterval = recommendedInterval;
 		lastSuccessfulPollTime = Date.now();
+		document.getElementById('textarea').setAttribute('data-connected', 'true');
 
 		const normalizedItems = Array.isArray(data.items) ? data.items.map(normalizeLiveChatMessageItem) : [];
 		const richChatVideoId = (currentStream && currentStream.id) || videoId;
@@ -4257,6 +4301,15 @@ function enableBackgroundKeepAlive() {
 
 			normalizedItems.forEach(item => {
 				if (!item || !item.snippet) return;
+				const deletedDetails = item.snippet.messageDeletedDetails || item.snippet.message_deleted_details;
+				const retractedDetails = item.snippet.messageRetractedDetails || item.snippet.message_retracted_details;
+				if (deletedDetails || retractedDetails || item.snippet.type === 'messageDeletedEvent' || item.snippet.type === 'messageRetractedEvent' || item.snippet.type === 'tombstone') {
+					const details = deletedDetails || retractedDetails || {};
+					const messageId = details.deletedMessageId || details.deleted_message_id || details.retractedMessageId || details.retracted_message_id || (item.snippet.type === 'tombstone' ? item.id : '');
+					// The event author can be the moderator; never use that author as the deletion target.
+					if (messageId) forwardYouTubeDelete({ type: youtubeShorts ? 'youtubeshorts' : 'youtube', meta: { messageId: String(messageId) } });
+					return;
+				}
 				const hasUserBannedDetails = !!(item.snippet.userBannedDetails || item.snippet.user_banned_details);
 				if (!item.authorDetails && item.snippet.type !== 'userBannedEvent' && !hasUserBannedDetails) return;
 				const publishedAt = new Date(item.snippet.publishedAt);
@@ -5648,7 +5701,7 @@ function enableBackgroundKeepAlive() {
 	function initializeSpinner() {
 	  const chatHeader = document.querySelector('.chat-container h3');
 	  if (!chatHeader) return;
-	  chatHeader.className = 'chat-header';
+	  chatHeader.classList.add('chat-header');
 	  chatHeader.innerHTML = `
 		<span>Chat Messages</span>
 		<div class="poll-spinner-container">
@@ -5660,6 +5713,7 @@ function enableBackgroundKeepAlive() {
 	  updateLiveChatStreamIndicator('connect');
 	}
 		function queueMessage(messageData) {
+			pendingYouTubeMessages.add(messageData);
 			if (messageDataNeedsRichChannelEmojiResolution(messageData)) {
 				queueMessageAfterRichEmojiRetry(messageData);
 				return;
@@ -6178,6 +6232,7 @@ function enableBackgroundKeepAlive() {
 		}
 		
 		liveChatId = null;
+		document.getElementById('textarea').setAttribute('data-connected', 'false');
 		nextPageToken = null;
 		liveChatPollingFallbackActive = false;
 		lastMessageTime = null;
@@ -6189,6 +6244,7 @@ function enableBackgroundKeepAlive() {
 		clearSourceIdentity();
 		messageQueue = [];
 		pendingRelayMessages = [];
+		pendingYouTubeMessages.clear();
 		quickPollCount = 0;
 		consecutiveMaxMessages = 0; // Reset consecutive max message counter
 		consecutiveEmptyPolls = 0;
@@ -6326,6 +6382,7 @@ function enableBackgroundKeepAlive() {
 									 streamInfoToUse.snippet.liveBroadcastContent === 'none';
 				if (isVideoEnded) {
 					liveChatId = null;
+					document.getElementById('textarea').setAttribute('data-connected', 'false');
 					effectiveChannelIdToUse = streamInfoToUse.snippet.channelId;
 					streamTitleToUse = streamInfoToUse.snippet.title;
 					channelInfoForHeaderAndStats = await getChannelInfo(effectiveChannelIdToUse);
@@ -6538,6 +6595,7 @@ function enableBackgroundKeepAlive() {
 	var youtubeShorts = getInitialYouTubeShortsMode();
 
 	function processMessage(messageData, options = {}) {
+		if (messageData.messageId && deletedYouTubeMessageIds.has(String(messageData.messageId))) return;
 		const { suppressRelay = false } = options;
 		try {
 			// Apply member chat only filter if enabled
@@ -6580,7 +6638,9 @@ function enableBackgroundKeepAlive() {
 				console.warn('Message data missing message property:', messageData);
 			}
 				const messageText = messageData.message || '';
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				const textOnlyMode = Boolean(settings.textonlymode);
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				const messageWithEmojis = (!textOnlyMode && richMessage && richMessage.html) ? replaceChannelEmojiShortcutsInEscapedHtml(richMessage.html) : replaceEmojis(messageText);
 				let basePlainText = (richMessage && richMessage.plainText)
 					? richMessage.plainText
@@ -6604,8 +6664,10 @@ function enableBackgroundKeepAlive() {
 				}
 
 				const replyContext = repliesAreExcluded() ? null : resolveReplyContext(messageData);
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				let finalChatMessage = textOnlyMode ? basePlainText : messageWithEmojis;
 				if (replyContext) {
+					// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 					if (textOnlyMode) {
 						const prefix = replyContext.label ? `${replyContext.label}: ` : '';
 						const combinedText = `${prefix}${basePlainText || ''}`.trim();
@@ -6625,6 +6687,7 @@ function enableBackgroundKeepAlive() {
 						const badgeHtml = renderChatBadgesForPage(chatbadges);
 						
 						span.innerHTML = `${badgeHtml}<strong>${safeAuthorName}</strong>: `;
+						// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 						if (textOnlyMode) {
 							span.appendChild(document.createTextNode(finalChatMessage));
 						} else {
@@ -6670,10 +6733,12 @@ function enableBackgroundKeepAlive() {
 						membership: membershipStatus,
 						mod: messageData.isChatModerator || false,
 						type: youtubeShorts ? "youtubeshorts" : "youtube",
+						// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 						textonly: textOnlyMode // Pass the setting to the extension
 					};
 					if (replyContext) {
 						outgoingMessage.initial = replyContext.label;
+						// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 						outgoingMessage.reply = textOnlyMode ? basePlainText : messageWithEmojis;
 					}
 					if (messageData.meta && typeof messageData.meta === 'object') {
@@ -6741,6 +6806,7 @@ function enableBackgroundKeepAlive() {
 				membership: "",
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "superchat",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}, superChatData)));
 		} catch (e) {
@@ -6798,6 +6864,7 @@ function enableBackgroundKeepAlive() {
 				userid: giftData.authorChannelId,
 				backgroundColor: "",
 				textColor: "#111",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? displayMessage : escapeHtml(displayMessage),
 				chatimg: giftData.profileImageUrl || "",
 				hasDonation: donationText,
@@ -6805,6 +6872,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: giftLabel,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "jeweldonation",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false,
 				meta: { youtubeGift: metaGift }
 			};
@@ -6937,6 +7005,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: resolvedLevel,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: eventName,
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false,
 				meta: membershipMeta
 			}));
@@ -6980,6 +7049,7 @@ function enableBackgroundKeepAlive() {
 				nameColor: !settings.nosubcolor ? "#107516" : "",
 				backgroundColor: "",
 				textColor: "",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? displayMessage : escapeHtml(displayMessage),
 				chatimg: giftData.profileImageUrl || "",
 				hasDonation: "",
@@ -6987,6 +7057,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: giftData.memberLevelName,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "giftredemption",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}, giftData)));
 		} catch (e) {
@@ -7035,6 +7106,7 @@ function enableBackgroundKeepAlive() {
 				nameColor: "",
 				backgroundColor: "",
 				textColor: "",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? displayMessage : escapeHtml(displayMessage),
 				chatimg: giftData.profileImageUrl || "",
 				hasDonation: "",
@@ -7042,6 +7114,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: levelDescriptor,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "giftpurchase",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}, giftData)));
 		} catch (e) {
@@ -7084,6 +7157,7 @@ function enableBackgroundKeepAlive() {
 				nameColor: !settings.nosubcolor ? "#107516" : "",
 				backgroundColor: "",
 				textColor: "",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? displayMessage : escapeHtml(displayMessage),
 				chatimg: sponsorData.profileImageUrl || "",
 				hasDonation: "",
@@ -7091,6 +7165,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: sponsorData.memberLevelName,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "sponsorship",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}));
 		} catch (e) {
@@ -7151,6 +7226,7 @@ function enableBackgroundKeepAlive() {
 				nameColor: !settings.nosubcolor ? "#107516" : "",
 				backgroundColor: "",
 				textColor: "",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? displayMessage : escapeHtml(displayMessage),
 				chatimg: milestoneData.profileImageUrl || "",
 				hasDonation: "",
@@ -7158,6 +7234,7 @@ function enableBackgroundKeepAlive() {
 				subtitle: levelDescriptor,
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "membermilestone",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}));
 		} catch (e) {
@@ -7213,12 +7290,14 @@ function enableBackgroundKeepAlive() {
 				userid: stickerData.authorChannelId,
 				backgroundColor: "",
 				textColor: "#111",
+				// textonlymode selects literal chatmessage text versus constructed HTML. Keep plain characters unchanged; add reply/emote markup only in HTML mode.
 				chatmessage: settings.textonlymode ? stickerMessage : escapeHtml(stickerMessage), // Just the message, no emoji prefix
 				chatimg: stickerData.profileImageUrl || "",
 				hasDonation: stickerData.amount,
 				membership: "",
 				type: youtubeShorts ? "youtubeshorts" : "youtube",
 				event: "supersticker",
+				// Wire contract: textonly=true means a literal chatmessage string with no app-added HTML; false means HTML for the normal relay sanitization path.
 				textonly: settings.textonlymode || false
 			}, stickerData)));
 		} catch (e) {

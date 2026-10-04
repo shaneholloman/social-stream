@@ -2,7 +2,12 @@
 <html lang="en">
 
 <head>
-<meta charset="UTF-8" />
+    <meta charset="UTF-8" />
+    <meta name="description" content="From LuckyLootTube with Love: a Social Stream Ninja chat overlay for OBS. Use your session link to display live messages from your connected chat sources.">
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="../../icons/favicon.ico" type="image/x-icon">
+<script src="../../js/local-server-url.js"></script>
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>From LuckyLootTube with Love</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -981,7 +986,7 @@ if (data.chatmessage || data.contentimg || data.hasDonation) addMessage(data);
 }
 
 const session = urlParams.get('session');
-if (session) {
+if (session && !SocialStreamLocalServer.connectLocalRelay(urlParams, session, processData, false)) {
 const iframe = document.createElement("iframe");
 const filename = "dock";
 const password = urlParams.get('password') || 'false';

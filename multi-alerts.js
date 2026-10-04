@@ -2,6 +2,7 @@ const ALERT_CATEGORIES = Object.freeze({
   FOLLOW: 'follow',
   SUBSCRIPTION: 'subscription',
   DONATION: 'donation',
+  PURCHASE: 'purchase',
   BITS: 'bits',
   RAID: 'raid',
   AUCTION: 'auction',
@@ -16,6 +17,7 @@ const CATEGORY_LABELS = Object.freeze({
   [ALERT_CATEGORIES.FOLLOW]: 'New Follower',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'New Subscriber',
   [ALERT_CATEGORIES.DONATION]: 'New Donation',
+  [ALERT_CATEGORIES.PURCHASE]: 'New Purchase',
   [ALERT_CATEGORIES.BITS]: 'New Cheer',
   [ALERT_CATEGORIES.RAID]: 'Incoming Raid',
   [ALERT_CATEGORIES.AUCTION]: 'Auction Won',
@@ -26,6 +28,7 @@ const CATEGORY_LABEL_KEYS = Object.freeze({
   [ALERT_CATEGORIES.FOLLOW]: 'alert-title-new-follower',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'alert-title-new-subscriber',
   [ALERT_CATEGORIES.DONATION]: 'alert-title-new-donation',
+  [ALERT_CATEGORIES.PURCHASE]: 'alert-title-new-purchase',
   [ALERT_CATEGORIES.BITS]: 'alert-title-new-cheer',
   [ALERT_CATEGORIES.RAID]: 'alert-title-incoming-raid',
   [ALERT_CATEGORIES.AUCTION]: 'alert-title-auction-won',
@@ -36,6 +39,7 @@ const CATEGORY_ACCENTS = Object.freeze({
   [ALERT_CATEGORIES.FOLLOW]: '#ff68b3',
   [ALERT_CATEGORIES.SUBSCRIPTION]: '#8b5cf6',
   [ALERT_CATEGORIES.DONATION]: '#14f195',
+  [ALERT_CATEGORIES.PURCHASE]: '#14b8a6',
   [ALERT_CATEGORIES.BITS]: '#38bdf8',
   [ALERT_CATEGORIES.RAID]: '#f59e0b',
   [ALERT_CATEGORIES.AUCTION]: '#fbbf24',
@@ -83,6 +87,8 @@ const DONATION_EVENTS = new Set([
   'donation',
   'gift',              // TikTok gifts, Kick DOM gifts
   'gift_sent',
+  'giftcontribution',
+  'giftfunded',
   'gift_message',
   'live_gift',
   'tiktok_gift',
@@ -178,6 +184,7 @@ const SOURCE_ALIASES = Object.freeze({
 });
 
 const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.has('staticart')) document.body.classList.add('static-art');
 const SERVER_EXCLUSIVE_TRANSPORT_VERSION = '3.52.0';
 // Transport migration guard: only pages with full server parity may skip the legacy bridge.
 var TRANSPORT_CAPABILITIES = {
@@ -222,6 +229,7 @@ const CATEGORY_STYLE_PARAMS = {
   [ALERT_CATEGORIES.FOLLOW]: 'followstyle',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'substyle',
   [ALERT_CATEGORIES.DONATION]: 'donostyle',
+  [ALERT_CATEGORIES.PURCHASE]: 'purchasestyle',
   [ALERT_CATEGORIES.BITS]: 'bitsstyle',
   [ALERT_CATEGORIES.RAID]: 'raidstyle',
   [ALERT_CATEGORIES.AUCTION]: 'auctionstyle',
@@ -232,6 +240,7 @@ const CATEGORY_DISABLE_PARAMS = {
   [ALERT_CATEGORIES.FOLLOW]: 'disablefollows',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'disablesubs',
   [ALERT_CATEGORIES.DONATION]: 'disabledonos',
+  [ALERT_CATEGORIES.PURCHASE]: 'disablepurchases',
   [ALERT_CATEGORIES.BITS]: 'disablebits',
   [ALERT_CATEGORIES.RAID]: 'disableraids'
 };
@@ -246,6 +255,7 @@ const CATEGORY_SOUND_PARAMS = {
   [ALERT_CATEGORIES.FOLLOW]: 'followsound',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'subsound',
   [ALERT_CATEGORIES.DONATION]: 'donosound',
+  [ALERT_CATEGORIES.PURCHASE]: 'purchasesound',
   [ALERT_CATEGORIES.BITS]: 'bitssound',
   [ALERT_CATEGORIES.RAID]: 'raidsound',
   [ALERT_CATEGORIES.AUCTION]: 'auctionsound',
@@ -256,6 +266,7 @@ const CATEGORY_ACCENT_PARAMS = {
   [ALERT_CATEGORIES.FOLLOW]: 'followaccent',
   [ALERT_CATEGORIES.SUBSCRIPTION]: 'subaccent',
   [ALERT_CATEGORIES.DONATION]: 'donoaccent',
+  [ALERT_CATEGORIES.PURCHASE]: 'purchaseaccent',
   [ALERT_CATEGORIES.BITS]: 'bitsaccent',
   [ALERT_CATEGORIES.RAID]: 'raidaccent',
   [ALERT_CATEGORIES.AUCTION]: 'auctionaccent',
@@ -289,6 +300,7 @@ const state = {
   currentAlert: null,
   currentAlertNode: null,
   alertSequence: 0,
+  soundSequence: 0,
   showTimer: null,
   cleanupTimer: null,
   watchdogTimer: null,
@@ -318,6 +330,7 @@ if (settings.previewOnly) {
 }
 
 if (!settings.previewOnly && settings.roomID) {
+  SSNOverlayControl.connect(urlParams, settings.roomID, "alerts", handleIncomingPayload);
   if (!settings.useServerOnlyTransport) {
     setupBridgeIframe();
   }
@@ -1191,6 +1204,8 @@ function inferCategory(payload = {}) {
     return null;
   }
 
+  if (eventKey === 'purchase') return ALERT_CATEGORIES.PURCHASE;
+
   if (AUCTION_EVENTS.has(eventKey)) {
     return isAuctionWinPayload(payload) ? ALERT_CATEGORIES.AUCTION : null;
   }
@@ -1237,6 +1252,9 @@ function inferCategory(payload = {}) {
 }
 
 function buildHeadline(category, eventKey, actor, amount, viewerCount, payload = {}) {
+  if (eventKey === 'giftcontribution') return { lead: actor, tail: amount ? 'contributed ' + amount + ' toward a gift' : 'contributed toward a gift' };
+  if (eventKey === 'giftfunded') return { lead: actor, tail: 'fully funded a gift' };
+  if (eventKey === 'purchase') return { lead: actor, tail: 'purchased ' + (pickSubtitle(payload) || 'an item') };
   switch (category) {
     case ALERT_CATEGORIES.AUCTION:
       return {
@@ -1310,6 +1328,8 @@ function buildHeadline(category, eventKey, actor, amount, viewerCount, payload =
 }
 
 function buildTitle(category, eventKey) {
+  if (eventKey === 'giftcontribution') return 'Gift Contribution';
+  if (eventKey === 'giftfunded') return 'Gift Fully Funded';
   if (category === ALERT_CATEGORIES.DONATION && isGiftEventKey(eventKey)) {
     return getTranslation('alert-title-new-gift', 'New Gift');
   }
@@ -1319,10 +1339,17 @@ function buildTitle(category, eventKey) {
   return getCategoryLabel(category) || getTranslation('alert-title-new-alert', 'New Alert');
 }
 
-function buildBodyText(category, payload, viewerCount) {
+function buildBodyText(category, payload, viewerCount, format = {}) {
   const eventKey = pickEventKey(payload);
   const rawMessage = normalizeText(payload.chatmessage);
+  format.isHTML = false;
+  function chatBody() {
+    // Only an HTML-mode chatmessage sets isHTML; plain chat and generated labels stay literal strings for textContent, without HTML filtering.
+    format.isHTML = !payload.textonly;
+    return rawMessage;
+  }
   const subtitle = pickSubtitle(payload);
+  if (eventKey === 'giftfunded' || eventKey === 'giftcontribution' || eventKey === 'purchase') return rawMessage ? chatBody() : subtitle;
 
   if (category === ALERT_CATEGORIES.AUCTION) {
     const itemTitle = normalizeText(payload.meta?.title);
@@ -1340,14 +1367,14 @@ function buildBodyText(category, payload, viewerCount) {
     return getTranslation('alert-hype-rolling', 'The hype train is rolling!');
   }
   if (category === ALERT_CATEGORIES.RAID && viewerCount) {
-    return rawMessage || formatTranslation('alert-welcome-raid-from', 'Welcome the raid from {name}.', {
+    return rawMessage ? chatBody() : formatTranslation('alert-welcome-raid-from', 'Welcome the raid from {name}.', {
       name: pickActorName(payload)
     });
   }
   if (category === ALERT_CATEGORIES.DONATION) {
     if (isGiftEventKey(eventKey)) {
       if (rawMessage) {
-        return rawMessage;
+        return chatBody();
       }
       const recipient = pickGiftRecipient(payload);
       if (recipient) {
@@ -1355,14 +1382,14 @@ function buildBodyText(category, payload, viewerCount) {
       }
       return getTranslation('alert-gift-landed', 'A gift just landed.');
     }
-    return rawMessage || getTranslation('alert-thanks-support', 'Thank you for the support!');
+    return rawMessage ? chatBody() : getTranslation('alert-thanks-support', 'Thank you for the support!');
   }
   if (category === ALERT_CATEGORIES.BITS) {
-    return rawMessage || getTranslation('alert-hype-meter', 'The hype meter just moved.');
+    return rawMessage ? chatBody() : getTranslation('alert-hype-meter', 'The hype meter just moved.');
   }
   if (category === ALERT_CATEGORIES.SUBSCRIPTION) {
     if (rawMessage) {
-      return rawMessage;
+      return chatBody();
     }
     if (subtitle) {
       return subtitle;
@@ -1373,9 +1400,9 @@ function buildBodyText(category, payload, viewerCount) {
     return getTranslation('alert-new-supporter', 'A new supporter joined the stream.');
   }
   if (category === ALERT_CATEGORIES.FOLLOW) {
-    return subtitle || rawMessage || getTranslation('alert-thanks-community', 'Thanks for joining the community.');
+    return subtitle || (rawMessage ? chatBody() : getTranslation('alert-thanks-community', 'Thanks for joining the community.'));
   }
-  return rawMessage || subtitle;
+  return rawMessage ? chatBody() : subtitle;
 }
 
 function buildAlertViewModel(payload = {}) {
@@ -1407,14 +1434,17 @@ function buildAlertViewModel(payload = {}) {
   }
   const subtitle = buildAlertSubtitle(category, payload, eventKey, actor);
   const viewerCount = pickViewerCount(payload);
-  const mediaUrl = pickMediaUrl(payload);
+  let mediaUrl = pickMediaUrl(payload);
   const cashValue = pickCashValue(payload, amount, sourceKey);
   if (isValueAlertCategory(category) && settings.minDonationValue > 0 && cashValue < settings.minDonationValue) {
     log('value alert skipped below minimum', { amount, cashValue, minimum: settings.minDonationValue, payload });
     return null;
   }
   const headline = buildHeadline(category, eventKey, actor, amount, viewerCount, payload);
-  const bodyText = buildBodyText(category, payload, viewerCount);
+  const bodyFormat = {};
+  const bodyText = buildBodyText(category, payload, viewerCount, bodyFormat);
+  const effect = matchAlertEffect(category, payload, amount, sourceKey);
+  if (effect && effect.media) mediaUrl = effect.media;
 
   return {
     category,
@@ -1426,8 +1456,10 @@ function buildAlertViewModel(payload = {}) {
     actor,
     amount,
     cashValue,
+    effectSound: effect ? effect.sound : '',
     subtitle,
     bodyText,
+    bodyIsHTML: bodyFormat.isHTML,
     headlineLead: headline.lead,
     headlineTail: headline.tail,
     avatar: normalizeText(payload.chatimg),
@@ -1500,7 +1532,6 @@ function createMockAlertPayload(category, overrides = {}) {
         ...common,
         event: 'donation',
         hasDonation: '$10.00',
-        donoValue: 10,
         chatmessage: 'Keep up the great work!',
         contentimg: createMediaPreviewDataUri('HYPE', accent)
       };
@@ -1601,31 +1632,51 @@ function getMinimumDonationValue() {
 }
 
 function pickCashValue(payload = {}, amountLabel = '', sourceKey = '') {
-  const labelValue = parseCashValue(amountLabel, sourceKey);
-  if (labelValue > 0) {
-    return labelValue;
-  }
-
-  const numericCandidates = [
-    payload.donoValue,
-    payload.donationValue,
-    payload.meta?.donoValue,
-    payload.meta?.donationValue,
-    payload.meta?.amount
-  ];
-
-  for (const candidate of numericCandidates) {
-    const numberValue = Number(candidate);
-    if (Number.isFinite(numberValue) && numberValue > 0) {
-      return numberValue;
-    }
-  }
-
-  return 0;
+  return Math.max(0, getDonationValueUSD(Object.assign({}, payload, {
+    hasDonation: amountLabel || payload.hasDonation,
+    type: sourceKey || payload.type
+  })));
 }
 
 function isValueAlertCategory(category) {
   return category === ALERT_CATEGORIES.DONATION || category === ALERT_CATEGORIES.BITS;
+}
+
+// These are overlay settings, never fields added to the incoming event payload.
+function readAlertEffects() {
+  const effects = [];
+  for (let index = 1; index <= 3; index++) {
+    const prefix = 'effect' + index;
+    if (urlParams.get(prefix + 'enabled') === 'false') continue;
+    const media = normalizeText(urlParams.get(prefix + 'media'));
+    const sound = normalizeText(urlParams.get(prefix + 'sound'));
+    if (!media && !sound) continue;
+    const category = normalizeText(urlParams.get(prefix + 'type')) || 'donation';
+    if (!Object.values(ALERT_CATEGORIES).includes(category)) continue;
+    const minText = normalizeText(urlParams.get(prefix + 'min'));
+    const maxText = normalizeText(urlParams.get(prefix + 'max'));
+    const min = minText ? Number(minText) : null;
+    const max = maxText ? Number(maxText) : null;
+    if ((min !== null && (!Number.isFinite(min) || min < 0)) ||
+        (max !== null && (!Number.isFinite(max) || max < 0)) ||
+        (min !== null && max !== null && min > max)) continue;
+    // Bounds only make sense on donation and cheer categories.
+    if ((min !== null || max !== null) && !isValueAlertCategory(category)) continue;
+    effects.push({ category, min, max, media, sound });
+  }
+  return effects;
+}
+
+function matchAlertEffect(category, payload, amount, sourceKey) {
+  const value = pickCashValue(payload, amount, sourceKey);
+  const cents = Math.round(value * 100);
+  return settings.alertEffects.find(effect => {
+    if (effect.category !== category) return false;
+    if (effect.min === null && effect.max === null) return true;
+    if (!(value > 0)) return false;
+    return (effect.min === null || cents >= Math.round(effect.min * 100)) &&
+      (effect.max === null || cents <= Math.round(effect.max * 100));
+  }) || null;
 }
 
 function normalizeColor(value) {
@@ -1706,6 +1757,7 @@ function readSettings() {
     beep: urlParams.has('beep'),
     beepVolume: Math.max(0, Math.min(1, parseNumberParam('beepvolume', 35) / 100)),
     customBeep: normalizeText(urlParams.get('custombeep')),
+    alertEffects: readAlertEffects(),
     categorySounds: Object.fromEntries(
       Object.entries(CATEGORY_SOUND_PARAMS).map(([cat, param]) => [cat, normalizeText(urlParams.get(param))])
     ),
@@ -1715,6 +1767,9 @@ function readSettings() {
     hideSource: urlParams.has('hidesource'),
     hideAmount: urlParams.has('hideamount'),
     hideSubtitle: urlParams.has('hidesubtitle'),
+    hideTitle: urlParams.has('hidetitle'),
+    hideMessage: urlParams.has('hidemessage'),
+    hideProgress: urlParams.has('hideprogress'),
     includeSources: parseSourceListParam('sources'),
     excludeSources: parseSourceListParam('hidesources'),
     includeSourceMatches: parseSourceMatchListParam('sourceids', ['channels']),
@@ -1943,6 +1998,7 @@ function handlePreviewMessage(previewMessage) {
 }
 
 function handleIncomingPayload(payload) {
+  if (!SSNOverlayControl.accept(payload, "alerts")) return;
   if (payload && typeof payload === 'object' && payload.action === 'clearAlerts') {
     clearAlert({ clearQueue: true });
     updateStatus('Alerts cleared');
@@ -2161,6 +2217,16 @@ function renderAlert(model) {
   article.className = `alert-card theme-${styleKey} category-${model.category} event-${eventClass}`;
   if (['cute', 'cozy', 'cats', 'music', 'arcade', 'slate', 'paper', 'micro'].indexOf(styleKey) !== -1) {
     article.classList.add('collection');
+    if (settings.accent || settings.categoryAccents[model.category] || settings.colorByPlatform) {
+      article.classList.add('custom-accent');
+      article.style.setProperty('--collection-accent', model.accent);
+    }
+  }
+  if (['art-cat', 'art-dog', 'art-halloween', 'art-christmas', 'art-music', 'art-forest', 'art-space', 'art-dragon'].indexOf(styleKey) !== -1) {
+    article.classList.add('collection', 'art-alert', 'style-' + styleKey);
+    if (settings.accent || settings.categoryAccents[model.category] || settings.colorByPlatform) {
+      article.style.setProperty('--collection-accent', model.accent);
+    }
   }
   article.dataset.eventKey = model.eventKey || '';
   article.dataset.alertCategory = model.category || '';
@@ -2178,7 +2244,9 @@ function renderAlert(model) {
   const titleBadge = document.createElement('div');
   titleBadge.className = 'alert-title';
   titleBadge.textContent = model.title.toUpperCase();
-  header.appendChild(titleBadge);
+  if (!settings.hideTitle) {
+    header.appendChild(titleBadge);
+  }
 
   if (!settings.hideSource) {
     const spacer = document.createElement('div');
@@ -2235,10 +2303,16 @@ function renderAlert(model) {
     copy.appendChild(subtitle);
   }
 
-  if (shouldRenderBodyText(model)) {
+  if (!settings.hideMessage && shouldRenderBodyText(model)) {
     const message = document.createElement('div');
     message.className = 'alert-message';
-    message.innerHTML = model.bodyText;
+    if (model.bodyIsHTML && window.SocialStreamChatHTML) {
+      // Check the display copy: direct senders may bypass relay sanitization.
+      message.innerHTML = SocialStreamChatHTML.sanitize(model.bodyText);
+    } else {
+      // Plain bodies stay literal; a missing helper also falls back to text.
+      message.textContent = model.bodyText;
+    }
     copy.appendChild(message);
   }
 
@@ -2273,12 +2347,16 @@ function renderAlert(model) {
     }
   }
 
-  article.appendChild(header);
+  if (header.querySelector('.alert-title, .source-badge')) {
+    article.appendChild(header);
+  }
   article.appendChild(shell);
 
   const progress = document.createElement('div');
   progress.className = 'alert-progress';
-  article.appendChild(progress);
+  if (!settings.hideProgress) {
+    article.appendChild(progress);
+  }
 
   return article;
 }
@@ -2405,6 +2483,7 @@ function clearActiveGeneratedSound(oscillator = null, gain = null) {
 }
 
 function stopActiveAlertSound() {
+  state.soundSequence += 1;
   if (elements.audio) {
     try {
       elements.audio.pause();
@@ -2547,7 +2626,8 @@ async function playAlertSound(model) {
   stopActiveAlertSound();
 
   const categorySound = model.category && settings.categorySounds[model.category];
-  const customSrc = categorySound || settings.customBeep;
+  const soundToken = state.soundSequence;
+  const customSrc = model.effectSound || categorySound || settings.customBeep;
 
   if (customSrc && elements.audio) {
     try {
@@ -2567,11 +2647,14 @@ async function playAlertSound(model) {
         elements.audio.addEventListener('error', fail, { once: true });
         elements.audio.load();
       });
+      if (state.soundSequence !== soundToken) return;
       await primeAudioPipeline();
+      if (state.soundSequence !== soundToken) return;
       await elements.audio.play();
       state.lastAudioTime = Date.now();
       return;
     } catch (error) {
+      if (state.soundSequence !== soundToken) return;
       noteBlockedAudio(error);
       log('custom beep failed', error);
     }
@@ -2579,11 +2662,14 @@ async function playAlertSound(model) {
 
   try {
     var ctx = await resumeAudioContext();
+    if (state.soundSequence !== soundToken) return;
     if (!ctx || ctx.state !== 'running') {
       updateStatus('Audio blocked - click the overlay once to enable sound', 5000);
       return;
     }
     await primeAudioPipeline();
+
+    if (state.soundSequence !== soundToken) return;
 
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -2638,12 +2724,16 @@ window.__multiAlertsOverlay = {
       beepVolume: settings.beepVolume,
       customBeep: settings.customBeep,
       categorySounds: Object.assign({}, settings.categorySounds),
+      alertEffects: settings.alertEffects.map(effect => Object.assign({}, effect)),
       compact: settings.compact,
       hideAvatar: settings.hideAvatar,
       hideMedia: settings.hideMedia,
       hideSource: settings.hideSource,
       hideAmount: settings.hideAmount,
       hideSubtitle: settings.hideSubtitle,
+      hideTitle: settings.hideTitle,
+      hideMessage: settings.hideMessage,
+      hideProgress: settings.hideProgress,
       includeSources: Array.from(settings.includeSources),
       excludeSources: Array.from(settings.excludeSources),
       includeSourceMatches: Array.from(settings.includeSourceMatches),

@@ -50,6 +50,7 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `compact` or `overlaymode` | boolean | Enables compact mode with less spacing |
 | `inline` | boolean | In the standard row layout, keeps normal spacing while allowing the message to start beside the username and wrap naturally below. Specialized layouts such as `compact`, `horizontal`, `twolines`, `split`, `largeavatar`, and `bubble` take precedence |
 | `padding` | number | Sets padding between messages in pixels |
+| `sidepadding` | number (0–99) | Adds padding to the left and right edges of dock chat; defaults to 8 pixels when enabled without a value. Off by default |
 | `largeavatar` | boolean | Shows larger user avatars on the left side |
 | `emoji` or `emojis` | number | Sets emoji size scaling (percentage, default: 140) |
 | `nooutline` | boolean | Removes text outline effects |
@@ -72,8 +73,9 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `memberhighlightcolor` | hex/color | Custom member row highlight color; 6-digit colors are shown with stronger shading automatically |
 | `firsttimehighlightcolor` | hex/color | Custom first-time chatter row highlight color; 6-digit colors are shown with stronger shading automatically |
 | `questionhighlightcolor` | hex/color | Custom question row highlight color; 6-digit colors are shown with stronger shading automatically |
+| `trivialhighlightcolor` | hex/color | Custom trivial event background color, including host mentions, in row and bubble layouts. Requires `trivialevents`; leave empty to retain the supplied event colors |
 | `hideshadow` | boolean | Removes alternating card drop shadows |
-| `largecontent` | boolean | Enlarges embedded content or image cards |
+| `largecontent` | boolean or 1-5 | Enlarges content images, GIFs and videos. An optional multiplier scales the 240px size from 1x to 5x, capped to the message width; the bare flag keeps the existing 240px size. Regular emotes are unchanged |
 | `donationright` | number | Sets donation amount margin-right in pixels |
 | `bubbleopacity` | 0.0-1.0 | Sets message bubble background opacity |
 | `namebubblecolor` | hex/color | Background color for the rounded name bubble |
@@ -133,6 +135,7 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `hidesource` | boolean | Hides the source platform icons (YouTube, Twitch, etc.) |
 | `noavatar` or `noavatars` | boolean | Hides user avatars |
 | `nobadges` or `hidebadges` | boolean | Hides user badges |
+| `stripmemberships` | boolean | Hides membership labels (off by default). Works independently in dock.html and featured.html; keeps badge icons and chat messages. In the dock, member filtering, highlighting, and forwarded membership data are preserved. |
 | `limitbadges` | number | Limits number of badges shown per message |
 | `notime` or `notimestamp` or `nodate` | boolean | Hides timestamp |
 | `24hr` | boolean | Displays timestamps using 24-hour format |
@@ -200,7 +203,9 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `autopindonations` | boolean | Auto-pins donation cards as they arrive |
 | `autopinquestions` or `autopinquestion` | boolean | Auto-pins cards marked as questions |
 | `autoqueuedonations` or `autoqueuedonation` | boolean | Auto-queues donation cards |
+| `autoqueuememberships` | boolean | Auto-queues YouTube membership alerts: new memberships, renewals, milestones, gift purchases, and gift recipients |
 | `autoqueuequestions` or `autoqueuequestion` | boolean | Auto-queues question cards |
+| `trackquestions` | boolean | Adds a pending-question filter and Answered/Dismiss controls to the host dock. Tracks visible question marks and identified questions. Keeps the latest 100 during normal vertical chat pruning; local to this dock and resets on reload. |
 | `skipdonations` | boolean | Prevents donation cards from being auto-featured |
 | `selfqueue` | comma-separated strings | Viewer commands that add themselves to the queue (e.g., `!queue`) |
 | `deleteonlylast` | boolean | Only removes the most recent card when clearing messages |
@@ -271,9 +276,12 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `beep` | boolean | Enables sound notification for new messages |
 | `beeponlymod` | boolean | Enables sound notifications only for moderator messages |
 | `beepvolume` | 0-100 | Sets volume for notification sound (percentage) |
+| `loudbeep` | boolean | Uses a louder built-in dock beep preset. Custom beep URLs take priority; still requires beeps to be enabled. |
 | `custombeep` | URL | Custom sound file URL for notifications |
 | `beepwords` | boolean | Replaces asterisks with "beep" in messages |
 | `quietcommands` | boolean | Disables the TTS beep when command shortcuts trigger |
+
+In Dock settings → Message Mechanics, enable **Louder built-in beep** and use **Preview louder beep** to try it at your Beep volume. Reopen the updated dock link (or update and refresh the OBS browser source) to apply it. The preset is compressed and peak-limited ahead of time; it does not amplify custom sounds or change the 0–100% volume range.
 
 ### OBS Integration Parameters
 
@@ -404,6 +412,15 @@ https://socialstream.ninja/dock.html?session=xxxxxxxxx&urlparameter=value
 | `notobs` | boolean | Disables OBS studio detection |
 | `filtertid` | comma-separated numbers | Filter by thread IDs |
 | `branded` | boolean | Shows channel icon |
+
+## Viewer Count & Chat Activity Title (`hype.html`)
+
+Set **Custom title** under **Viewer Count & Chat Activity Overlay → Enable and customize**, then copy the updated overlay link into OBS.
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `title` | string | Overrides the title with plain text, e.g. `&title=Watching%20now`. Missing, empty, or whitespace-only values keep the default title for the selected viewer/chatter mode |
+| `hidetitle` | boolean | Hides the title, including a custom title. Minimal and Dock Style also hide the title |
 
 ## Tip Jar & Goal Meter Parameters (`tipjar.html`)
 

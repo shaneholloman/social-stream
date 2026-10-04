@@ -1,8 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="description" content="Multi-Stream Alert Box. Part of the Social Stream Ninja toolkit for managing live chat, stream overlays and audience interactions.">
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="icons/favicon.ico" type="image/x-icon">
+<script src="shared/overlay-control-transport.js"></script>
   <script type="text/javascript" src="./js/local-server-url.js"></script>
-  <meta charset="UTF-8">
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Multi-Stream Alert Box</title>
   <style>
@@ -351,6 +356,17 @@
 
     .compact .alert-message {
       font-size: calc(14px * var(--detail-scale));
+    }
+
+    .alert-headline,
+    .alert-message,
+    .alert-subtitle,
+    .alert-pill,
+    .alert-title,
+    .source-badge {
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .alert-meta {
@@ -774,6 +790,18 @@
       }
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      body .alert-card,
+      body .alert-card.is-hiding,
+      body .alert-progress::after {
+        animation: none !important;
+        transition: none !important;
+      }
+      body .alert-card.is-hiding {
+        visibility: hidden;
+      }
+    }
+
     @media (max-width: 720px) {
       body {
         padding: 18px;
@@ -814,6 +842,7 @@
     }
   </style>
 <link rel="stylesheet" href="./themes/collections.css">
+<link rel="stylesheet" href="./themes/featured-styles/artwork.css">
 </head>
 <body data-align="left">
   <div id="alert-stage" aria-live="polite" aria-atomic="true"></div>
@@ -822,6 +851,8 @@
   <script type="text/javascript" src="tts.js"></script>
   <script type="text/javascript" src="currency.js"></script>
   <script type="text/javascript" src="./libs/colours.js"></script>
+  <script src="./libs/objects.js"></script>
+  <script src="./shared/utils/chatHtml.js"></script>
   <script type="text/javascript" src="./multi-alerts.js"></script>
   <script src="shared/stickers/catalog.js"></script>
   <script src="shared/stickers/player.js"></script>

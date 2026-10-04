@@ -11,6 +11,8 @@ var isExtensionOn = false;
 var iframe = null;
 // Optional: Use VDONinjaSDK instead of iframe transport to reduce memory
 var ninjaBridge = null;
+var transportGeneration = 0;
+var transportTask = null;
 var useNinjaSDK = false; // toggled via URL params &sdk/&beta, or can be wired to settings in future
 
 var settings = {};
@@ -917,6 +919,7 @@ if (typeof chrome.runtime == "undefined") {
 	ipcRenderer.on("fromPopup", (event, ...args) => {
 		//log("FROM POP UP (redirected)", args[0]);
 		var sender = {};
+		sender.aiEventLocalPopup = true;
 		sender.tab = {};
 		sender.tab.id = null;
 		const request = args[0];
@@ -933,23 +936,25 @@ if (typeof chrome.runtime == "undefined") {
 		});
 	});
 
-	fetchNode = function (URL, headers = {}, method = "GET", body = null, diagnostics = null) {
+	fetchNode = function (URL, headers = {}, method = "GET", body = null, diagnostics = null, timeout = undefined) {
 		return ipcRenderer.sendSync("nodefetch", {
 			url: URL,
 			headers: headers,
 			method: method,
 			body: body,
-			diagnostics: diagnostics
+			diagnostics: diagnostics,
+			timeout: timeout
 		});
 	};
 
-	fetchNodeAsync = function (URL, headers = {}, method = "GET", body = null, diagnostics = null) {
+	fetchNodeAsync = function (URL, headers = {}, method = "GET", body = null, diagnostics = null, timeout = undefined) {
 		return ipcRenderer.invoke("nodefetch", {
 			url: URL,
 			headers: headers,
 			method: method,
 			body: body,
-			diagnostics: diagnostics
+			diagnostics: diagnostics,
+			timeout: timeout
 		});
 	};
 
@@ -2346,17 +2351,8 @@ function hasBackgroundCreditsMembershipSignal(data) {
 }
 
 function getBackgroundCreditsDonationAmount(data) {
-	var amount = parseFloat(String((data && data.donoValue) || "").replace(/,/g, ""));
-	if (Number.isFinite(amount) && amount > 0) {
-		return amount;
-	}
 	try {
-		if (data && data.hasDonation && typeof convertToUSD === "function") {
-			amount = Number(convertToUSD(data.hasDonation, String(data.type || "").toLowerCase()));
-			if (Number.isFinite(amount) && amount > 0) {
-				return amount;
-			}
-		}
+		return getCreditsDonationValue(data);
 	} catch (e) {}
 	return 0;
 }
@@ -2370,7 +2366,8 @@ function serializeBackgroundCreditsUsers() {
 			donations: user.donations,
 			hasDonationActivity: !!user.hasDonationActivity,
 			isMember: !!user.isMember,
-			avatarUrl: user.avatarUrl || null
+			avatarUrl: user.avatarUrl || null,
+			giftStreaks: sanitizeCreditsGiftStreaks(user.giftStreaks)
 		};
 	});
 }
@@ -2425,7 +2422,8 @@ function ensureBackgroundCreditsLoaded() {
 								donations: Math.max(0, Number(item.donations) || 0),
 								hasDonationActivity: !!item.hasDonationActivity || Number(item.donations) > 0,
 								isMember: !!item.isMember,
-								avatarUrl: item.avatarUrl || null
+								avatarUrl: item.avatarUrl || null,
+								giftStreaks: sanitizeCreditsGiftStreaks(item.giftStreaks)
 							};
 							backgroundCreditsUsers.set(user.name + "-" + user.type, user);
 						});
@@ -2490,7 +2488,7 @@ function captureBackgroundCreditsMessage(data) {
 		if (hasBackgroundCreditsMembershipSignal(data)) user.isMember = true;
 		if (data.hasDonation) {
 			user.hasDonationActivity = true;
-			user.donations += getBackgroundCreditsDonationAmount(data);
+			user.donations += getCreditsDonationIncrement(user, data, getBackgroundCreditsDonationAmount(data));
 		}
 		backgroundCreditsUpdated = Date.now();
 		scheduleBackgroundCreditsSave();
@@ -2517,11 +2515,16 @@ function getBackgroundCreditsTestSnapshot() {
 	];
 }
 
-function sendCreditsCommandPacket(packet) {
-	return sendTargetP2P(packet, "credits").then(function(sent) {
-		if (sent) return true;
-		return sendTargetP2P(packet, "dock", { retry: true, timeoutMs: 5000, intervalMs: 250 });
-	});
+async function sendCreditsCommandPacket(packet) {
+	packet = prepareOverlayControl(packet, "credits");
+	// Older Credits pages advertise the dock label. A relay acknowledgement must
+	// not prevent those connected WebRTC displays receiving the same command.
+	var results = await Promise.all([
+		sendTargetP2P(packet, "credits"),
+		sendTargetP2P(packet, "dock", { retry: false })
+	]);
+	if (results.some(Boolean)) return true;
+	return sendTargetP2P(packet, "dock", { retry: true, timeoutMs: 5000, intervalMs: 250 });
 }
 
 function isCreditsRemoteAction(action) {
@@ -4075,6 +4078,7 @@ var intervalMessages = {};
 
 function updateExtensionState(sync = true) {
 	log("updateExtensionState", isExtensionOn);
+	if (window.SSNAiEventBackground) window.SSNAiEventBackground.syncRelay();
 
 	document.title = "Keep Open - Social Stream Ninja";
 
@@ -4093,12 +4097,9 @@ function updateExtensionState(sync = true) {
 	} else {
 		// document.title = "Idle - Social Stream Ninja";
 
-		if (ninjaBridge) {
-			try {
-				ninjaBridge.destroy();
-			} catch (e) {}
-			ninjaBridge = null;
-		}
+		// Invalidate pending starts before they can publish after the service stops.
+		cancelPendingNinjaTransport();
+		queueTransportTask(destroyNinjaTransport);
 
 		if (iframe) {
 			iframe.src = null;
@@ -5102,6 +5103,7 @@ function replaceEmotesWithImages(message, emotesMap, zw = false) {
 
 const emojiCharacterRegex = /[\u{1F300}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{2600}-\u{27BF}\u{1F3FB}-\u{1F3FF}]/gu;
 
+// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 async function buildEmoteOnlyMessage(rawMessage, textOnly = false) {
 	if (!rawMessage || typeof rawMessage !== "string") {
 		return "";
@@ -5182,6 +5184,7 @@ async function buildEmoteOnlyMessage(rawMessage, textOnly = false) {
 		return "";
 	}
 
+	// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 	if (textOnly) {
 		return kept
 			.map(entry => (entry.text || "").trim())
@@ -5575,6 +5578,9 @@ function routeIndividualLikeEvent(message, alreadyRouted) {
 }
 
 async function processIncomingMessage(message, sender = null) {
+	// Carry chatmessage and textonly together through processing: true is a literal string,
+	// false/missing may be HTML. Ingestion does not itself prove HTML has been sanitized.
+ if (message && message.type === "socialstreamchat" && window.ncAudience && window.ncAudience.ownsRoom(message.meta && message.meta.ninjachatter && message.meta.ninjachatter.room)) return; // Paired connector owns audience return.
 	var individualLikeRouting = { routed: false, stop: false };
 	try {
 		if (sender?.tab && (message.tid === undefined || message.tid === null)) {
@@ -5586,6 +5592,9 @@ async function processIncomingMessage(message, sender = null) {
 		if (!checkIfAllowed(message.type)) {
 			return;
 		}
+
+        if (message.event === 'purchase' && window.recordCommercePurchase) window.recordCommercePurchase(message);
+        if (message.event === 'auction_update' && (message.type === 'whatnot' || message.type === 'ebay') && window.recordCommerceAuction) window.recordCommerceAuction(message);
 
 		if (settings.filtercommands && message.chatmessage && message.chatmessage.startsWith("!")) {
 			return;
@@ -5600,6 +5609,7 @@ async function processIncomingMessage(message, sender = null) {
 		let reflection = false;
 
 		// checkExactDuplicateAlreadyReceived only does work if there was a message responsein the last 10 seconds.
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		reflection = checkExactDuplicateAlreadyReceived(message.chatmessage, message.textonly, message.tid, message.type);
 		if (reflection && (settings.firstsourceonly || settings.hideallreplies || settings.thissourceonly)) {
 			return;
@@ -5634,7 +5644,8 @@ async function processIncomingMessage(message, sender = null) {
 
 		if (
 			settings.noduplicates && // filters echos if same TYPE, USERID, and MESSAGE
-			checkDuplicateSources.isDuplicate(message.type, message.userid || message.chatname, message.chatmessage || message.hasDonation || (message.membership && message.event))
+			// Distinct anonymous Shopify orders share display text; compare their stable order IDs.
+			checkDuplicateSources.isDuplicate(message.type, message.userid || message.chatname, (message.type === "shopify" && message.event === "purchase" && /^shopify:[a-f0-9]{64}$/.test(message.id || "")) ? message.id : (message.chatmessage || message.hasDonation || (message.membership && message.event)))
 		) {
 			return;
 		}
@@ -5725,6 +5736,14 @@ async function processIncomingMessage(message, sender = null) {
 }
 
 async function handleRuntimeMessage(request, sender, sendResponseReal) {
+ if (request && request.ncAudience) {
+  // Only the packaged popup may operate the private connector; sources cannot obtain it.
+  const popupOrigin = chrome.runtime.getURL('popup.html');
+  if (!sender || !sender.url || sender.url.split('?')[0] !== popupOrigin) { sendResponseReal({error:'Not authorized'}); return; }
+  try { sendResponseReal(await window.ncAudience.handle(request.ncAudience)); } catch (_) { sendResponseReal({error:'Audience connection unavailable'}); }
+  return;
+ }
+
 	var response = {};
 	var alreadySet = false;
 
@@ -5773,7 +5792,21 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 		const senderTabId = hasSenderTabId ? senderTab.id : null;
 		const senderTabUrl = senderTab && typeof senderTab.url === "string" ? senderTab.url : "";
 
-		if (request.action === "clearHistory") {
+		if (request.cmd === "aiEvent") {
+            try {
+                sendResponse({ value: await window.SSNAiEventBackground.handleSettings(request, sender) });
+            } catch (error) {
+                sendResponse({ error: error.message || 'AI overlay settings are unavailable.' });
+            }
+            return response;
+        } else if (request.cmd === "aiEventFlow") {
+            try { sendResponse({ value: await window.SSNAiEventBackground.handleFlow(request, sender) }); }
+            catch (error) { sendResponse({ error: error.message || 'AI overlay is unavailable.' }); }
+            return response;
+        } else if (request.cmd === "monetization") {
+            sendResponse(window.handleMonetizationRequest ? await window.handleMonetizationRequest(request, sender) : {error:"Monetization is loading."});
+            return response;
+        } else if (request.action === "clearHistory") {
 			const clearHistoryResult = await clearSavedMessageHistory(request.value);
 			if (clearHistoryResult.ok) {
 				sendDataP2P({
@@ -5828,7 +5861,7 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 			}
 		} else if (request.cmd && request.cmd === "testLLMProvider") {
 			try {
-				const llmResponse = await callLLMAPI(request.prompt || "Reply with one short sentence confirming this chatbot connection works.", null, null, null, null, null, { settings: request.settingsOverride || null });
+				const llmResponse = await callLLMAPI(request.prompt || "Reply with one short sentence confirming this chatbot connection works.", null, null, null, null, null, { settings: request.settingsOverride || null, requestTimeoutMs: 60000 });
 				sendResponse({ success: true, response: llmResponse });
 			} catch (error) {
 				let payload;
@@ -6059,6 +6092,10 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 					}
 				}
 			}
+			if (["teams", "discord", "slack", "openai", "chime", "meet", "telegram", "whatsapp", "instagram", "xcapture"].includes(request.setting)) {
+				pushSettingChange();
+			}
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (request.setting == "textonlymode") {
 				pushSettingChange();
 			}
@@ -7197,6 +7234,12 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 		} else if (request.cmd && request.cmd === "livestatssaveStop") {
 			sendResponse({ state: isExtensionOn });
 			await overwriteLiveStatsFile("stop");
+        } else if (request.cmd === 'recoverEconomyBackup') {
+            try { await window.pointsSystemReady(); sendResponse(await window.pointsSystem.recoverEconomyBackup(request.data)); }
+            catch(error) {sendResponse({success:false,error:error.message});}
+		} else if (isGiveawayAction(request.cmd)) {
+			sendResponse(await handleGiveawayAction(request.cmd, request.value));
+			return;
 		} else if (request.cmd && request.cmd === "selectwinner") {
 			////console.logrequest);
 			if ("value" in request) {
@@ -7367,6 +7410,7 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 			updateReplaySpeed(request.sessionId, request.speed);
 			sendResponse({ success: true, state: isExtensionOn });
 		} else if (request.cmd && request.cmd === "sidUpdated") {
+			const previousRelaySession = streamID;
 			const previousCohostCapabilityScope = String(streamID || "") + "\n" + String(password || "");
 			if (request.streamID) {
 				streamID = request.streamID;
@@ -7416,6 +7460,27 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 				openAIRealtimeCohostCapabilityMustRotate = true;
 			}
 			persistSession({ streamId: streamID, state: isExtensionOn });
+			if (previousRelaySession !== streamID) {
+				// Each relay socket joins its room once. Recreate both enabled routes
+				// before sending chat or actions for the newly selected session.
+				clearTimeout(reconnectionTimeout);
+				clearTimeout(reconnectionTimeoutDock);
+				reconnectionTimeout = null;
+				reconnectionTimeoutDock = null;
+				for (const socket of [socketserver, socketserverDock]) {
+					if (socket) {
+						socket.onclose = null;
+						socket.close();
+					}
+				}
+				socketserver = false;
+				socketserverDock = false;
+				setupSocket();
+				setupSocketDock();
+				pollControlState = null;
+                mapControlState = null;
+                overlayStateSnapshots.clear();
+			}
 			if (iframe) {
 				if (iframe.src) {
 					iframe.src = null;
@@ -7426,6 +7491,9 @@ async function handleRuntimeMessage(request, sender, sendResponseReal) {
 			}
 			if (isExtensionOn) {
 				initTransport(streamID, password);
+			} else {
+				cancelPendingNinjaTransport();
+				queueTransportTask(destroyNinjaTransport);
 			}
 
 			sendResponse({ state: isExtensionOn, streamID: streamID, password: password, cohostCapability: await getOpenAIRealtimeCohostCapability() });
@@ -7890,9 +7958,7 @@ function buildViewerCountsFromMetaStore() {
 
 function publishViewerCountsFromMetaStore() {
 	var counts = buildViewerCountsFromMetaStore();
-	if (settings.hypemode) {
-		updateViewerCount({ event: "viewer_updates", meta: counts }); // updateViewerCount already calls combineHypeData and sends
-	}
+	updateViewerCount({ event: "viewer_updates", meta: counts });
 
 	var viewerUpdateEvent = { event: "viewer_updates", meta: counts };
 	sendDataP2P(viewerUpdateEvent);
@@ -7914,6 +7980,7 @@ function hasTargetedMetaPayload(message) {
 }
 
 async function sendToDestinations(message, individualLikeAlreadyRouted) {
+
 	if (typeof message == "object") {
 		captureLiveStatsFromMessage(message);
 
@@ -7935,6 +8002,7 @@ async function sendToDestinations(message, individualLikeAlreadyRouted) {
 		}
 
 		if (message.chatmessage) {
+			// Relay boundary: sanitize HTML-mode chatmessage only. textonly=true is literal text, so bypass HTML parsing/filtering and preserve the flag.
 			if (!message.textonly) {
 				if (settings.bttv) {
 					if (!Globalbttv) {
@@ -8065,6 +8133,7 @@ async function sendToDestinations(message, individualLikeAlreadyRouted) {
 				if (!translated) {
 					return false;
 				}
+				// Relay boundary: sanitize HTML-mode chatmessage only. textonly=true is literal text, so bypass HTML parsing/filtering and preserve the flag.
 				if (message.chatmessage && !message.textonly) {
 					message.chatmessage = filterXSS(message.chatmessage);
 				}
@@ -8077,6 +8146,8 @@ async function sendToDestinations(message, individualLikeAlreadyRouted) {
 	if (message && typeof message === "object" && typeof sanitizeRelayPayloadFields === "function") {
 		message = sanitizeRelayPayloadFields(message) || message;
 	}
+
+ if (window.ncAudience && window.ncAudience.paired()) window.ncAudience.publish(message);
 
 	try {
 		captureBackgroundCreditsMessage(message);
@@ -8109,6 +8180,7 @@ async function sendToDestinations(message, individualLikeAlreadyRouted) {
 		console.error(e);
 	}
 	try {
+		if (giveawayHost) await processGiveawayEntry(message);
 		if (settings.pollEnabled) {
 			sendTargetP2P(message, "poll");
 		}
@@ -8420,10 +8492,12 @@ function sendToH2R(data) {
 			if (data.timestamp) {
 				msg.timestamp = data.timestamp;
 			}
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (!data.textonly) {
 				data.chatmessage = unescapeHtml(data.chatmessage);
 			}
 			msg.snippet = {};
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			msg.snippet.displayMessage = sanitizeRelay(data.chatmessage, data.textonly) || "";
 			if (!msg.snippet.displayMessage) {
 				return;
@@ -8641,47 +8715,35 @@ function relayIncomingWebhook(source, payload) {
 	});
 }
 
+// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 function sanitizeRelay(text, textonly = false, alt = false) {
 	if (!text || !text.trim()) {
 		return alt || text;
 	}
 
 	// Extract all emojis from image alt attributes before stripping HTML
-	const emojiMap = new Map();
+	// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 	if (!textonly) {
-		const tempDiv = document.createElement("div");
+		const tempDiv = document.createElement("template");
 		tempDiv.innerHTML = text;
 
 		// Collect all image elements with alt text that appears to be an emoji
-		const imgElements = tempDiv.querySelectorAll("img");
-		imgElements.forEach((img, index) => {
+		const imgElements = tempDiv.content.querySelectorAll("img");
+		imgElements.forEach(img => {
 			const altText = img.getAttribute("alt");
 			if (altText && isEmoji(altText)) {
-				const placeholder = `__EMOJI_PLACEHOLDER_${index}__`;
-				emojiMap.set(placeholder, altText);
-				img.outerHTML = placeholder;
+				img.parentNode.replaceChild(document.createTextNode(altText), img);
 			}
 		});
 
-		// Get the potentially modified HTML
-		text = tempDiv.innerHTML;
-
-		// Convert to text from html
-		var textArea = document.createElement("textarea");
-		textArea.innerHTML = text;
-		text = textArea.value;
+		tempDiv.content.querySelectorAll("script,style,noscript,template").forEach(node => node.remove());
+		text = tempDiv.content.textContent || "";
 	}
 
-	// Strip HTML and other unwanted characters
-	text = text.replace(/(<([^>]+)>)/gi, "");
+	// Preserve literal text; these are the relay's existing command/cheer rules.
 	text = text.replace(/[!#@]/g, "");
 	text = text.replace(/cheer\d+/gi, " ");
 	text = text.replace(/\.(?=\S(?!$))/g, " ");
-
-	// Replace all emoji placeholders with their actual emojis
-	emojiMap.forEach((emoji, placeholder) => {
-		text = text.replace(placeholder, emoji);
-	});
 
 	if (!text.trim() && alt) {
 		return alt;
@@ -8706,6 +8768,7 @@ function isEmoji(char) {
 // Build the same reflection key for plain text and platform-rendered rich text.
 // Private-use markers let us remove whitespace inserted between an emote image
 // and adjacent punctuation without changing intentional spacing in plain text.
+// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 function normalizeMessageForTracking(msg, textonly = false) {
 	if (msg === undefined || msg === null) return "";
 
@@ -8714,6 +8777,7 @@ function normalizeMessageForTracking(msg, textonly = false) {
 	const imageEndMarker = "\uE001";
 	const unknownImageMarker = "\uE002";
 
+	// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 	if (!textonly) {
 		try {
 			const doc = new DOMParser().parseFromString(normalized, "text/html");
@@ -8870,6 +8934,7 @@ function sendToS10(data, fakechat = false, relayed = false) {
 			}
 
 			let cleaned = data.chatmessage;
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (!data.textonly) {
 				cleaned = decodeAndCleanHtml(cleaned);
 			}
@@ -8886,11 +8951,12 @@ function sendToS10(data, fakechat = false, relayed = false) {
 				}
 				////console.log".");
 				// checkExactDuplicateAlreadyRelayed(msg, sanitized=true, tabid=false, save=true)
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				if (checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 					////console.log"--");
 					return;
 				}
-			} else if (!fakechat && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
+			} else /* Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary. */ if (!fakechat && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 				return null;
 			}
 
@@ -8986,6 +9052,8 @@ function sendToS10(data, fakechat = false, relayed = false) {
 
 // Social Stream Chat integration - send messages to chat.socialstream.ninja
 function sendToSSC(data, fakechat = false, relayed = false) {
+ if (window.ncAudience && window.ncAudience.paired()) return; // Explicit paired path owns publication, including while offline.
+
 	if (settings.ssc && settings.sscapikey && settings.sscapikey.textsetting) {
 		if (settings.blockChannelPointRelays && data && (data.event === "channel_points" || data.event === "reward" || (data.reward && (data.reward.redemptionId || data.reward.cost || data.reward.title)) || (data.hasDonation && typeof data.hasDonation === "string" && data.hasDonation.includes("points")))) {
 			return null;
@@ -9003,6 +9071,7 @@ function sendToSSC(data, fakechat = false, relayed = false) {
 			}
 
 			let cleaned = data.chatmessage;
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (!data.textonly) {
 				cleaned = decodeAndCleanHtml(cleaned);
 			}
@@ -9016,10 +9085,11 @@ function sendToSSC(data, fakechat = false, relayed = false) {
 				if (data.bot) {
 					return null;
 				}
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				if (checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 					return;
 				}
-			} else if (!fakechat && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
+			} else /* Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary. */ if (!fakechat && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 				return null;
 			}
 
@@ -9072,8 +9142,10 @@ function sendToSSC(data, fakechat = false, relayed = false) {
 			// Donations/Super Chats
 			if (data.hasDonation) {
 				payload.payload.donation = data.hasDonation;
-				if (data.donoValue) {
-					payload.payload.donationValue = data.donoValue;
+				const usdValue = typeof data.donoValue === 'number' ? data.donoValue :
+					(typeof data.donoValue === 'string' && data.donoValue.trim() ? Number(data.donoValue.replace(/,/g, '')) : NaN);
+				if (Number.isFinite(usdValue)) {
+					payload.payload.donationValue = usdValue;
 				}
 				if (data.backgroundColor) {
 					payload.payload.backgroundColor = data.backgroundColor;
@@ -9505,6 +9577,7 @@ class StreamerbotWebsocketClient {
 			if (!message) return false;
 
 			// Clean message if needed
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (chatData.textonly) {
 				message = message.replace(/<\/?[^>]+(>|$)/g, "");
 				message = message.replace(/\s\s+/g, " ");
@@ -9673,6 +9746,7 @@ function sendToStreamerBot(data, fakechat = false, relayed = false) {
 
 		// Plain-text messages may contain literal angle brackets and significant whitespace.
 		let cleaned = data.chatmessage;
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		if (!data.textonly && typeof cleaned === "string") {
 			cleaned = decodeAndCleanHtml(cleaned); // Assuming decodeAndCleanHtml is defined elsewhere
 		}
@@ -9689,10 +9763,11 @@ function sendToStreamerBot(data, fakechat = false, relayed = false) {
 			if (data.bot) {
 				return null;
 			}
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (typeof checkExactDuplicateAlreadyRelayed === "function" && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 				return;
 			}
-		} else if (!fakechat && typeof checkExactDuplicateAlreadyRelayed === "function" && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
+		} else /* Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary. */ if (!fakechat && typeof checkExactDuplicateAlreadyRelayed === "function" && checkExactDuplicateAlreadyRelayed(cleaned, data.textonly, data.tid, false)) {
 			return null;
 		}
 
@@ -9762,6 +9837,7 @@ function sendToStreamerBot(data, fakechat = false, relayed = false) {
 				hasDonation: String(payloadData.hasDonation || ""),
 				contentimg: payloadData.contentimg || "",
 				subtitle: payloadData.subtitle || "",
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				textonly: !!payloadData.textonly,
 				tid: payloadData.tid || "",
 				id: payloadData.id || ""
@@ -10023,6 +10099,7 @@ function formatDescription(data) {
 	let description = "";
 
 	if (data.chatmessage) {
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		if (!data.textonly) {
 			// Convert HTML to plain text
 			description += `>>> ${decodeAndCleanHtml(data.chatmessage)}\n\n`;
@@ -10176,6 +10253,7 @@ var conConDock = 0;
 var reconnectionTimeoutDock = null;
 
 function setupSocketDock() {
+	if (window.SSNAiEventBackground) window.SSNAiEventBackground.syncRelay();
 	if (!settings.server2 && !settings.server3) {
 		return;
 	} else if (!isExtensionOn) {
@@ -10199,13 +10277,17 @@ function setupSocketDock() {
 	}
 
 	socketserverDock = new WebSocket(serverURLDock);
+	const joinedDockSession = streamID;
+	const joinedDockSocket = socketserverDock;
 
 	socketserverDock.onerror = function (error) {
+		if (socketserverDock !== joinedDockSocket) return;
 		console.error("WebSocket error:", error);
 		socketserverDock.close();
 	};
 
 	socketserverDock.onclose = function () {
+		if (socketserverDock !== joinedDockSocket) return;
 		if ((settings.server2 || settings.server3) && isExtensionOn) {
 			// Fast first retry, then exponential backoff with jitter (cap 30s)
 			const nextAttempt = Math.min(conConDock + 1, 10);
@@ -10230,10 +10312,15 @@ function setupSocketDock() {
 		}
 	};
 	socketserverDock.onopen = function () {
+		if (streamID !== joinedDockSession || socketserverDock !== joinedDockSocket) return;
 		conConDock = 0;
 		socketserverDock.send(JSON.stringify({ join: streamID, out: 4, in: 3 }));
+		if (typeof window.requestPointsLeaderboardBroadcast === "function") {
+			window.requestPointsLeaderboardBroadcast("connected", { immediate: true });
+		}
 	};
 	socketserverDock.addEventListener("message", async function (event) {
+		if (streamID !== joinedDockSession || socketserverDock !== joinedDockSocket) return;
 		if (!event.data) {
 			return;
 		}
@@ -10241,6 +10328,13 @@ function setupSocketDock() {
 		try {
 			data = JSON.parse(event.data);
 		} catch (e) {
+			return;
+		}
+
+		// Give managed audience displays the same snapshot they can already receive.
+		if (handleOverlayControlRequest(data, socketserverDock, 3, !!settings.server2)) return;
+		if (data && data.action === "getgiveawaystate" && settings.server2 && isExtensionOn && !settings.disablehost) {
+			publishGiveawayState();
 			return;
 		}
 
@@ -10625,7 +10719,7 @@ async function sendStreamDeckDockRequestP2P(request, originUUID) {
 				continue;
 			}
 			try {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: request }, type: "pcs", UUID: UUID }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: request }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 				sent = true;
 			} catch (e) {}
 		}
@@ -10686,21 +10780,17 @@ async function getStreamDeckCapabilities() {
 }
 
 function sendStreamDeckCallback(socket, request, result) {
-	if (!request || !request.get || !socket || socket.readyState !== WebSocket.OPEN) {
-		return false;
-	}
-	socket.send(
-		JSON.stringify({
-			callback: {
-				get: request.get,
-				result
-			}
-		})
-	);
-	return true;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    var packet = buildStreamDeckCallbackPacket(request, result);
+    if (!packet) return false;
+    socket.send(JSON.stringify(packet));
+    return true;
 }
 
 function buildStreamDeckCallbackPacket(request, result) {
+    if (request && request.get && request.replyFormat === "commandResult") {
+        return { type: "commandResult", action: request.action || null, get: request.get, result: result };
+    }
 	if (!request || !request.get) {
 		return null;
 	}
@@ -10725,6 +10815,13 @@ function buildStreamDeckCommandResultPacket(request, result) {
 function sendStreamDeckCommandResult(socket, request, result) {
 	if (!socket || socket.readyState !== WebSocket.OPEN) {
 		return false;
+	}
+	// Hosted relays consume callback envelopes for their own HTTP requests.
+	// The browser Giveaway Manager opts into the existing commandResult shape
+	// instead, retaining result.request for correlation. Other clients are unchanged.
+	if (request && request.replyFormat === "commandResult" && isGiveawayAction(request.action)) {
+		socket.send(JSON.stringify({ type: "commandResult", action: request.action, result }));
+		return true;
 	}
 	if (sendStreamDeckCallback(socket, request, result)) {
 		return true;
@@ -10939,6 +11036,27 @@ async function handleStreamDeckBackgroundRequest(request) {
 	}
 
 	const action = router.normalizeAction(request.action);
+    if (action === "getWorkflowTriggers" || action === "triggerWorkflow") {
+        const system = window.eventFlowSystem;
+        if (!system || typeof system.triggerWorkflow !== "function") return router.makeError(request, "TARGET_UNAVAILABLE", "Event Flow is still loading.");
+        if (action === "getWorkflowTriggers") return router.makeResponse(request, { triggers: system.getWorkflowTriggers() });
+        const result = system.triggerWorkflow(request.value);
+        if (!result.ok) return router.makeError(request, result.code, result.message);
+        return router.makeResponse(request, { trigger: result.trigger, matchedFlows: result.matchedFlows, flows: result.flows }, "accepted");
+    }
+    if (action === "getCommerceState") {
+        if (!window.handleMonetizationRequest) return router.makeError(request, "TARGET_UNAVAILABLE", "Product controls are still loading.");
+        const result = await window.handleMonetizationRequest({ action: "getCommerceState" });
+        return router.makeResponse(request, result);
+    }
+    if (router.isCommerceAction(action)) {
+        const control = router.commerceRequest(request);
+        if (!control.ok) return router.makeError(request, "INVALID_VALUE", control.message);
+        if (!window.handleMonetizationRequest) return router.makeError(request, "TARGET_UNAVAILABLE", "Product controls are still loading.");
+        const result = await window.handleMonetizationRequest({ action: "commerceControl", command: control.command, url: control.url, seconds: control.seconds, data: control.data });
+        if (result.error) return router.makeError(request, "TARGET_UNAVAILABLE", result.error);
+        return router.makeResponse(request, { action: action, command: control.command, live: result.commerceLive || null, commerce: result.commerceState });
+    }
 	if (action === "creditsStart" || action === "creditsPreview" || action === "creditsTest" || action === "creditsReset") {
 		const result = await runCreditsCommand(action);
 		if (!result.success) {
@@ -10996,6 +11114,10 @@ async function handleStreamDeckBackgroundRequest(request) {
 		sendDataP2P(historyClearedPayload);
 		return router.makeResponse(request, clearHistoryResult);
 	}
+	if (isGiveawayAction(action)) {
+		const result = await handleGiveawayAction(action, request.value);
+		return result.ok ? router.makeResponse(request, result) : router.makeError(request, "GIVEAWAY_ERROR", result.error);
+	}
 	if (action === "getpollpresets") {
 		const presets = await new Promise(resolve => getPollPresets(resolve));
 		return router.makeResponse(request, presets);
@@ -11049,7 +11171,7 @@ async function routeStreamDeckRemoteRequest(request, context) {
 			result: await handleStreamDeckSsappRequest(request)
 		};
 	}
-	if ((router.isVersionedRequest(request) || isCreditsRemoteAction(request.action)) && router.isRemoteSsnRequest(request, "background")) {
+	if ((router.isVersionedRequest(request) || isGiveawayAction(request.action) || isCreditsRemoteAction(request.action) || router.isCommerceAction(request.action) || request.action === "getCommerceState" || request.action === "triggerWorkflow" || request.action === "getWorkflowTriggers") && router.isRemoteSsnRequest(request, "background")) {
 		return {
 			kind: "command",
 			result: await handleStreamDeckBackgroundRequest(request)
@@ -11125,13 +11247,17 @@ function setupSocket() {
 	}
 
 	socketserver = new WebSocket(serverURL);
+	const joinedApiSession = streamID;
+	const joinedApiSocket = socketserver;
 
 	socketserver.onerror = function (error) {
+		if (socketserver !== joinedApiSocket) return;
 		console.error("WebSocket error:", error);
 		socketserver.close();
 	};
 
 	socketserver.onclose = function () {
+		if (socketserver !== joinedApiSocket) return;
 		if (settings.socketserver && isExtensionOn) {
 			// Fast first retry, then exponential backoff with jitter (cap 30s)
 			const nextAttempt = Math.min(conCon + 1, 10);
@@ -11156,10 +11282,12 @@ function setupSocket() {
 		}
 	};
 	socketserver.onopen = function () {
+		if (streamID !== joinedApiSession || socketserver !== joinedApiSocket) return;
 		conCon = 0;
 		socketserver.send(JSON.stringify({ join: streamID, out: 2, in: 1 }));
 	};
 	socketserver.addEventListener("message", async function (event) {
+		if (streamID !== joinedApiSession || socketserver !== joinedApiSocket) return;
 		if (event.data) {
 			var resp = false;
 
@@ -11171,6 +11299,8 @@ function setupSocket() {
 				return;
 			}
 
+			if (handleOverlayControlRequest(data, socketserver, 1, !!settings.socketserver)) return;
+
 			// Lightweight API: allow requesting a Hype snapshot and respond on the same paired channel
 			// Expected request formats:
 			//  - { action: "getHype", get: "token123" }
@@ -11180,7 +11310,7 @@ function setupSocket() {
 					try {
 						const snapshot = combineHypeData();
 						const ret = { callback: { get: data.get || "hype", result: { hype: snapshot } } };
-						socketserver && socketserver.send(JSON.stringify(ret));
+						socketserver && sendStreamDeckCallback(socketserver, Object.assign({}, data, { get: ret.callback.get }), ret.callback.result);
 					} catch (e) {
 						console.warn("Failed to respond to getHype on /api", e);
 					}
@@ -11332,7 +11462,12 @@ function setupSocket() {
 					"tipjar"
 				);
 				resp = true;
-			} else if (data.action && data.action === "resetpoll") {
+			} else if (data.action === "commerceControl" && !settings.disablehost && window.handleMonetizationRequest) {
+                window.handleMonetizationRequest({ action: 'commerceControl', command: data.command, url: data.url, seconds: data.seconds, data: data.data });
+                resp = true;
+            } else if (isGiveawayAction(data.action)) {
+                resp = await handleGiveawayAction(data.action, data.value);
+            } else if (data.action && data.action === "resetpoll") {
 				sendTargetP2P({ cmd: "resetpoll" }, "poll");
 				resp = true;
 			} else if (data.action && data.action === "closepoll") {
@@ -11377,7 +11512,7 @@ function setupSocket() {
 				resp = true;
 			} else if (data.action && data.action === "gettimerstate" && !settings.disablehost) {
 				if (data.get) {
-					socketserver.send(JSON.stringify({ callback: { get: data.get, result: exportTimerState() } }));
+					sendStreamDeckCallback(socketserver, data, exportTimerState());
 					data.get = false;
 				}
 				resp = true;
@@ -11401,7 +11536,7 @@ function setupSocket() {
 						ret.callback = {};
 						ret.callback.get = data.get;
 						ret.callback.result = presets;
-						socketserver.send(JSON.stringify(ret));
+						sendStreamDeckCallback(socketserver, Object.assign({}, data, { get: ret.callback.get }), ret.callback.result);
 					}
 				});
 				resp = true;
@@ -11676,7 +11811,9 @@ function setupSocket() {
 					}
 
 					try {
-						var kofi = JSON.parse(decodeURIComponent(data.kofi.data).replace(/\+/g, " "));
+						var kofi;
+                        try { kofi = JSON.parse(data.kofi.data); }
+                        catch (_) { kofi = JSON.parse(decodeURIComponent(String(data.kofi.data).replace(/\+/g, " "))); }
 					} catch (e) {
 						console.error(e);
 						return;
@@ -11686,43 +11823,13 @@ function setupSocket() {
 					if (isDuplicateInboundWebhook("kofi", kofiWebhookId)) {
 						return false;
 					}
-					relayIncomingWebhook("kofi", data.kofi);
 
-					if (kofi.type !== "Donation") {
-						return false;
-					} else if (!kofi.is_public) {
-						return false;
-					}
 
-					const kofiMessage = {};
-					kofiMessage.chatname = decodeURIComponent(kofi.from_name) || "Anonymous";
-					kofiMessage.chatmessage = decodeURIComponent(kofi.message);
-
-					let kofiCurrency = "";
-
-					try {
-						kofiCurrency = kofi.currency.toLowerCase() || "";
-					} catch (e) {}
-
-					let kofiSymbol = {};
-					if (kofiCurrency && kofiCurrency in Currencies) {
-						kofiSymbol = Currencies[kofiCurrency];
-					}
-
-					if (kofi.amount) {
-						kofiMessage.hasDonation = (kofiSymbol.s || "") + (kofi.amount || "") + " " + (kofi.currency.toUpperCase() || "");
-						kofiMessage.hasDonation = kofiMessage.hasDonation.trim();
-					}
-					kofiMessage.id = parseInt(Math.random() * 100000 + 1000000);
-					kofiMessage.chatbadges = "";
-					kofiMessage.backgroundColor = "";
-					kofiMessage.textColor = "";
-					kofiMessage.nameColor = "";
-					kofiMessage.chatimg = "";
-					kofiMessage.membership = "";
-					kofiMessage.contentimg = "";
-					kofiMessage.type = "kofi";
-					setInboundWebhookMeta(kofiMessage, kofiWebhookId);
+                    const kofiMessage = SSNMonetization.providerEvent("kofi", kofi, kofiWebhookId);
+                    if (typeof noteMonetizationProvider === "function") noteMonetizationProvider("kofi", !!kofiMessage);
+                    if (!kofiMessage) return false;
+                    relayIncomingWebhook("kofi", data.kofi);
+                    setInboundWebhookMeta(kofiMessage, kofiWebhookId);
 
 					data = kofiMessage; // replace inbound stripe message with new message
 
@@ -11760,46 +11867,12 @@ function setupSocket() {
 						if (isDuplicateInboundWebhook("bmac", bmacWebhookId)) {
 							return false;
 						}
-						relayIncomingWebhook("bmac", data.bmac);
-						const bmacMessage = {};
-						if (bmac.type === "membership.started") {
-							bmacMessage.chatname = bmac.data.supporter_name || "Anonymous";
-							bmacMessage.chatmessage = (bmac.data.support_note || "").trim();
-							//We use the donation badge from Kofi to feature the membership level name
-							bmacMessage.hasDonation = bmac.data.membership_level_name || "";
-						}
-						if (bmac.type === "donation.created") {
-							bmacMessage.chatname = bmac.data.supporter_name || "Anonymous";
-							let bmacCurrency = "";
-							try {
-								bmacCurrency = bmac.data.currency.toLowerCase() || "";
-							} catch (e) {}
 
-							let bmacSymbol = {};
-							if (bmacCurrency && bmacCurrency in Currencies) {
-								bmacSymbol = Currencies[bmacCurrency];
-							}
-							var msgParts = [];
-							if (bmac.data.message) {
-								msgParts.push(bmac.data.message);
-							}
-							if (bmac.data.support_note) {
-								msgParts.push("<em>" + bmac.data.support_note + "</em>");
-							}
-							bmacMessage.chatmessage = msgParts.join(" - ").trim();
-							bmacMessage.hasDonation = (bmacSymbol.s || "") + (bmac.data.amount || "") + " " + (bmac.data.currency.toUpperCase() || "");
-							bmacMessage.hasDonation = bmacMessage.hasDonation.trim();
-						}
-						bmacMessage.contentimg = "";
-						bmacMessage.id = parseInt(Math.random() * 100000 + 1000000);
-						bmacMessage.chatbadges = "";
-						bmacMessage.backgroundColor = "";
-						bmacMessage.textColor = "";
-						bmacMessage.nameColor = "";
-						bmacMessage.chatimg = "";
-						bmacMessage.membership = "";
-						bmacMessage.type = "bmac";
-						setInboundWebhookMeta(bmacMessage, bmacWebhookId);
+                        const bmacMessage = SSNMonetization.providerEvent("bmac", bmac, bmacWebhookId);
+                        if (typeof noteMonetizationProvider === "function") noteMonetizationProvider("bmac", !!bmacMessage);
+                    if (!bmacMessage) return false;
+                    relayIncomingWebhook("bmac", data.bmac);
+                        setInboundWebhookMeta(bmacMessage, bmacWebhookId);
 						data = bmacMessage; // replace inbound stripe message with new message
 
 						try {
@@ -11828,7 +11901,7 @@ function setupSocket() {
 				ackInboundWebhookDelivery(socketserver, data);
 				// Dorthwall
 				try {
-					if (!data.fourthwall.data || data.fourthwall.type !== "ORDER_PLACED") {
+					if (!data.fourthwall.data) {
 						return false;
 					}
 
@@ -11836,55 +11909,13 @@ function setupSocket() {
 					if (isDuplicateInboundWebhook("fourthwall", fourthwallWebhookId)) {
 						return false;
 					}
-					relayIncomingWebhook("fourthwall", data.fourthwall);
 
-					const fourthwallData = data.fourthwall.data;
 
-					const fourthwallMessage = {};
-					fourthwallMessage.chatname = fourthwallData.username || fourthwallData.billing?.address?.name || "Anonymous";
-					fourthwallMessage.chatmessage = fourthwallData.message || "";
-
-					let fourthwallCurrency = "";
-					try {
-						fourthwallCurrency = fourthwallData.amounts.total.currency.toLowerCase() || "";
-					} catch (e) {
-						console.error(e);
-					}
-
-					let fourthwallSymbol = {};
-					if (fourthwallCurrency && fourthwallCurrency in Currencies) {
-						fourthwallSymbol = Currencies[fourthwallCurrency];
-					}
-
-					if (fourthwallData.amounts && fourthwallData.amounts.total) {
-						fourthwallMessage.hasDonation = (fourthwallSymbol.s || "") + (fourthwallData.amounts.total.value || "") + " " + (fourthwallData.amounts.total.currency || "");
-						fourthwallMessage.hasDonation = fourthwallMessage.hasDonation.trim();
-					}
-
-					// Add product info to the subtitle
-					if (fourthwallData.offers && fourthwallData.offers.length) {
-						let productInfo = [];
-						fourthwallData.offers.forEach(offer => {
-							if (offer.name && offer.variant && offer.variant.quantity) {
-								productInfo.push(`${offer.variant.quantity}× ${offer.name}`);
-							}
-						});
-
-						if (productInfo.length) {
-							fourthwallMessage.subtitle = productInfo.join(", ");
-						}
-					}
-
-					fourthwallMessage.id = parseInt(Math.random() * 100000 + 1000000);
-					fourthwallMessage.chatbadges = "";
-					fourthwallMessage.backgroundColor = "";
-					fourthwallMessage.textColor = "";
-					fourthwallMessage.nameColor = "";
-					fourthwallMessage.chatimg = "";
-					fourthwallMessage.membership = "";
-					fourthwallMessage.contentimg = "";
-					fourthwallMessage.type = "fourthwall";
-					setInboundWebhookMeta(fourthwallMessage, fourthwallWebhookId);
+                    const fourthwallMessage = SSNMonetization.providerEvent("fourthwall", data.fourthwall, fourthwallWebhookId);
+                    if (typeof noteMonetizationProvider === "function") noteMonetizationProvider("fourthwall", !!fourthwallMessage);
+                    if (!fourthwallMessage) return false;
+                    relayIncomingWebhook("fourthwall", data.fourthwall);
+                    setInboundWebhookMeta(fourthwallMessage, fourthwallWebhookId);
 
 					data = fourthwallMessage; // replace inbound fourthwall message with new message
 
@@ -11920,7 +11951,7 @@ function setupSocket() {
 				ret.callback = {};
 				ret.callback.get = data.get;
 				ret.callback.result = resp;
-				socketserver.send(JSON.stringify(ret));
+				sendStreamDeckCallback(socketserver, Object.assign({}, data, { get: ret.callback.get }), ret.callback.result);
 			}
 		}
 	});
@@ -11929,7 +11960,7 @@ function setupSocket() {
 function enableYouTube() {
 	// function to send data to the DOCk via the VDO.Ninja API
 	try {
-		iframe.contentWindow.postMessage({ enableYouTube: settings.youtubeapikey.textsetting }, "*"); // send only to 'viewers' of this stream
+		iframe.contentWindow.postMessage({ enableYouTube: settings.youtubeapikey.textsetting }, "https://vdo.socialstream.ninja"); // send only to 'viewers' of this stream
 	} catch (e) {
 		console.error(e);
 	}
@@ -12869,7 +12900,7 @@ function sendDataToStreamDeckPeersP2P(data) {
 				continue;
 			}
 			try {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 				sent = true;
 			} catch (e) {
 				console.error(e);
@@ -12880,6 +12911,8 @@ function sendDataToStreamDeckPeersP2P(data) {
 }
 
 function sendDataP2P(data, UUID = false) {
+	// Transport preserves chatmessage/textonly; JSON/RTC serialization is not HTML sanitization.
+	// Literal bodies stay literal; callers supply checked HTML for HTML-mode messages.
 	// function to send data to the DOCk via the VDO.Ninja API
 	data = getOverlayDisplayPayload(data);
 	// Stream Deck can explicitly remain on P2P while a Dock uses the hosted
@@ -12969,7 +13002,7 @@ function sendDataP2P(data, UUID = false) {
 	if (iframe) {
 		if (UUID && connectedPeers) {
 			try {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 			} catch (e) {
 				console.error(e);
 			}
@@ -12980,14 +13013,14 @@ function sendDataP2P(data, UUID = false) {
 					UUID = keys[i];
 					var label = connectedPeers[UUID] || false;
 					if (!label || label === "dock" || label === "aioverlay" || label === "cohost" || label === "tipjar") {
-						iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "*"); // docks, AI pages, and overlay-style pages are VIEWERS, since backend is PUSH-only
+						iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja"); // docks, AI pages, and overlay-style pages are VIEWERS, since backend is PUSH-only
 					}
 				} catch (e) {
 					console.error(e);
 				}
 			}
 		} else {
-			iframe.contentWindow.postMessage({ sendData: msg, type: "pcs" }, "*"); // send only to 'viewers' of this stream
+			iframe.contentWindow.postMessage({ sendData: msg, type: "pcs" }, "https://vdo.socialstream.ninja"); // send only to 'viewers' of this stream
 		}
 	}
 }
@@ -13173,11 +13206,13 @@ function combineHypeData() {
 	return result;
 }
 function sendHypeP2P(data, uid = null) {
+	var packet = uid ? { hype: data } : prepareOverlayControl({ hype: data }, "hype");
+	if (!uid) sendOverlayControlRelay(packet, "hype");
 	// function to send data to the HYPE overlay via the transport
 	if (ninjaBridge && ninjaBridge.isReady()) {
 		try {
 			if (!uid) {
-				ninjaBridge.sendToLabel({ hype: data }, "hype");
+				ninjaBridge.sendToLabel(packet, "hype");
 			} else {
 				ninjaBridge.send({ hype: data }, uid);
 			}
@@ -13195,14 +13230,14 @@ function sendHypeP2P(data, uid = null) {
 					var UUID = keys[i];
 					const peerLabel = connectedPeers[UUID];
 					if (peerLabel === "hype") {
-						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { hype: data } }, type: "pcs", UUID: UUID }, "*");
+						iframe.contentWindow.postMessage({ sendData: { overlayNinja: packet }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 					}
 				} catch (e) {}
 			}
 		} else {
 			const peerLabel = connectedPeers[uid];
 			if (peerLabel === "hype") {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { hype: data } }, type: "pcs", UUID: uid }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: packet }, type: "pcs", UUID: uid }, "https://vdo.socialstream.ninja");
 			}
 		}
 	}
@@ -13216,6 +13251,7 @@ function sendSpotifyOverlay(payload, uid = null) {
 	// Remember last payload for newly connected overlays
 	payload.receivedAt = payload.receivedAt || Date.now();
 	latestSpotifyOverlay = payload;
+	if (!uid) { sendTargetP2P({ spotify: payload }, "spotify", { retry: false }); return; }
 
 	if (ninjaBridge && ninjaBridge.isReady()) {
 		try {
@@ -13238,14 +13274,14 @@ function sendSpotifyOverlay(payload, uid = null) {
 					var UUID = keys[i];
 					const peerLabel = connectedPeers[UUID];
 					if (peerLabel === "spotify") {
-						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { spotify: payload } }, type: "pcs", UUID: UUID }, "*");
+						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { spotify: payload } }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 					}
 				} catch (e) {}
 			}
 		} else {
 			const peerLabel = connectedPeers[uid];
 			if (peerLabel === "spotify") {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { spotify: payload } }, type: "pcs", UUID: uid }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { spotify: payload } }, type: "pcs", UUID: uid }, "https://vdo.socialstream.ninja");
 			}
 		}
 	}
@@ -13297,7 +13333,142 @@ function sendAiOverlayCommand(input = {}, defaults = {}) {
 	return payload;
 }
 
+var overlayControlPending = new Map();
+var pollControlState = null;
+var mapControlState = null;
+var overlayStateEpoch = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+var overlayStateSnapshots = new Map();
+var overlayStateSequence = 0;
+const POLL_CONTROL_KEYS = ["pollEnabled", "pollType", "pollQuestion", "multipleChoiceOptions", "pollMatchMode",
+	"pollStyle", "pollTimer", "pollTimerState", "pollTally", "pollSpam", "pollDonationWeighted"];
+function pollControlSettings(input) {
+	var selected = {};
+	POLL_CONTROL_KEYS.forEach(key => { if (Object.prototype.hasOwnProperty.call(input, key)) selected[key] = input[key]; });
+	return selected;
+}
+const MAP_CONTROL_KEYS = ["mapTitle", "mapShowList", "mapShowTotals", "mapAllowChanges", "mapEnabled", "mapType", "mapStyle", "mapOpacity", "mapopacity", "mapSpam", "mapRegion", "mapMotion", "mapAutoFit", "mapHideNumbers", "mapColorIntensity", "mapScale"];
+function prepareOverlayControl(data, target) {
+	if (!data || data.ssnControl) return data;
+	if (!(target === "actions" || (target === "credits" && data.creditsCommand) ||
+		(target === "poll" && (data.settings || data.setting || data.cmd)) || (target === "hype" && data.hype) ||
+        (target === "map" && (data.settings || data.setting || ["startmap", "pausemap", "resetmap"].includes(data.cmd))) ||
+        (target === "timer" && data.timer) || (target === "ticker" && data.ticker) || (target === "spotify" && data.spotify) ||
+        (target === "tipjar" && ["resettipjar", "settipjaramount"].includes(data.cmd)) ||
+        (target === "alerts" && data.action === "clearAlerts") || (target === "bot" && data.action === "clearBotOverlay") ||
+        (target === "wordcloud" && (data.chatmessage || "state" in data)) || (target === "gif" && data.contentimg) ||
+        (target === "reactions" && ["reaction", "liked", "like"].includes(data.event)) ||
+        (target === "waitlist" && ("drawmode" in data || "drawPoolSize" in data)))) return data;
+	var packet = Object.assign({}, data);
+    if (target === "map") {
+        if (data.setting && !MAP_CONTROL_KEYS.includes(data.setting)) return data;
+        if (!mapControlState || mapControlState.session !== streamID) mapControlState = { session: streamID, epoch: overlayStateEpoch + ":" + (++overlayStateSequence), revision: 0, reset: 0, paused: null };
+        if (packet.cmd === "resetmap") { mapControlState.reset++; mapControlState.revision++; }
+        if (packet.cmd === "startmap" || packet.cmd === "pausemap") { mapControlState.paused = packet.cmd === "pausemap"; mapControlState.revision++; }
+        packet.mapState = { epoch: mapControlState.epoch, revision: mapControlState.revision, reset: mapControlState.reset, paused: mapControlState.paused };
+        if (data.settings) {
+            packet.settings = {};
+            MAP_CONTROL_KEYS.forEach(key => { if (Object.prototype.hasOwnProperty.call(data.settings, key)) packet.settings[key] = data.settings[key]; });
+        }
+        var mapConfig = JSON.stringify(MAP_CONTROL_KEYS.map(key => settings[key]));
+        if (mapControlState.config !== mapConfig) { mapControlState.config = mapConfig; mapControlState.revision++; }
+        packet.mapState.revision = mapControlState.revision;
+    }
+	if (target === "poll") {
+		if (data.settings) packet.settings = pollControlSettings(data.settings);
+		if (data.setting && !POLL_CONTROL_KEYS.includes(data.setting)) return data;
+		var config = JSON.stringify(["pollType", "pollMatchMode", "pollQuestion", "multipleChoiceOptions"].map(key => settings[key]));
+		if (!pollControlState || pollControlState.session !== streamID) pollControlState = { session: streamID, config, closed: false, epoch: overlayStateEpoch + ":" + (++overlayStateSequence), revision: 0, reset: 0 };
+		if (pollControlState.config !== config) { pollControlState.config = config; pollControlState.closed = false; pollControlState.reset++; pollControlState.revision++; }
+		if (packet.cmd === "closepoll") { pollControlState.closed = true; pollControlState.revision++; }
+		if (packet.cmd === "startpoll" || packet.cmd === "resetpoll") { pollControlState.closed = false; pollControlState.reset++; pollControlState.revision++; }
+        packet.pollState = { epoch: pollControlState.epoch, revision: pollControlState.revision, reset: pollControlState.reset, closed: pollControlState.closed };
+	}
+	packet.ssnControl = { id: "control-" + Date.now().toString(36) + "-" + Array.from(crypto.getRandomValues(new Uint32Array(4))).join("-"), target };
+    if (target === "timer" || target === "ticker" || target === "spotify") {
+        var prior = overlayStateSnapshots.get(target);
+        var stateValue = packet[target];
+        if (target === "timer") {
+            stateValue = Object.assign({}, stateValue);
+            ["displayMs", "remainingToTargetMs", "done", "overtime", "progress"].forEach(key => delete stateValue[key]);
+        }
+        var signature = JSON.stringify(stateValue);
+        var sameSession = prior && prior.session === streamID;
+        packet.ssnState = { epoch: sameSession ? prior.packet.ssnState.epoch : overlayStateEpoch + ":" + (++overlayStateSequence),
+            revision: sameSession ? prior.packet.ssnState.revision + (signature === prior.signature ? 0 : 1) : 0 };
+        overlayStateSnapshots.set(target, { session: streamID, packet: packet, signature: signature });
+    }
+	return packet;
+}
+function handleOverlayControlRequest(data, socket, replyChannel, allowSnapshot) {
+	if (!data || (!data.ssnControlRequest && !data.ssnControlAck && data.action !== "requestViewerCount")) return false;
+	if (!isExtensionOn || settings.disablehost) return true;
+	if (data.action === "requestViewerCount") {
+		if (allowSnapshot || settings.server3) {
+			refreshTemporaryViewerCount(data.value && data.value.ttl);
+			updateViewerCount({ event: "viewer_updates", meta: buildViewerCountsFromMetaStore() });
+		}
+		return true;
+	}
+	if (data.ssnControlAck) {
+		var pending = overlayControlPending.get(data.ssnControlAck.id);
+		if (pending && pending.session === streamID && pending.target === data.ssnControlAck.target) pending.resolve(true);
+		return true;
+	}
+	if (data.ssnControlRequest && data.ssnControlRequest.target === "leaderboard") {
+		if (allowSnapshot || settings.server3) {
+			const session = streamID;
+			broadcastPointsLeaderboard("connected", undefined, packet => {
+				if (session === streamID && isExtensionOn && !settings.disablehost && socket.readyState === 1) {
+					socket.send(JSON.stringify(packet));
+				}
+			});
+		}
+		return true;
+	}
+	if (!allowSnapshot) return true;
+	var request = data.ssnControlRequest, packet;
+	if (request.target === "poll") {
+		packet = prepareOverlayControl({ settings: settings }, "poll");
+
+	} else if (request.target === "hype") {
+		packet = prepareOverlayControl({ hype: combineHypeData() }, "hype");
+		packet.ssnControl.viewerCountActive = !!(settings.showviewercount || settings.hypemode || isTemporaryViewerCountActive());
+	} else if (request.target === "map") {
+        packet = prepareOverlayControl({ settings: settings }, "map");
+    } else if (request.target === "timer" && timerStateInitialized) {
+        packet = prepareOverlayControl({ timer: exportTimerState() }, "timer");
+    } else if (request.target === "ticker" || request.target === "spotify") {
+        var saved = overlayStateSnapshots.get(request.target);
+        if (!saved || saved.session !== streamID) return true;
+        packet = Object.assign({}, saved.packet, { ssnControl: Object.assign({}, saved.packet.ssnControl) });
+    } else return true;
+	packet.ssnControl.client = String(request.client || "").slice(0, 160);
+	packet.ssnControl.reply = replyChannel;
+	socket.send(JSON.stringify(Object.assign({}, packet, { out: 7 })));
+	return true;
+}
+function sendOverlayControlRelay(data, target) {
+	if (!data || !data.ssnControl || data.ssnControl.target !== target || !isExtensionOn || settings.disablehost) return Promise.resolve(false);
+	var routes = [];
+	if ((settings.server2 || (target === "actions" && settings.server3)) && socketserverDock && socketserverDock.readyState === 1) routes.push([socketserverDock, 3]);
+	if (settings.socketserver && socketserver && socketserver.readyState === 1) routes.push([socketserver, 1]);
+	if (!routes.length) return Promise.resolve(false);
+	return new Promise(resolve => {
+		var id = data.ssnControl.id;
+		var timer = setTimeout(() => finish(false), 750);
+		function finish(delivered) { clearTimeout(timer); overlayControlPending.delete(id); resolve(delivered); }
+		overlayControlPending.set(id, { target, session: streamID, resolve: finish });
+		routes.forEach(([socket, reply]) => {
+			try { socket.send(JSON.stringify(Object.assign({}, data, { out: target === "actions" ? 6 : 7,
+				ssnControl: Object.assign({}, data.ssnControl, { reply }) }))); }
+			catch (error) { console.warn("[Overlay control] Relay send failed", error); }
+		});
+	});
+}
 async function trySendTargetP2P(data, target) {
+	// Relay delivery must never suppress connected WebRTC displays. Current
+	// receivers deduplicate the same control ID across both transports.
+	var relayDelivery = sendOverlayControlRelay(data, target);
 	// function to send data to a labelled page via the VDO.Ninja API
 	if (ninjaBridge && ninjaBridge.isReady()) {
 		try {
@@ -13330,24 +13501,29 @@ async function trySendTargetP2P(data, target) {
 				var UUID = keys[i];
 				var label = connectedPeers[UUID];
 				if (label === target) {
-					iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "*");
+					iframe.contentWindow.postMessage({ sendData: { overlayNinja: data }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 					sent = true;
 				}
 			} catch (e) {}
 		}
 	}
-	return sent;
+	return sent || await relayDelivery;
 }
 
 async function sendTargetP2P(data, target, options) {
+	// Targeted delivery also preserves the body format; it is not a blanket HTML sanitizer.
+	// textonly=true must reach receivers as literal text, including tag/entity-looking characters.
 	data = getOverlayDisplayPayload(data);
+	data = prepareOverlayControl(data, target);
 	options = options || {};
 	var retry = typeof options.retry === "boolean" ? options.retry : target === "actions";
 	var timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 10000;
 	var intervalMs = Number(options.intervalMs) > 0 ? Number(options.intervalMs) : 500;
 	var expiresAt = Date.now() + timeoutMs;
+	var targetSession = streamID;
 
 	do {
+		if (targetSession !== streamID) return false;
 		if (await trySendTargetP2P(data, target)) {
 			return true;
 		}
@@ -13379,6 +13555,97 @@ function broadcastLeaderboardReset() {
 	} catch (e) {
 		console.error(e);
 	}
+}
+
+var giveawayHost = null;
+var giveawayHostSession = null;
+var giveawayBroadcastTimer = null;
+var giveawayPendingStates = new Map();
+var giveawayRouting = new Map();
+var giveawayCaptureEpoch = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+async function getGiveawayHost() {
+    await window.pointsSystemReady();
+    if (!giveawayHost || giveawayHostSession !== streamID) {
+        if(giveawayBroadcastTimer)clearTimeout(giveawayBroadcastTimer);
+        giveawayBroadcastTimer=null;giveawayPendingStates.clear();giveawayRouting.clear();
+        giveawayHostSession = streamID;
+        giveawayHost = new SSNGiveawayService(window.pointsSystem, streamID);
+        await giveawayHost.recoverRounds();
+        (await giveawayHost.list()).forEach(state=>giveawayRouting.set(state.giveawayId,state));
+    }
+    return giveawayHost;
+}
+async function publishGiveawayState(state) {
+    try {
+        var states = state && state.epoch ? [state] : await (await getGiveawayHost()).list(true);
+        for (var current of states) {
+            var payload = { event: "giveaway_state", meta: { giveaway: current } };
+            sendTargetP2P(payload, "giveaway");
+            if (settings.server2 && socketserverDock && socketserverDock.readyState === WebSocket.OPEN) socketserverDock.send(JSON.stringify(payload));
+            if (settings.socketserver && socketserver && socketserver.readyState === WebSocket.OPEN) socketserver.send(JSON.stringify(payload));
+        }
+    } catch (error) { console.warn('Giveaway state unavailable', error); }
+}
+function isGiveawayAction(action) {
+    return ["startgiveaway", "closegiveaway", "drawgiveaway", "resetgiveaway", "getgiveawaystate", "cancelgiveaway", "listgiveaways", "getgiveawayhistory", "entergiveaway", "buygiveawaytickets", "grantgiveawaytickets", "guessgiveaway", "getgiveawayentries", "removegiveawayentry"].indexOf(action) !== -1;
+}
+async function handleGiveawayAction(action, value, actor) {
+    if (settings.disablehost) return { ok: false, error: "Host controls are disabled." };
+    try {
+        value = value && typeof value === 'object' ? Object.assign({}, value) : {};
+        var useStoredRules = action === 'startgiveaway' && !value.config && !Object.prototype.hasOwnProperty.call(value,'keyword');
+        if (action === "startgiveaway" && !value.config) {
+            value.config = Object.prototype.hasOwnProperty.call(value, 'keyword') ? Object.assign({}, value) : {
+                keyword: settings.giveawayKeyword ? settings.giveawayKeyword.textsetting : "!enter",
+                match: settings.giveawayMatch ? settings.giveawayMatch.optionsetting : "exact",
+                membersOnly: getSettingFlag("giveawayMembersOnly"),
+                removeWinner: !getSettingFlag("giveawayRepeatWinners")
+            };
+        }
+        var host = await getGiveawayHost();
+        if(useStoredRules){
+            var current=(await host.run('getgiveawaystate',{giveawayId:value.giveawayId})).giveaway;
+            if(current.roundId)value.config=current.config;
+            else Object.assign(value.config,{ticketCost:getNumericSettingValue('giveawayCost',0),maxTickets:getNumericSettingValue('giveawayLimit',100),prizePoints:getNumericSettingValue('giveawayPrize',0),winnerCount:getNumericSettingValue('giveawayWinners',1),kind:settings.giveawayKind ? settings.giveawayKind.optionsetting : 'giveaway'});
+        }
+        if (action === 'listgiveaways') return {ok:true, giveaways:await host.list()};
+        if (action === 'getgiveawayhistory') return {ok:true, history:await host.history()};
+        if (action === 'getgiveawayentries') return await host.entries(value.giveawayId,value.page);
+        var rules = value.config;
+        if ((rules && (rules.ticketCost || rules.prizePoints || rules.kind === 'coin') || action === 'buygiveawaytickets') && !isPointsSystemEnabled()) {
+            throw new Error('Enable SSN loyalty points before using paid tickets or point prizes.');
+        }
+        var result = await host.run(action, value, actor || value.actor);
+        if(host.session!==String(streamID))return result;
+        if(result.giveaway)giveawayRouting.set(result.giveaway.giveawayId,result.giveaway);
+        if (['entergiveaway','buygiveawaytickets','grantgiveawaytickets','guessgiveaway'].includes(action)) {
+            giveawayPendingStates.set(result.giveaway.giveawayId,result.giveaway);
+            if(!giveawayBroadcastTimer)giveawayBroadcastTimer=setTimeout(function(){giveawayBroadcastTimer=null;var pending=Array.from(giveawayPendingStates.values());giveawayPendingStates.clear();pending.forEach(s=>publishGiveawayState(s));},150);
+        } else {giveawayPendingStates.delete(result.giveaway.giveawayId);await publishGiveawayState(result.giveaway);}
+        try {if (typeof window.requestPointsLeaderboardBroadcast === 'function') window.requestPointsLeaderboardBroadcast('giveaway');}catch(error){console.warn('Giveaway committed; leaderboard refresh failed',error);}
+        return result;
+    } catch (error) { return { ok: false, error: error.message }; }
+}
+async function processGiveawayEntry(message) {
+    if (!giveawayHost || !message || !message.chatmessage || message.event || message.bot || message.private || message.history || message.replay || message.reflection || message.reload || message.meta && message.meta.economyTest) return;
+    // Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
+    if (message && message.textonly === false && typeof message.chatmessage === "string") message = Object.assign({}, message, { chatmessage: decodeAndCleanHtml(message.chatmessage) });
+    try {
+        var host = await getGiveawayHost(), rounds = Array.from(giveawayRouting.values());
+        var text = String(message.chatmessage || '').trim();
+        var ticket = text.match(/^!ticket\s+([a-zA-Z0-9_-]+)\s+(\d+)(?:\s+(heads|tails))?$/i);
+        var guess = text.match(/^!guess\s+([a-zA-Z0-9_-]+)\s+(\d+)$/i);
+        var matches = guess ? rounds.filter(r=>r.giveawayId===guess[1] && r.config.kind==='number') : ticket ? rounds.filter(r => r.giveawayId === ticket[1]) : rounds.filter(r => r.open && r.config.kind==='giveaway' && !r.config.ticketCost &&
+            (r.config.match === 'exact' ? text.toLowerCase() === r.keyword.toLowerCase() : text.toLowerCase().split(/\s+/).includes(r.keyword.toLowerCase())));
+        if (matches.length !== 1) return;
+        var round = matches[0];
+        if(message.meta && Array.isArray(message.meta.giveawayHandled) && message.meta.giveawayHandled.includes(round.giveawayId))return;
+        var nativeId = message.meta && message.meta.messageId;
+        var sourceKey=nativeId ? 'native:'+nativeId : message.id!=null ? 'capture:'+giveawayCaptureEpoch+':'+message.id : null;
+        var operationId = sourceKey ? 'chat:' + JSON.stringify([message.type,message.userid || message.chatname,sourceKey,round.roundId]) : undefined;
+        var result = ticket && !sourceKey ? {ok:false,error:'This source did not provide a message ID. No points spent.'} : await handleGiveawayAction(guess ? 'guessgiveaway' : ticket ? 'buygiveawaytickets' : 'entergiveaway', {giveawayId:round.giveawayId,roundId:round.roundId,guess:guess ? Number(guess[2]) : undefined,count:ticket ? Number(ticket[2]) : 1,side:ticket && ticket[3] ? ticket[3].toLowerCase() : undefined,operationId:operationId}, message);
+        if (ticket && typeof sendMessageToTabs === 'function') sendMessageToTabs({response:'@' + message.chatname + ' ' + (result.ok ? 'Tickets accepted for ' + round.giveawayId + '.' : result.error),type:message.type,tid:message.tid,bot:true},false,null,false,false,false);
+    } catch (error) { console.warn('Giveaway entry failed', error); }
 }
 
 var timerState = {
@@ -13434,6 +13701,7 @@ function exportTimerState(now = Date.now()) {
 }
 
 function sendTimerP2P(payload, uid = null) {
+    if (!uid) { sendTargetP2P({ timer: payload }, "timer", { retry: false }); return; }
 	if (ninjaBridge && ninjaBridge.isReady()) {
 		try {
 			if (!uid) {
@@ -13455,13 +13723,13 @@ function sendTimerP2P(payload, uid = null) {
 					var UUID = keys[i];
 					var label = connectedPeers[UUID];
 					if (label === "timer") {
-						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { timer: payload } }, type: "pcs", UUID: UUID }, "*");
+						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { timer: payload } }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 					}
 				} catch (e) {}
 			}
 		} else {
 			try {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { timer: payload } }, type: "pcs", UUID: uid }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { timer: payload } }, type: "pcs", UUID: uid }, "https://vdo.socialstream.ninja");
 			} catch (e) {}
 		}
 	}
@@ -13870,6 +14138,7 @@ async function handleCohostToolRequest(request) {
 		if (!sourceMessage) {
 			return { tool, command, success: false, message: "A recent chat message is required." };
 		}
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		const allowedKeys = ["id", "mid", "chatname", "chatmessage", "chatimg", "chatbadges", "type", "platform", "nameColor", "backgroundColor", "textColor", "hasDonation", "donoValue", "membership", "subtitle", "contentimg", "event", "textonly", "meta"];
 		const featuredMessage = {};
 		allowedKeys.forEach(function (key) {
@@ -13880,6 +14149,7 @@ async function handleCohostToolRequest(request) {
 		}
 		featuredMessage.chatname = featuredMessage.chatname.slice(0, 80);
 		featuredMessage.chatmessage = featuredMessage.chatmessage.slice(0, 500);
+		// textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload.
 		featuredMessage.textonly = true;
 		if (JSON.stringify(featuredMessage).length > 24000) {
 			return { tool, command, success: false, message: "The selected chat message is too large to feature." };
@@ -13892,6 +14162,7 @@ async function handleCohostToolRequest(request) {
 }
 
 function sendTickerP2P(data, uid = null) {
+    if (!uid) { sendTargetP2P({ ticker: data }, "ticker", { retry: false }); return; }
 	// function to send data to the DOCk via the VDO.Ninja API
 
 	if (ninjaBridge && ninjaBridge.isReady()) {
@@ -13915,14 +14186,14 @@ function sendTickerP2P(data, uid = null) {
 					var UUID = keys[i];
 					var label = connectedPeers[UUID];
 					if (label === "ticker") {
-						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { ticker: data } }, type: "pcs", UUID: UUID }, "*");
+						iframe.contentWindow.postMessage({ sendData: { overlayNinja: { ticker: data } }, type: "pcs", UUID: UUID }, "https://vdo.socialstream.ninja");
 					}
 				} catch (e) {}
 			}
 		} else {
 			const peerLabel = connectedPeers[uid];
 			if (peerLabel === "ticker") {
-				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { ticker: data } }, type: "pcs", UUID: uid }, "*");
+				iframe.contentWindow.postMessage({ sendData: { overlayNinja: { ticker: data } }, type: "pcs", UUID: uid }, "https://vdo.socialstream.ninja");
 			}
 		}
 	}
@@ -14104,16 +14375,7 @@ function processWaitlist(data) {
 			drawListCount += 1;
 
 			if (settings.drawmode) {
-				var keys = Object.keys(connectedPeers);
-				for (var i = 0; i < keys.length; i++) {
-					try {
-						var UUID = keys[i];
-						var label = connectedPeers[UUID];
-						if (label === "waitlist") {
-							iframe.contentWindow.postMessage({ sendData: { overlayNinja: { drawPoolSize: drawListCount } }, type: "pcs", UUID: UUID }, "*");
-						}
-					} catch (e) {}
-				}
+				sendTargetP2P({ drawPoolSize: drawListCount }, "waitlist");
 			} else {
 				sendWaitlistConfig(waitlist, false);
 			}
@@ -14417,142 +14679,18 @@ async function downloadWaitlist() {
 }
 
 function sendWaitlistConfig(data = null, sendMessage = true, clear = false) {
-	//console.warn("sendWaitlistConfig");
-	if (iframe) {
-		if (sendMessage) {
-			var trigger = "!join";
-			if (settings.customwaitlistcommand && settings.customwaitlistcommand.textsetting.trim()) {
-				trigger = settings.customwaitlistcommand.textsetting.trim();
-			}
-			var message = "Type " + trigger + " to join this wait list";
-			if (settings.drawmode) {
-				if (!allowNewEntries) {
-					message = "No new entries allowed";
-				} else {
-					message = "Type " + trigger + " to join the random draw";
-				}
-			}
-			if (settings.customwaitlistmessagetoggle) {
-				if (settings.customwaitlistmessage) {
-					message = settings.customwaitlistmessage.textsetting.trim();
-					message = message.replace(/{trigger}/g, trigger);
-				} else {
-					message = "";
-				}
-			}
-		}
-
-		//console.log(data);
-
-		var keys = Object.keys(connectedPeers);
-		for (var i = 0; i < keys.length; i++) {
-			try {
-				var UUID = keys[i];
-				var label = connectedPeers[UUID];
-				if (label === "waitlist") {
-					if (sendMessage) {
-						if (data === null) {
-							if (settings.drawmode) {
-								iframe.contentWindow.postMessage(
-									{
-										sendData: {
-											overlayNinja: {
-												waitlistmessage: message,
-												drawPoolSize: drawListCount,
-												drawmode: true,
-												clearWinner: clear
-											}
-										},
-										type: "pcs",
-										UUID: UUID
-									},
-									"*"
-								);
-							} else {
-								iframe.contentWindow.postMessage(
-									{
-										sendData: {
-											overlayNinja: {
-												waitlistmessage: message,
-												drawmode: false
-											}
-										},
-										type: "pcs",
-										UUID: UUID
-									},
-									"*"
-								);
-							}
-						} else if (settings.drawmode) {
-							iframe.contentWindow.postMessage(
-								{
-									sendData: {
-										overlayNinja: {
-											waitlistmessage: message,
-											winlist: data,
-											drawPoolSize: drawListCount,
-											drawmode: true,
-											clearWinner: clear
-										}
-									},
-									type: "pcs",
-									UUID: UUID
-								},
-								"*"
-							);
-						} else {
-							iframe.contentWindow.postMessage(
-								{
-									sendData: {
-										overlayNinja: {
-											waitlist: data,
-											waitlistmessage: message,
-											drawmode: false
-										}
-									},
-									type: "pcs",
-									UUID: UUID
-								},
-								"*"
-							);
-						}
-					} else if (data !== null) {
-						if (settings.drawmode) {
-							iframe.contentWindow.postMessage(
-								{
-									sendData: {
-										overlayNinja: {
-											drawPoolSize: drawListCount,
-											drawmode: true,
-											clearWinner: clear,
-											waitlist: data
-										}
-									},
-									type: "pcs",
-									UUID: UUID
-								},
-								"*"
-							);
-						} else {
-							iframe.contentWindow.postMessage(
-								{
-									sendData: {
-										overlayNinja: {
-											drawmode: false,
-											waitlist: data
-										}
-									},
-									type: "pcs",
-									UUID: UUID
-								},
-								"*"
-							);
-						}
-					}
-				}
-			} catch (e) {}
-		}
-	}
+    if (!sendMessage && data === null) return;
+    var packet = { drawmode: !!settings.drawmode };
+    if (sendMessage) {
+        var trigger = settings.customwaitlistcommand && settings.customwaitlistcommand.textsetting.trim() || "!join";
+        var message = "Type " + trigger + " to join this wait list";
+        if (settings.drawmode) message = allowNewEntries ? "Type " + trigger + " to join the random draw" : "No new entries allowed";
+        if (settings.customwaitlistmessagetoggle) message = settings.customwaitlistmessage ? settings.customwaitlistmessage.textsetting.trim().replace(/{trigger}/g, trigger) : "";
+        packet.waitlistmessage = message;
+    }
+    if (settings.drawmode) { packet.drawPoolSize = drawListCount; packet.clearWinner = clear; }
+    if (data !== null) packet[sendMessage && settings.drawmode ? "winlist" : "waitlist"] = data;
+    return sendTargetP2P(packet, "waitlist");
 }
 
 ///
@@ -14599,10 +14737,38 @@ function sendToDisk(data) {
 	}
 }
 
-async function initTransport(roomStreamID, pass = false) {
-	// this is pretty important if you want to avoid camera permission popup problems.  You can also call it automatically via: <body onload=>loadIframe();"> , but don't call it before the page loads.
-	resetP2PTransportStateForStream(roomStreamID);
+function cancelPendingNinjaTransport() {
+	transportGeneration++;
+	if (ninjaBridge && typeof ninjaBridge.cancelPendingInit === "function") {
+		ninjaBridge.cancelPendingInit();
+	}
+	return transportGeneration;
+}
 
+function queueTransportTask(task) {
+	const previous = transportTask;
+	const pending = (async function () {
+		if (previous) await previous;
+		await task();
+	})().catch(error => console.warn("[Transport] Lifecycle operation failed", error));
+	transportTask = pending;
+	pending.then(function () {
+		if (transportTask === pending) transportTask = null;
+	});
+	return pending;
+}
+
+async function destroyNinjaTransport() {
+	const bridge = ninjaBridge;
+	ninjaBridge = null;
+	if (bridge) {
+		try {
+			await bridge.destroy();
+		} catch (e) {}
+	}
+}
+
+function initTransport(roomStreamID, pass = false) {
 	// Re-evaluate effective SDK flag each init, based on flexible truthy parsing
 	try {
 		const raw = settings && (settings.sdk !== undefined ? settings.sdk : settings.usesdk);
@@ -14624,12 +14790,34 @@ async function initTransport(roomStreamID, pass = false) {
 	}
 
 	log("Init transport for VDO", useNinjaSDK ? "SDK" : "IFRAME");
+	const generation = cancelPendingNinjaTransport();
+	const sdkEnabled = useNinjaSDK;
+	return queueTransportTask(async function () {
+		if (!isExtensionOn || generation !== transportGeneration) return;
+		try {
+			await initializeTransport(roomStreamID, pass, sdkEnabled, generation);
+		} finally {
+			// Finish disposing this attempt before a newer start may claim the session.
+			if (!isExtensionOn || generation !== transportGeneration) {
+				await destroyNinjaTransport();
+			}
+		}
+	});
+}
+
+async function initializeTransport(roomStreamID, pass, sdkEnabled, generation) {
+	function isCurrent() {
+		return isExtensionOn && generation === transportGeneration;
+	}
+	resetP2PTransportStateForStream(roomStreamID);
 
 	// If SDK is enabled and available, use it (lazy-load SDK/bridge if needed)
-	if (useNinjaSDK) {
+	if (sdkEnabled) {
+		let bridge = ninjaBridge;
 		try {
 			// Lazy load SDK and bridge if not present
 			await ensureNinjaSDKLoaded();
+			if (!isCurrent()) return;
 			if (typeof NinjaBridge === "undefined") throw new Error("NinjaBridge unavailable");
 			// Clean any existing iframe (graceful teardown to release streamID)
 			if (iframe) {
@@ -14640,28 +14828,28 @@ async function initTransport(roomStreamID, pass = false) {
 				try {
 					await new Promise(r => setTimeout(r, 300));
 				} catch (e) {}
+				if (!isCurrent()) return;
 				try {
 					iframe.remove();
 				} catch (e) {}
 				iframe = null;
 			}
 			// Reuse existing bridge if room changes? Destroy and recreate for safety
-			if (ninjaBridge) {
-				try {
-					await ninjaBridge.destroy();
-				} catch (e) {}
-				ninjaBridge = null;
-			}
+			await destroyNinjaTransport();
+			if (!isCurrent()) return;
 			// short wait to let signaling release prior streamID
 			try {
 				await new Promise(r => setTimeout(r, 600));
 			} catch (e) {}
-			ninjaBridge = new NinjaBridge({ debug: devmode });
+			if (!isCurrent()) return;
+			bridge = new NinjaBridge({ debug: devmode });
+			ninjaBridge = bridge;
 			try {
 				window.ninjaBridge = ninjaBridge;
 			} catch (e) {}
-			bindNinjaBridgeTransportTracking(ninjaBridge);
-			ninjaBridge.addEventListener("peerLabel", ev => {
+			bindNinjaBridgeTransportTracking(bridge);
+			bridge.addEventListener("peerLabel", ev => {
+				if (!isCurrent()) return;
 				try {
 					const { uuid, label } = ev.detail || {};
 					if (!uuid || !label) return;
@@ -14678,6 +14866,8 @@ async function initTransport(roomStreamID, pass = false) {
 						try {
 							initializeWaitlist();
 						} catch (e) {}
+					} else if (label === "giveaway") {
+						 publishGiveawayState();
 					} else if (label === "poll") {
 						try {
 							initializePoll();
@@ -14693,22 +14883,28 @@ async function initTransport(roomStreamID, pass = false) {
 			});
 			// Try initializing SDK; if it fails (eg, streamID still in use), retry once
 			try {
-				await ninjaBridge.init({ room: roomStreamID, password: pass, streamID: roomStreamID });
-				bindNinjaBridgeTransportTracking(ninjaBridge);
+				await bridge.init({ room: roomStreamID, password: pass, streamID: roomStreamID });
+				if (!isCurrent()) return;
+				bindNinjaBridgeTransportTracking(bridge);
 			} catch (e1) {
+				if (!isCurrent()) return;
 				console.warn("SDK init failed; retrying after short delay…", e1?.message || e1);
 				try {
 					await new Promise(r => setTimeout(r, 900));
 				} catch (e) {}
+				if (!isCurrent()) return;
 				try {
-					await ninjaBridge.destroy();
+					await bridge.destroy();
 				} catch (e) {}
-				ninjaBridge = new NinjaBridge({ debug: devmode });
+				if (!isCurrent()) return;
+				bridge = new NinjaBridge({ debug: devmode });
+				ninjaBridge = bridge;
 				try {
 					window.ninjaBridge = ninjaBridge;
 				} catch (e) {}
-				bindNinjaBridgeTransportTracking(ninjaBridge);
-				ninjaBridge.addEventListener("peerLabel", ev => {
+				bindNinjaBridgeTransportTracking(bridge);
+				bridge.addEventListener("peerLabel", ev => {
+					if (!isCurrent()) return;
 					try {
 						const { uuid, label } = ev.detail || {};
 						if (!uuid || !label) return;
@@ -14724,6 +14920,8 @@ async function initTransport(roomStreamID, pass = false) {
 							try {
 								initializeWaitlist();
 							} catch (e) {}
+						} else if (label === "giveaway") {
+						 publishGiveawayState();
 						} else if (label === "poll") {
 							try {
 								initializePoll();
@@ -14737,13 +14935,15 @@ async function initTransport(roomStreamID, pass = false) {
 						console.warn(e);
 					}
 				});
-				await ninjaBridge.init({ room: roomStreamID, password: pass, streamID: roomStreamID });
-				bindNinjaBridgeTransportTracking(ninjaBridge);
+				await bridge.init({ room: roomStreamID, password: pass, streamID: roomStreamID });
+				if (!isCurrent()) return;
+				bindNinjaBridgeTransportTracking(bridge);
 			}
 			try {
 				// NinjaBridge normalizes both SDK event shapes into one event. Listening
 				// directly to the SDK as well would process each P2P message twice.
 				const handleSDKData = ev => {
+					if (!isCurrent()) return;
 					try {
 						const detail = ev.detail || {};
 						const pkt = detail.data || detail;
@@ -14771,12 +14971,13 @@ async function initTransport(roomStreamID, pass = false) {
 						console.warn(e);
 					}
 				};
-				ninjaBridge.addEventListener("data", handleSDKData);
+				bridge.addEventListener("data", handleSDKData);
 			} catch (e) {
 				console.warn(e);
 			}
 			return; // success
 		} catch (e) {
+			if (!isCurrent()) return;
 			markP2PFailure("sdkInit");
 			console.warn("Falling back to iframe transport:", e);
 			// If SDK fails, fall through to iframe
@@ -14786,18 +14987,14 @@ async function initTransport(roomStreamID, pass = false) {
 	// IFRAME fallback
 	// Ensure SDK bridge is torn down before creating iframe, to avoid streamID collision
 	if (ninjaBridge) {
-		try {
-			await ninjaBridge.destroy();
-		} catch (e) {}
-		ninjaBridge = null;
-		try {
-			window.ninjaBridge = null;
-		} catch (e) {}
+		await destroyNinjaTransport();
+		if (!isCurrent()) return;
 		// small delay to allow signaling server to release streamID
 		try {
 			await new Promise(r => setTimeout(r, 600));
 		} catch (e) {}
 	}
+	if (!isCurrent()) return;
 	var lanonly = "";
 	try {
 		if (settings["lanonly"]) {
@@ -15132,7 +15329,9 @@ async function processIncomingRequest(request, UUID = false) {
 		return true;
 	}
 	if (request && request.action === "requestViewerCount") {
+		if (!isExtensionOn || settings.disablehost) return;
 		refreshTemporaryViewerCount(request.value && request.value.ttl);
+		updateViewerCount({ event: "viewer_updates", meta: buildViewerCountsFromMetaStore() });
 		return;
 	}
 	if (request && request.action === "eventFlowEvent" && request.value) {
@@ -15141,6 +15340,12 @@ async function processIncomingRequest(request, UUID = false) {
 	}
 	if (settings.disablehost) {
 		return;
+	}
+	if (request && request.ssnControlRequest && request.ssnControlRequest.target === "leaderboard" && UUID) {
+		if (isExtensionOn) {
+			await broadcastPointsLeaderboard("connected", undefined, packet => sendDataP2P(packet, UUID));
+		}
+		return true;
 	}
 	if (await handleBridgeChunkRequest(request, UUID)) {
 		return;
@@ -15167,7 +15372,13 @@ async function processIncomingRequest(request, UUID = false) {
 		}
 		sendMessageToTabs(request, false, null, false, false, false);
 	} else if ("action" in request) {
-		if (request.action === "openChat") {
+		if (request.action === "phraseGuessResponse") {
+			// Game-only dock announcements use the native inbound relay contract.
+			// setupSocketDock still requires server3, and disablehost is checked above.
+			const value = request.value;
+			if (!isExtensionOn || !value || value.type !== "bot" || typeof value.chatname !== "string" || typeof value.chatmessage !== "string" || value.chatmessage.length > 2000) return;
+			return sendToDestinations({type: "bot", chatname: value.chatname.slice(0, 200), chatmessage: value.chatmessage, /* textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload. */ textonly: true});
+		} else if (request.action === "openChat") {
 			openchat(request.value || null);
 		} else if (request.action === "askBot" && typeof request.value === "string" && request.value.trim()) {
 			if (isAiChatbotEnabled() && typeof processMessageWithOllama === "function") {
@@ -15178,6 +15389,7 @@ async function processIncomingRequest(request, UUID = false) {
 					tid: "BOT",
 					host: true,
 					mod: true,
+					// textonly=true declares a literal chatmessage string, not HTML; preserve its characters and keep display formatting out of the payload.
 					textonly: true,
 					privateBotPrompt: true
 				});
@@ -15429,6 +15641,14 @@ async function processIncomingRequest(request, UUID = false) {
 		} else if (request.action === "gettimerstate") {
 			if (UUID) {
 				initializeTimer(UUID);
+			}
+		} else if (["getAiEventProfiles", "saveAiEventProfile", "generateAiEvent", "aiEventDelivered"].includes(request.action) && UUID) {
+			try {
+				if (!window.SSNAiEventBackground) throw new Error("AI Event Overlay is still loading. Try again.");
+				const value = await window.SSNAiEventBackground.handle(request);
+				sendDataP2PChunked({ aiEventResponse: { target: request.target, value } }, UUID);
+			} catch (error) {
+				sendDataP2P({ aiEventResponse: { target: request.target, error: error.message || "AI overlay request failed." } }, UUID);
 			}
 		} else if (request.action === "saveAiPromptOverlays" && request.value) {
 			const saveResult = await saveAiPromptOverlays(request.value);
@@ -15890,6 +16110,8 @@ eventer(messageEvent, async function (e) {
 						processTicker();
 					} else if (connectedPeers[e.data.UUID] == "waitlist") {
 						initializeWaitlist();
+					} else if (connectedPeers[e.data.UUID] == "giveaway") {
+						publishGiveawayState();
 					} else if (connectedPeers[e.data.UUID] == "poll") {
 						initializePoll();
 					} else if (connectedPeers[e.data.UUID] == "timer") {
@@ -15920,6 +16142,8 @@ eventer(messageEvent, async function (e) {
 						processTicker();
 					} else if (connectedPeers[e.data.UUID] == "waitlist") {
 						initializeWaitlist();
+					} else if (connectedPeers[e.data.UUID] == "giveaway") {
+						publishGiveawayState();
 					} else if (connectedPeers[e.data.UUID] == "poll") {
 						initializePoll();
 					} else if (connectedPeers[e.data.UUID] == "timer") {
@@ -16809,15 +17033,6 @@ async function sendMessageToTabs(data, reverse = false, metadata = null, relayMo
 
 	const shouldCheckDynamicPerTab = antispam && settings["dynamictiming"];
 
-	if (!reverse && !overrideTimeout && data.tid) {
-		// we do this early to avoid the blue bar if not needed
-		if (data.tid in messageTimeout) {
-			if (now - messageTimeout[data.tid] < overrideTimeout) {
-				return;
-			}
-		}
-	}
-
 	lastAntiSpam = messageCounter;
 
 	if (settings.s10apikey && settings.s10) {
@@ -16859,6 +17074,10 @@ async function sendMessageToTabs(data, reverse = false, metadata = null, relayMo
 
 		const processTab = async tab => {
 			processedAnyTab = true;
+			// Apply the configured delay to the resolved destination, including bot-account routing.
+			if (overrideTimeout > 0 && tab.id in messageTimeout && Date.now() - messageTimeout[tab.id] < overrideTimeout) {
+				return;
+			}
 			await dispatchRelayMessageToTab(tab, routingData, {
 				now: now,
 				overrideTimeout: overrideTimeout,
@@ -16909,12 +17128,6 @@ async function isValidTab(tab, data, reverse, published, now, overrideTimeout, r
 			return false;
 		}
 	}
-	if (reverse && !overrideTimeout && tab.id) {
-		if (tab.id in messageTimeout && now - messageTimeout[tab.id] < overrideTimeout) {
-			return false;
-		}
-	}
-
 	if (relayMode && relaytargets) {
 		if (!sourceType || !relaytargets.includes(sourceType)) {
 			return false;
@@ -17267,6 +17480,9 @@ function resolveThrottleProfile(tabId, throttleProfile, overrideTimeout) {
 			maxQueue: MAX_FAKE_CHAT_THROTTLE_QUEUE_DEFAULT
 		};
 	}
+	if (typeof overrideTimeout === "number" && overrideTimeout > 0) {
+		profile.minInterval = Math.max(profile.minInterval, overrideTimeout);
+	}
 
 	profile.maxQueue = Number.isFinite(profile.maxQueue) ? Math.max(0, profile.maxQueue) : MAX_FAKE_CHAT_THROTTLE_QUEUE_DEFAULT;
 
@@ -17282,7 +17498,7 @@ function ensureThrottleState(tabId) {
 	if (!state) {
 		state = {
 			queue: [],
-			lastSent: 0,
+			lastSent: messageTimeout[tabId] || 0,
 			processing: false,
 			timer: null
 		};
@@ -17678,15 +17894,23 @@ async function performGeneralFakeChatSend(tabId, { message, middle = true, keypr
 			return;
 		}
 
+		if (settings.limitcharactersstate) {
+			const limit = settings.limitcharacters?.numbersetting || 200;
+			const originalMessage = sanitizeMessageForTracking(message, false);
+			message = limitString(message, limit);
+			const entries = messageStore[tabId] || [];
+			for (let i = entries.length - 1; i >= 0; i--) {
+				if (entries[i].message === originalMessage) {
+					entries[i].message = sanitizeMessageForTracking(message, false);
+					break;
+				}
+			}
+		}
+
 		lastSentMessage = message.replace(/<\/?[^>]+(>|$)/g, "").replace(/\s\s+/g, " ");
 		lastSentTimestamp = Date.now();
 		lastMessageCounter = 0;
 		messageTimeout[tabId] = Date.now();
-
-		if (settings.limitcharactersstate) {
-			const limit = settings.limitcharacters?.numbersetting || 200;
-			message = limitString(message, limit);
-		}
 
 		if (backspace) {
 			try {
@@ -17909,6 +18133,7 @@ class HostMessageFilter {
 
 		// Determine message content based on available fields
 		let messageContent = "";
+		// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 		if (message.textonly) {
 			messageContent = message.chatmessage;
 		} else if (message.chatmessage !== undefined) {
@@ -18207,7 +18432,8 @@ async function applyBotActions(data, tab = false) {
 		}
 
 		if (settings.normalizeText && data.chatmessage) {
-			data.chatmessage = normalizeText(data.chatmessage, data.textonly || false);
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
+			data.chatmessage = normalizeText(data.chatmessage, !data.textonly);
 		}
 
 		// Check for bad words in the message (for Event Flow filtering)
@@ -18454,6 +18680,7 @@ async function applyBotActions(data, tab = false) {
 			return null;
 		} else if (settings.relayall && !data.reflection && !skipRelay && data.chatmessage && !data.event && tab && !blockChannelPointRelay) {
 			//console.log("2");
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			if (checkExactDuplicateAlreadyRelayed(data.chatmessage, data.textonly, tab.id, false)) {
 				return null;
 			}
@@ -18471,6 +18698,7 @@ async function applyBotActions(data, tab = false) {
 					relayMessage.url = tab.url;
 				}
 
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				let tmpmsg = sanitizeRelay(data.chatmessage, data.textonly).trim();
 				if (tmpmsg) {
 					if (settings.nosaid) {
@@ -18518,12 +18746,15 @@ async function applyBotActions(data, tab = false) {
 			if (!data.reflection) {
 				let commandMessage = data.chatmessage;
 
+				// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 				if (!data.textonly) {
-					var textArea = document.createElement("textarea");
-					textArea.innerHTML = commandMessage;
-					commandMessage = textArea.value;
+					// Convert HTML once in inert contents; encoded literal tags remain text.
+					var commandTemplate = document.createElement("template");
+					commandTemplate.innerHTML = commandMessage;
+					commandTemplate.content.querySelectorAll("script,style,noscript,template").forEach(node => node.remove());
+					commandMessage = commandTemplate.content.textContent || "";
 				}
-				commandMessage = commandMessage.replace(/(<([^>]+)>)/gi, "");
+				// Preserve the command prefix and existing command cleanup; plain bodies are never HTML-parsed.
 				commandMessage = commandMessage.replace(/[#@]/g, "");
 				commandMessage = commandMessage.replace(/\.(?=\S(?!$))/g, " ");
 				commandMessage = commandMessage.trim();
@@ -18697,6 +18928,7 @@ async function applyBotActions(data, tab = false) {
 			//}
 		}
 
+		applyExternalGifToMessage(data, settings);
 		await applyGiphyToMessage(data, settings);
 	} catch (e) {
 		console.error(e);
@@ -18895,6 +19127,7 @@ async function applyBotActions(data, tab = false) {
 
 		const emoteOnlyModeEnabled = !!(settings.emoteonlymode && (settings.emoteonlymode.setting ?? settings.emoteonlymode));
 		if (emoteOnlyModeEnabled && hadOriginalChatMessage) {
+			// Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
 			const emoteOnlyMessage = await buildEmoteOnlyMessage(data.chatmessage || "", Boolean(data.textonly || settings.textonlymode));
 			data.chatmessage = emoteOnlyMessage;
 			if (!data.chatmessage) {
@@ -19151,8 +19384,15 @@ async function fetchData(url, useLocalFs = false) {
 	}
 }
 
-// Example usage in window.onload:
-window.onload = async function () {
+let backgroundInitializationStarted = false;
+async function initializeBackgroundSettings() {
+	if (backgroundInitializationStarted) return;
+	// SSApp's verified downloads can finish after the browser load event.
+	// The loader calls this explicitly once the full script sequence is ready.
+	if (window.ssappBackgroundLoadState?.status === 'loading'
+		&& window.ssappFallback && typeof window.ssappFallback.fetchBackgroundScript === 'function'
+		&& location.protocol === 'https:') return;
+	backgroundInitializationStarted = true;
 	// Pass true as second parameter to force local file system in Electron
 	let programmedSettings = await fetchData("settings.json", true);
 	if (programmedSettings && typeof programmedSettings === "object") {
@@ -19222,7 +19462,8 @@ window.onload = async function () {
 			});
 		});
 	}
-};
+}
+window.onload = initializeBackgroundSettings;
 
 let fileHandleTicker;
 let fileContentTicker = "";
@@ -20150,6 +20391,19 @@ let tmp = new EventFlowSystem({
 tmp.initPromise
 	.then(() => {
 		window.eventFlowSystem = tmp;
+        // Native-only channel, separate from untrusted chat and overlay messages.
+        if (window.ninjafy && typeof window.ninjafy.syncVoiceCommands === 'function') {
+            const syncVoiceCommands = () => {
+                const commands = [];
+                tmp.flows.filter(f => f.active).forEach(f => f.nodes.forEach(n => {
+                    if (n.type === 'trigger' && n.triggerType === 'voicePhrase') commands.push({flowId:f.id,nodeId:n.id,phrase:n.config.phrase || '',cooldown:n.config.cooldown || 5});
+                }));
+                window.ninjafy.syncVoiceCommands(commands).catch(() => {});
+            };
+            window.ninjafy.onVoiceCommand(payload => tmp.processVoiceCommand(payload).catch(() => {}));
+            syncVoiceCommands();setInterval(syncVoiceCommands, 1500);
+        }
+
 		// Start periodic scheduler so time-based triggers (timeInterval/timeOfDay) work without incoming messages
 		try {
 			tmp.startScheduler && tmp.startScheduler();
@@ -20168,6 +20422,60 @@ window.addEventListener("beforeunload", async function () {
 window.addEventListener("unload", async function () {
 	document.title = "Close me - Social Stream Ninja";
 });
+
+function getExternalGifUrl(value) {
+    if (typeof value !== "string" || value.length > 2048) return "";
+    try {
+        const safeUrl = sanitizeRelayUrl(value, false);
+        const url = new URL(safeUrl);
+        if (!/^https?:$/.test(url.protocol) || url.username || url.password || !/\.gif$/i.test(url.pathname)) return "";
+        return url.href;
+    } catch (e) {
+        return "";
+    }
+}
+
+function findExternalGifInText(text) {
+    const links = /(?:^|[\s([{<>"'\u0060\u2018\u201c])(https?:\/\/[^\s<>"'\u0060\u2018\u2019\u201c\u201d]+)/gi;
+    let match;
+    while ((match = links.exec(text))) {
+        // Keep valid query strings intact; trim sentence punctuation only when needed.
+        const url = getExternalGifUrl(match[1]) || getExternalGifUrl(match[1].replace(/[.,!?;:)\]}]+$/, ""));
+        if (url) return url;
+    }
+    return "";
+}
+
+function applyExternalGifToMessage(data, gifSettings) {
+    if (!gifSettings.allowExternalGifs || gifSettings.removeContentImage || data.contentimg || typeof data.chatmessage !== "string") return;
+    let url = "";
+    // Preserve the chatmessage format: textonly=true is literal text, without HTML parsing/filtering; false/missing permits HTML checked at its ingress boundary.
+    if (data.textonly) {
+        url = findExternalGifInText(data.chatmessage);
+    } else {
+        // A template keeps source HTML inert: extracting links must not load images or run scripts.
+        const template = document.createElement("template");
+        template.innerHTML = data.chatmessage;
+        template.content.querySelectorAll("script,style,noscript,template,iframe,object").forEach(node => node.remove());
+        const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                url = findExternalGifInText(node.textContent);
+            } else if (node.tagName === "A") {
+                url = getExternalGifUrl(node.getAttribute("href"));
+            }
+            if (url) break;
+        }
+    }
+    // Preserve the message/link as a fallback if the remote image cannot load.
+    if (url) {
+        data.contentimg = url;
+        if (gifSettings.hideExternalGifUrl && (data.meta == null || (typeof data.meta === "object" && !Array.isArray(data.meta)))) {
+            data.meta = Object.assign({}, data.meta, { hideExternalGifUrl: true });
+        }
+    }
+}
 
 // Tenor search was retired June 2026. Saved !tenor toggles remain GIPHY aliases;
 // API keys are provider-specific and must never be reused across providers.

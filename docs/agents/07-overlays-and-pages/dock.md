@@ -81,6 +81,7 @@ Use these when one session has multiple operators, dashboards, or output pages.
 | `autopinquestions` | Pins question cards as they arrive. |
 | `autoqueuedonations` | Queues donation cards automatically. |
 | `autoqueuesuperchats` | Queues only messages with `event: "superchat"` automatically. |
+| `autoqueuememberships` | Queues YouTube new memberships, renewals, milestones, gift purchases, and gift recipient alerts. Can be combined with donation or Super Chat queueing. |
 | `autoqueuequestions` | Queues question cards automatically. |
 | `selfqueue` | Viewer command(s) that add a user/message to the queue. |
 | `random` | Randomizes which queued message is featured next. |
@@ -214,3 +215,7 @@ OBS-specific notes:
 - Full dock URL parameter behavior matrix.
 - Exact storage/export behavior for dock database/history features.
 - User-facing screenshots/labels for toolbar buttons.
+
+## Optional question tracking
+
+Enable **Track unanswered questions in the dock** in the SSN dock settings, or add `&trackquestions` to the dock URL. Messages containing a visible `?`, plus messages already identified as questions, receive Answered and Dismiss buttons. The Questions button filters to pending items; click it again for normal chat. Click a message as usual to feature it. Tracking is local to each dock and resets on reload. The latest 100 pending questions survive normal vertical-dock pruning; manual deletion, clearing chat, and horizontal ticker retention still apply. Other chat filters remain active. Tracking does not change the featured-message queue.

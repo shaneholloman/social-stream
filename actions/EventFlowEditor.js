@@ -1,6 +1,41 @@
 // Predefined flow templates for quick setup
 // Node positions are arranged top-to-bottom to match visual flow direction
 const FLOW_TEMPLATES = {
+    'streamdeck-workflow': {
+        name: 'Stream Deck / API button', active: false,
+        description: 'Starts disabled. Save and enable, then choose Run Workflow in Stream Deck and refresh. Open Flow Actions to see the text. Each press starts a run.',
+        nodes: [
+            { id: 'api_button', type: 'trigger', triggerType: 'apiTrigger', x: 100, y: 50, config: { trigger: 'intermission' } },
+            { id: 'api_text', type: 'action', actionType: 'showText', x: 100, y: 230, config: { text: 'Back in five minutes', duration: 5000 } }
+        ],
+        connections: [{ from: 'api_button', to: 'api_text' }]
+    },
+    'donation-celebration': {
+        name: "Donation: celebration + voice",
+        description: "Output: Flow Actions overlay. Synthetic thank-you voice and celebration. Starts disabled: test, then enable. Disable donation sound in Multi-Alerts if both handle the same event.",
+        active: false,
+        nodes: [
+            {"id": "trigger", "type": "trigger", "triggerType": "hasDonation", "x": 185, "y": 50, "config": {}},
+            {"id": "media", "type": "action", "actionType": "playTenorGiphy", "x": 50, "y": 230, "config": {"mediaUrl": "./media/alerts/celebration.svg", "mediaType": "image", "duration": 5000, "width": 40, "height": 40, "x": 30, "y": 30}},
+            {"id": "sound", "type": "action", "actionType": "playAudioClip", "x": 320, "y": 230, "config": {"audioUrl": "./audio/alerts/voice-thank-you.wav", "volume": 0.35}}
+        ],
+        connections: [{"from": "trigger", "to": "media"}, {"from": "trigger", "to": "sound"}]
+    },
+    'donation-obs-effect': {
+        name: "Donation: animation + sound + OBS filter",
+        description: "Output: Flow Actions overlay and configured OBS connection. Starts disabled. Choose the same source and normally-off filter in both filter actions. Disable duplicate donation audio in Multi-Alerts.",
+        active: false,
+        nodes: [
+            {"id": "trigger", "type": "trigger", "triggerType": "hasDonation", "x": 185, "y": 50, "config": {}},
+            {"id": "media", "type": "action", "actionType": "playTenorGiphy", "x": 50, "y": 230, "config": {"mediaUrl": "./media/alerts/celebration.svg", "mediaType": "image", "duration": 5000, "width": 40, "height": 40, "x": 30, "y": 30}},
+            {"id": "sound", "type": "action", "actionType": "playAudioClip", "x": 320, "y": 230, "config": {"audioUrl": "./audio/alerts/drumroll.wav", "volume": 0.35}},
+            {"id": "delay", "type": "action", "actionType": "delay", "x": 320, "y": 410, "config": {"delayMs": 2000}},
+            {"id": "filter-on", "type": "action", "actionType": "obsSetSourceFilter", "x": 320, "y": 590, "config": {"sourceName": "", "filterName": "", "enabled": "true"}},
+            {"id": "hold", "type": "action", "actionType": "delay", "x": 320, "y": 770, "config": {"delayMs": 2000}},
+            {"id": "filter-off", "type": "action", "actionType": "obsSetSourceFilter", "x": 320, "y": 950, "config": {"sourceName": "", "filterName": "", "enabled": "false"}}
+        ],
+        connections: [{"from": "trigger", "to": "media"}, {"from": "trigger", "to": "sound"}, {"from": "sound", "to": "delay"}, {"from": "delay", "to": "filter-on"}, {"from": "filter-on", "to": "hold"}, {"from": "hold", "to": "filter-off"}]
+    },
     // === SIMPLE TEMPLATES ===
     'chat-relay': {
         name: 'Chat Relay to Discord',
@@ -25,7 +60,7 @@ const FLOW_TEMPLATES = {
         description: 'Play a sound when channel points are redeemed',
         nodes: [
             { id: 'trigger_1', type: 'trigger', triggerType: 'channelPointRedemption', x: 100, y: 50, config: { rewardName: '' } },
-            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 100, y: 230, config: { audioUrl: 'https://vdo.ninja/media/join.wav', volume: 1.0 } }
+            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 100, y: 230, config: { audioUrl: './audio/chime.wav', volume: 0.35 } }
         ],
         connections: [{ from: 'trigger_1', to: 'action_1' }]
     },
@@ -43,7 +78,7 @@ const FLOW_TEMPLATES = {
         description: 'Play sound and show text when someone donates',
         nodes: [
             { id: 'trigger_1', type: 'trigger', triggerType: 'hasDonation', x: 185, y: 50, config: {} },
-            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 230, config: { audioUrl: 'https://vdo.ninja/media/join.wav', volume: 1.0 } },
+            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 230, config: { audioUrl: './audio/chime.wav', volume: 0.35 } },
             { id: 'action_2', type: 'action', actionType: 'showText', x: 320, y: 230, config: { text: '💰 {username} donated!', x: 50, y: 50, width: 50, fontSize: 48, fontFamily: 'Arial', fontWeight: 'bold', textAlign: 'center', color: '#FFD700', backgroundColor: 'rgba(0,0,0,0.8)', padding: 20, borderRadius: 10, animation: 'bounceIn', animationDuration: 500, duration: 5000 } }
         ],
         connections: [
@@ -68,6 +103,26 @@ const FLOW_TEMPLATES = {
     },
 
     // === INTERMEDIATE TEMPLATES ===
+    'obs-hourly-message': {
+        name: 'Hourly message while OBS is live',
+        description: 'Starts disabled. Choose your message and chat platform in Send Message, connect Flow Actions to OBS, then enable before starting your stream. Repeats every 3600 seconds while the switch is ON. The schedule does not restart with OBS; the first message may arrive sooner than one hour.',
+        active: false,
+        nodes: [
+            { id: 'obs_started', type: 'trigger', triggerType: 'obsStreamStarted', x: 50, y: 50, config: {} },
+            { id: 'hourly_timer', type: 'trigger', triggerType: 'timeInterval', x: 320, y: 50, config: { interval: 3600 } },
+            { id: 'obs_stopped', type: 'trigger', triggerType: 'obsStreamStopped', x: 590, y: 50, config: {} },
+            { id: 'switch_on', type: 'action', actionType: 'setGateState', label: 'Turn reminders ON', x: 50, y: 230, config: { targetNodeId: 'live_switch', state: 'ALLOW' } },
+            { id: 'live_switch', type: 'state', stateType: 'GATE', x: 320, y: 230, config: { name: 'OBS live reminders', defaultState: 'BLOCK', autoResetMs: 0 } },
+            { id: 'switch_off', type: 'action', actionType: 'setGateState', label: 'Turn reminders OFF', x: 590, y: 230, config: { targetNodeId: 'live_switch', state: 'BLOCK' } },
+            { id: 'send_reminder', type: 'action', actionType: 'sendMessage', x: 320, y: 410, config: { destination: 'twitch', template: 'Enjoying the stream? Remember to follow and stay hydrated!', timeout: 0, sanitizeMode: 'safe' } }
+        ],
+        connections: [
+            { from: 'obs_started', to: 'switch_on' },
+            { from: 'hourly_timer', to: 'live_switch' },
+            { from: 'live_switch', to: 'send_reminder' },
+            { from: 'obs_stopped', to: 'switch_off' }
+        ]
+    },
     'bad-words-filter': {
         name: 'Bad Words Filter',
         description: 'Block messages containing profanity',
@@ -165,7 +220,7 @@ const FLOW_TEMPLATES = {
         description: 'Welcome raiders with sound and overlay',
         nodes: [
             { id: 'trigger_1', type: 'trigger', triggerType: 'eventType', x: 185, y: 50, config: { eventType: 'raid' } },
-            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 230, config: { audioUrl: 'https://vdo.ninja/media/join.wav', volume: 1.0 } },
+            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 230, config: { audioUrl: './audio/chime.wav', volume: 0.35 } },
             { id: 'action_2', type: 'action', actionType: 'showText', x: 320, y: 230, config: { text: '🎉 RAID! Welcome {username} and their community!', x: 10, y: 40, width: 80, fontSize: 42, fontFamily: 'Arial', fontWeight: 'bold', textAlign: 'center', color: '#FF6B6B', backgroundColor: 'rgba(0,0,0,0.9)', padding: 25, borderRadius: 15, animation: 'bounceIn', animationDuration: 500, duration: 10000 } },
             { id: 'action_3', type: 'action', actionType: 'ttsSpeak', x: 185, y: 410, config: { text: 'Welcome raiders from {username}!', voice: '', rate: 1, pitch: 1, volume: 1 } }
         ],
@@ -197,7 +252,7 @@ const FLOW_TEMPLATES = {
             { id: 'trigger_1', type: 'trigger', triggerType: 'hasDonation', x: 50, y: 50, config: {} },
             { id: 'trigger_2', type: 'trigger', triggerType: 'compareProperty', x: 320, y: 50, config: { property: 'donoValue', operator: 'gte', value: 10 } },
             { id: 'logic_1', type: 'logic', logicType: 'AND', x: 185, y: 230, config: {} },
-            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 410, config: { audioUrl: 'https://vdo.ninja/media/join.wav', volume: 1.0 } },
+            { id: 'action_1', type: 'action', actionType: 'playAudioClip', x: 50, y: 410, config: { audioUrl: './audio/chime.wav', volume: 0.35 } },
             { id: 'action_2', type: 'action', actionType: 'showText', x: 320, y: 410, config: { text: '🎉 BIG DONATION! {username} donated {hasDonation}!', x: 20, y: 30, width: 60, fontSize: 48, fontFamily: 'Arial', fontWeight: 'bold', textAlign: 'center', color: '#FFD700', backgroundColor: 'rgba(139,0,0,0.9)', padding: 30, borderRadius: 15, animation: 'bounceIn', animationDuration: 500, duration: 10000 } },
             { id: 'action_3', type: 'action', actionType: 'ttsSpeak', x: 320, y: 590, config: { text: 'Wow! {username} just donated {hasDonation}! Thank you so much!', voice: '', rate: 1, pitch: 1, volume: 1 } }
         ],
@@ -240,6 +295,10 @@ class EventFlowEditor {
         // Initialize all node type definitions here
         // Grouped trigger types for collapsible sections (like actions)
         this.triggerGroups = [
+            {
+                id: 'remote-control', name: 'Stream Deck & API', expanded: true,
+                triggers: [{ id: 'apiTrigger', name: '▶ Run from Stream Deck / API' }]
+            },
             {
                 id: 'stream-events',
                 name: '📣 Stream Events',
@@ -318,6 +377,7 @@ class EventFlowEditor {
                 triggers: [
                     { id: 'randomChance', name: '🎲 Random Chance' },
                     { id: 'timeInterval', name: '⏰ Time Interval' },
+                    { id: 'voicePhrase', name: '\uD83C\uDFA4 When I say...' },
                     { id: 'timeOfDay', name: '🕐 Time of Day' }
                 ]
             },
@@ -377,7 +437,8 @@ class EventFlowEditor {
 					{ id: 'printThermal', name: '🖨️ Print Thermal Label' },
                     { id: 'webhook', name: '🌐 Call Webhook' },
                     { id: 'addPoints', name: '⬆️ Add Points' },
-                    { id: 'spendPoints', name: '⬇️ Spend Points' }
+                    { id: 'spendPoints', name: '⬇️ Spend Points' },
+                    { id: 'giveawayControl', name: '🎁 Giveaway / Tickets' }
                 ]
             },
             {
@@ -385,8 +446,10 @@ class EventFlowEditor {
                 name: '🎨 Media & Effects',
                 expanded: true,
                 actions: [
+                    { id: 'showAiEventOverlay', name: '✨ Show AI Event Overlay' },
                     { id: 'playTenorGiphy', name: '🖼️ Display Media Overlay' },
                     { id: 'showAvatar', name: '👤 Show Avatar' },
+                    { id: 'commerceControl', name: '\uD83D\uDECD Products & Support' },
                     { id: 'showText', name: '📝 Show Text' },
                     { id: 'clearLayer', name: '🗑️ Clear Layer' },
                     { id: 'playAudioClip', name: '🔊 Play Audio Clip' },
@@ -559,7 +622,7 @@ class EventFlowEditor {
 
         if (!isLocal) {
             return `<div class="property-group">
-                <label class="property-label">${label}</label>
+                <label class="property-label" for="${inputId}">${label}</label>
                 <div style="display: flex; gap: 5px; flex-wrap: wrap;">
                     <input type="url" class="property-input" id="${inputId}" value="${this.escapeHtml(config[configKey] || '')}" style="flex: 1; min-width: 160px;">
                     <button type="button" id="${uploadButtonId}" style="padding: 5px 10px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer;">Upload</button>
@@ -590,7 +653,13 @@ class EventFlowEditor {
         try {
             if (link && link.href) return new URL(link.href, window.location.href).search;
         } catch (_) { }
-        return window.location.search || '';
+        const search = window.location.search || '';
+        // The embedded editor keeps the active password in the background page,
+        // while its own URL only contains app configuration.
+        if (typeof password === 'string' && password && !new URLSearchParams(search).has('password')) {
+            return search + (search ? '&' : '?') + 'password=' + encodeURIComponent(password);
+        }
+        return search;
     }
 
     getCurrentSessionId() {
@@ -599,7 +668,11 @@ class EventFlowEditor {
         try {
             if (typeof lastResponse !== 'undefined' && lastResponse && lastResponse.streamID) return lastResponse.streamID;
         } catch (_) { }
-        return '';
+        // The embedded background editor stores its active session in streamID,
+        // rather than in the popup's input/response or the background page URL.
+        if (typeof streamID === 'string' && streamID) return streamID;
+        const params = new URLSearchParams(window.location.search);
+        return params.get('session') || params.get('s') || params.get('id') || '';
     }
 
     async refreshLocalMediaStatus(node) {
@@ -692,8 +765,13 @@ class EventFlowEditor {
                             <button id="import-flow-btn" class="btn" style="flex: 1; min-width: 0; padding: 8px 12px; font-size: 14px; white-space: nowrap;">📥 Import</button>
                             <button id="export-all-btn" class="btn" style="flex: 1; min-width: 0; padding: 8px 12px; font-size: 14px; white-space: nowrap;">📤 Export All</button>
                         </div>
+                        <label for="template-select">Start with a template</label>
                         <select id="template-select" class="btn" style="width: 100%; margin-top: 10px; padding: 8px 12px; font-size: 14px; cursor: pointer;">
                             <option value="">📋 Load Template...</option>
+                            <optgroup label="Alerts (Flow Actions overlay)">
+                                <option value="donation-celebration">Donation: celebration + voice</option>
+                                <option value="donation-obs-effect">Donation: animation + sound + OBS filter</option>
+                            </optgroup>
                             <optgroup label="Simple">
                                 <option value="chat-relay">Chat Relay to Discord</option>
                                 <option value="song-request">Song Request (!sr)</option>
@@ -703,6 +781,8 @@ class EventFlowEditor {
                                 <option value="skip-song">Skip Song Command (Mods)</option>
                             </optgroup>
                             <optgroup label="Intermediate">
+                                <option value="streamdeck-workflow">Stream Deck / API button</option>
+                                <option value="obs-hourly-message">Hourly message while OBS is live</option>
                                 <option value="bad-words-filter">Bad Words Filter</option>
                                 <option value="alert-overlay">Chat Alert Overlay</option>
                                 <option value="vip-highlight">VIP Message Highlight</option>
@@ -803,6 +883,7 @@ class EventFlowEditor {
                         </div>
                         <button class="flow-help-dismiss" id="flow-help-dismiss" aria-label="Dismiss help banner">×</button>
                     </div>
+                    <p id="flow-output-help" class="property-help" style="padding:8px 16px; margin:0;" role="status"></p>
                     <div class="flow-canvas-container">
                         <div class="flow-canvas" id="flow-canvas"></div>
                     </div>
@@ -1068,6 +1149,9 @@ class EventFlowEditor {
                 rootPath: 'docs/event-reference.html',
                 actionsPath: '../docs/event-reference.html'
             },
+            'ai-event-overlay': {
+                url: 'https://socialstream.ninja/beta/docs/index.html?file=ai-event-overlay.md'
+            },
             'event-reference-cross-platform': {
                 extensionPath: 'docs/event-reference.html',
                 rootPath: 'docs/event-reference.html',
@@ -1078,6 +1162,7 @@ class EventFlowEditor {
 
         const guide = guideMap[guideKey];
         if (!guide) return '';
+        if (guide.url) return guide.url;
 
         if (this.isExtensionRuntimeAvailable()) {
             const extensionUrl = chrome.runtime.getURL(guide.extensionPath);
@@ -1785,21 +1870,7 @@ class EventFlowEditor {
             // Deep copy the template to avoid modifying the original
             const flowData = JSON.parse(JSON.stringify(template));
 
-            // Generate unique node IDs for this instance
-            const idMap = {};
-            flowData.nodes = flowData.nodes.map(node => {
-                const newId = `node_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-                idMap[node.id] = newId;
-                return { ...node, id: newId };
-            });
-
-            // Update connection references with new IDs
-            flowData.connections = flowData.connections.map(conn => ({
-                from: idMap[conn.from] || conn.from,
-                to: idMap[conn.to] || conn.to
-            }));
-
-            // Import using existing method - get the saved flow back
+            // The importer assigns fresh IDs and remaps both wires and state-node targets.
             const savedFlow = await this.importSingleFlow(flowData, true);
             if (savedFlow && savedFlow.id) {
                 await this.loadFlowList();
@@ -1833,6 +1904,7 @@ class EventFlowEditor {
             max-width: 300px;
         `;
         notification.textContent = message;
+        notification.setAttribute('role', 'status');
         
         document.body.appendChild(notification);
         
@@ -1846,6 +1918,8 @@ class EventFlowEditor {
     }
 
     renderFlow() {
+        const outputHelp = document.getElementById('flow-output-help');
+        if (outputHelp) outputHelp.textContent = this.currentFlow && this.currentFlow.description || 'Media and sounds appear in the Flow Actions overlay. Listen previews locally. Use a template to start, then Tab to a node and press Enter to edit it.';
         const canvas = document.getElementById('flow-canvas');
         canvas.innerHTML = '';
         if (!this.currentFlow || !this.currentFlow.nodes) return;
@@ -1954,6 +2028,18 @@ class EventFlowEditor {
 			${stateReferencePointsHTML}
 		`;
 		canvas.appendChild(nodeEl);
+		nodeEl.tabIndex = 0;
+		nodeEl.setAttribute('role', 'button');
+		nodeEl.setAttribute('aria-label', this.getNodeTitle(node) + '. Press Enter to edit.');
+		nodeEl.addEventListener('keydown', (event) => {
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				event.stopPropagation();
+				this.selectNode(node.id);
+				const control = document.querySelector('#node-properties-content input, #node-properties-content select, #node-properties-content button');
+				if (control) control.focus();
+			}
+		});
 
 		// Attach event listeners for the new node
 		nodeEl.addEventListener('mousedown', (e) => {
@@ -2172,6 +2258,7 @@ class EventFlowEditor {
                     const eventType = node.config.eventType || 'Not set';
                     return `Event: ${eventType}`;
                 }
+                case 'apiTrigger': return `API: ${node.config.trigger || 'Set a trigger name'}`;
                 case 'eventCustom': {
                     const eventType = node.config.eventType || 'Custom';
                     return `Custom: ${eventType}`;
@@ -2209,6 +2296,7 @@ class EventFlowEditor {
                     const shortValue = value.length > 15 ? value.substring(0, 15) + '...' : value;
                     return `${prop} = ${shortValue}`;
                 }
+                case 'showAiEventOverlay': return `${node.config.profile || 'Choose an overlay'}${node.config.variation ? ': ' + node.config.variation : ''}`;
                 case 'featureMessage': return 'Feature in dock/overlay';
                 case 'pinMessage': {
                     const modeMap = { pin: 'Pin', unpin: 'Unpin', nextPinned: 'Show next pinned' };
@@ -2229,8 +2317,10 @@ class EventFlowEditor {
                     if (srcMode === 'none') return `Reflections: ${pol}`;
                     return `Reflections: ${pol} (${srcMode}: ${srcList || '—'})`;
                 }
+                case 'showAiEventOverlay': return `AI overlay: ${node.config.profile || 'default'}`;
                 case 'addPoints': return `Add: ${node.config.amount || 100} points`;
                 case 'spendPoints': return `Spend: ${node.config.amount || 100} points`;
+                case 'giveawayControl': return `Giveaway: ${node.config.giveawayId || 'default'}`;
                 case 'delay': return `Delay: ${node.config.delayMs || 1000}ms`;
                 case 'obsChangeScene': return `Scene: ${node.config.sceneName || 'Not set'}`;
                 case 'obsToggleSource': {
@@ -2821,6 +2911,7 @@ class EventFlowEditor {
     }
 	
 	runTestFlow(testMessage) {
+        testMessage = Object.assign({}, testMessage, {meta:Object.assign({}, testMessage.meta || {}, {economyTest:true})});
 		if (!this.currentFlow) {
 			alert('No flow is currently active. Please create or select a flow to test.');
 			return { success: false, message: 'No active flow' };
@@ -2831,6 +2922,10 @@ class EventFlowEditor {
 		
 		// Ensure it's active for testing
 		testFlow.active = true;
+		// A saved disabled flow must not cancel its own preview or share execution state.
+		if (!this.previewFlowId) this.previewFlowId = 'preview_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+		this.eventFlowSystem.cancelFlowExecutions(this.previewFlowId);
+		testFlow.id = this.previewFlowId;
 		
 		let testResult = { success: false, message: 'Test not run' };
 		
@@ -2919,8 +3014,7 @@ class EventFlowEditor {
 
 		const amount = this.parseTestDonationAmount(rawValue, 10);
 		const payload = {
-			hasDonation: '$' + amount.toFixed(2) + ' CAD',
-			donoValue: amount
+			hasDonation: '$' + amount.toFixed(2) + ' CAD'
 		};
 
 		if (platform === 'youtube' || platform === 'youtubeshorts') {
@@ -3150,6 +3244,7 @@ class EventFlowEditor {
                 case 'eventRaid': node.config = { sources: [], minViewers: 0 }; break;
                 case 'eventCheer': node.config = { sources: [], minBits: 0 }; break;
                 case 'eventOther': node.config = { eventType: '' }; break;
+                case 'apiTrigger': node.config = { trigger: '' }; break;
                 case 'eventCustom': node.config = { eventType: '', customCondition: '' }; break;
                 case 'obsStreamStarted': node.config = {}; break;
                 case 'obsStreamStopped': node.config = {}; break;
@@ -3160,6 +3255,7 @@ class EventFlowEditor {
                 case 'obsReplaybufferSaved': node.config = {}; break;
                 case 'compareProperty': node.config = { property: 'donoValue', operator: 'gt', value: 0 }; break;
                 case 'randomChance': node.config = { probability: 0.1, cooldownMs: 0, maxPerMinute: 0, requireMessage: true }; break;
+                case 'voicePhrase': node.config = { phrase: 'ninja celebration', cooldown: 5 }; break;
                 case 'timeInterval': node.config = { interval: 60 }; break;
                 case 'timeOfDay': node.config = { times: ['12:00'] }; break;
                 case 'midiNoteOn': node.config = { deviceId: '', note: '', channel: 1 }; break;
@@ -3189,6 +3285,8 @@ class EventFlowEditor {
 					node.config = { removeType: 'removeCommand' }; break;
                 case 'setProperty':
 					node.config = { property: 'nameColor', value: '#FF0000' }; break;
+                case 'showAiEventOverlay':
+                    node.config = { profile: 'default' }; break;
                 case 'featureMessage':
                     node.config = {}; break;
                 case 'pinMessage':
@@ -3205,6 +3303,12 @@ class EventFlowEditor {
 					node.config = { amount: 100 }; break;
                 case 'spendPoints':
 					node.config = { amount: 100 }; break;
+                case 'spotifyVolume':
+                    node.config = { volume: 50 }; break;
+                case 'ttsVolume':
+                    node.config = { volume: 100 }; break;
+                case 'giveawayControl':
+                    node.config = { command:'entergiveaway', giveawayId:'default', count:1, side:'' }; break;
                 case 'customJs':
 					node.config = { code: 'message.chatmessage += " (edited)";\nreturn { modified: true, message };' }; break;
 				case 'playTenorGiphy':
@@ -3216,6 +3320,8 @@ class EventFlowEditor {
 				case 'showText':
 					node.config = { text: 'Hello {username}!', x: 50, y: 50, width: 80, fontSize: 48, fontFamily: 'Arial', fontWeight: 'bold', textAlign: 'center', color: '#ffffff', backgroundColor: 'rgba(0,0,0,0.5)', padding: 20, borderRadius: 10, outlineWidth: 2, outlineColor: '#000000', animation: 'fadeIn', animationDuration: 500, duration: 5000, clearFirst: false };
 					break;
+				case 'commerceControl':
+                    node.config = { command: 'show', url: '', seconds: 0 }; break;
 				case 'clearLayer':
 					node.config = { layer: 'all' };
 					break;
@@ -3223,7 +3329,7 @@ class EventFlowEditor {
 					node.config = { sceneName: 'Your Scene Name' };
 					break;
 				case 'playAudioClip':
-					node.config = { audioUrl: 'https://vdo.ninja/media/join.wav', volume: 1.0 };
+					node.config = { audioUrl: './audio/chime.wav', volume: 0.35 };
 					break;
 				case 'delay':
 					node.config = { delayMs: 1000 };
@@ -3618,6 +3724,7 @@ class EventFlowEditor {
     }
 
 	showNodeProperties(node) {
+        if (typeof window !== 'undefined' && window.SSNSoundLibrary) window.SSNSoundLibrary.stop();
 		const propertiesContent = document.getElementById('node-properties-content');
 		const eventReferenceUrl = this.escapeHtml(this.resolveGuideTarget('event-reference') || '#');
 		const eventReferenceCrossPlatformUrl = this.escapeHtml(this.resolveGuideTarget('event-reference-cross-platform') || '#');
@@ -3696,6 +3803,9 @@ class EventFlowEditor {
 			case 'anyMessage':
 				html += `<p class="property-help">Triggers on any message regardless of content.</p>`;
 				break;
+            case 'voicePhrase':
+                html += `<div class="property-group"><label class="property-label">Exact spoken phrase</label><input class="property-input" id="prop-phrase" maxlength="160" value="${this.escapeHtml(node.config.phrase || '')}" placeholder="ninja celebration"></div><div class="property-group"><label class="property-label">Cooldown (seconds)</label><input type="number" class="property-input" id="prop-cooldown" min="1" max="300" value="${Math.max(1, Number(node.config.cooldown) || 5)}"></div><p class="property-help">Requires SSApp local voice control. Test your phrase before arming. No actions run while in Test mode.</p><a href="voice-control.html" target="_blank" rel="noopener">Open Voice Control</a>`;
+                break;
 			case 'timeInterval':
 				html += `<div class="property-group">
 					<label class="property-label">Interval (seconds)</label>
@@ -3840,6 +3950,10 @@ class EventFlowEditor {
 					{ value: 'reward', label: 'Channel Point Redemption' },
 					{ value: 'newmember', label: 'New Member/Subscriber' },
 					{ value: 'giftpurchase', label: 'Gift Sub Purchase' },
+					{ value: 'gift', label: 'Gift' },
+					{ value: 'giftcontribution', label: 'Gift Contribution' },
+					{ value: 'giftfunded', label: 'Gift Fully Funded' },
+					{ value: 'purchase', label: 'Product Purchase' },
 					{ value: 'raid', label: 'Raid' },
 					{ value: 'follow', label: 'Follow' },
 					{ value: 'host', label: 'Host' },
@@ -4065,6 +4179,10 @@ class EventFlowEditor {
 			case 'eventOther':
 				const otherEventTypes = [
 					{ value: '', label: '-- Select Event --' },
+					{ value: 'gift', label: 'Gift' },
+					{ value: 'giftcontribution', label: 'Gift Contribution' },
+					{ value: 'giftfunded', label: 'Gift Fully Funded' },
+					{ value: 'purchase', label: 'Product Purchase' },
 					{ value: 'channel_points', label: 'Channel Points (Twitch)' },
 					{ value: 'membermilestone', label: 'Member Milestone (YouTube)' },
 					{ value: 'giftredemption', label: 'Gift Received (YouTube)' },
@@ -4094,6 +4212,20 @@ class EventFlowEditor {
 					</div>`;
 				break;
 
+			case 'apiTrigger':
+                html += `
+                    <div class="property-group">
+                        <label class="property-label" for="prop-trigger">Trigger name</label>
+                        <input type="text" class="property-input" id="prop-trigger" maxlength="100" value="${this.escapeHtml(node.config.trigger || '')}" placeholder="e.g., intermission">
+                        <div class="property-help">Use an exact, case-sensitive name. Save and enable this flow, then select <strong>Run Workflow</strong> in Stream Deck. Only flows with this trigger can be called.</div>
+                    </div>
+                    <div class="property-group">
+                        <label class="property-label">API request</label>
+                        <pre class="property-help" style="white-space:pre-wrap;overflow-wrap:anywhere">${this.escapeHtml(JSON.stringify({ action: 'triggerWorkflow', value: { trigger: node.config.trigger || 'intermission' } }, null, 2))}</pre>
+                        <div class="property-help">Optional JSON data is available as <code>{meta.workflow.data.name}</code>. Each press starts a run; use a Rate Limiter node for a cooldown. The API acknowledges acceptance, not completion of delayed or external actions.</div>
+                        <a href="../docs/streamdeck-event-flow.html" target="_blank" rel="noopener">Workflow setup and API guide</a>
+                    </div>`;
+                break;
 			case 'eventCustom':
 				html += `
 					<div class="property-group">
@@ -4160,7 +4292,7 @@ class EventFlowEditor {
 					<div class="property-group" id="custom-property-group" style="${isCustomProp ? '' : 'display: none;'}">
 						<label class="property-label">Custom Property Name</label>
 						<input type="text" class="property-input" id="prop-property" value="${isCustomProp ? (node.config.property || '') : ''}" placeholder="e.g., customField">
-						<div class="property-help">Enter the exact property name from the message object</div>
+						<div class="property-help">Enter a field or nested path, such as meta.commerce.recipient or meta.commerce.quantity</div>
 					</div>
 					<div class="property-group">
 						<label class="property-label">Operator</label>
@@ -4259,7 +4391,7 @@ class EventFlowEditor {
 					{ value: 'lowKarma', label: 'Low Karma (<0.3)', group: 'Interaction', tooltip: 'Requires Add karma enabled in global settings' },
 					// Metadata
 					{ value: 'userid', label: 'User ID', group: 'Metadata' },
-					{ value: 'textonly', label: 'Text Only', group: 'Metadata' },
+					{ /* Chat body representation only: true is literal text without added HTML; false permits sanitized HTML. This is not a trust flag for other fields. */ value: 'textonly', label: 'Text Only', group: 'Metadata' },
 					{ value: 'chatbadges', label: 'Has Badges', group: 'Metadata' }
 				];
 				
@@ -4713,7 +4845,7 @@ class EventFlowEditor {
                     { value: 'admin', label: 'Is Admin', type: 'boolean' },
                     { value: 'question', label: 'Is Question', type: 'boolean' },
                     { value: 'private', label: 'Is Private / DM', type: 'boolean' },
-                    { value: 'textonly', label: 'Text-only Message', type: 'boolean' }
+                    { /* Chat body representation only: true is literal text without added HTML; false permits sanitized HTML. This is not a trust flag for other fields. */ value: 'textonly', label: 'Text-only Message', type: 'boolean' }
                 ];
                 
                 const selectedProp = commonProperties.find(p => p.value === node.config.property);
@@ -5010,7 +5142,7 @@ class EventFlowEditor {
 							<label>Alignment<select class="property-input" id="prop-textAlign"><option value="left" ${node.config.textAlign === 'left' ? 'selected' : ''}>Left</option><option value="center" ${node.config.textAlign !== 'left' && node.config.textAlign !== 'right' ? 'selected' : ''}>Center</option><option value="right" ${node.config.textAlign === 'right' ? 'selected' : ''}>Right</option></select></label>
 							<label>Copies<input type="number" class="property-input" id="prop-copies" value="${node.config.copies ?? 1}" min="1" max="99" step="1"></label>
 						</div>
-						<div class="property-help">To bold just the buyer, choose Selected text and enter <code>**{username}**</code> above <code>{itemName}</code>. Item fields must come from your event or an earlier node.</div>
+						<div class="property-help">To bold just the supporter, choose Selected text and enter <code>**{username}**</code> above <code>{subtitle}</code>. Commerce events use {subtitle} for product names; {meta.commerce.quantity} prints a known quantity.</div>
 					</div>
 					<div class="property-group">
 						<label class="property-label">Printer override (optional)</label>
@@ -5023,7 +5155,7 @@ class EventFlowEditor {
 						<input type="number" class="property-input" id="prop-labelHeight" value="${node.config.labelHeight ?? 0}" min="0" max="4000" step="0.1">
 						<div class="property-help">0 uses the global setting or content-sized receipt paper. For die-cut labels, enter their exact feed-direction length; fixed labels do not add extra feed.</div>
 					</div>
-					<div class="property-help">Connect a <strong>Donation / Tip</strong> trigger to print only donations. Its Minimum Amount field can restrict printing to donations at or above a chosen value. Use the editor's Test Flow panel to send a physical test label.</div>`;
+					<div class="property-help">Use <strong>Donation / Tip</strong> for tips and paid gifts, or <strong>Event Type: Purchase</strong> for sales. Check <code>meta.thermalPrintResult.success</code> in later nodes. Test Flow sends a physical label. <a href="../docs/thermal-printer-guide.html" target="_blank" rel="noopener">Printer guide</a></div>`;
 				break;
 			case 'webhook':
 				html += `<div class="property-group"><label class="property-label">URL</label><input type="url" class="property-input" id="prop-url" value="${node.config.url || ''}"></div>
@@ -5033,9 +5165,19 @@ class EventFlowEditor {
 						 <div class="property-group"><label class="property-label"><input type="checkbox" class="property-input" id="prop-syncMode" ${node.config.syncMode ? 'checked' : ''}> Synchronous mode (await webhook)</label><div class="property-help">When enabled, the flow waits for the webhook to finish. With "Block on error" enabled, a non-2xx or network error blocks this message; otherwise it proceeds and attaches any response.</div></div>
 						 <div class="property-group"><label class="property-label"><input type="checkbox" class="property-input" id="prop-blockOnFailure" ${node.config.blockOnFailure ? 'checked' : ''}> Block on error (4xx/5xx or network)</label><div class="property-help">If "Synchronous mode" is OFF, the message is never blocked by webhook results. If ON, failures block the message when this is enabled.</div></div>`;
 				break;
+            case 'giveawayControl':
+                html += `<div class="property-group"><label class="property-label" for="prop-command">Giveaway action</label><select id="prop-command" class="property-input">${[['entergiveaway','Enter free giveaway'],['buygiveawaytickets','Buy tickets (spend and enter)'],['grantgiveawaytickets','Grant free tickets'],['closegiveaway','Close entries'],['drawgiveaway','Draw winner'],['cancelgiveaway','Cancel and refund'],['getgiveawaystate','Query state']].map(([v,l])=>`<option value="${v}" ${node.config.command===v?'selected':''}>${l}</option>`).join('')}</select></div>
+                <div class="property-group"><label class="property-label" for="prop-giveawayId">Giveaway ID</label><input class="property-input" id="prop-giveawayId" value="${this.escapeHtml(node.config.giveawayId || 'default')}" maxlength="64"></div>
+                <div class="property-group"><label class="property-label" for="prop-count">Tickets</label><input class="property-input" id="prop-count" type="number" min="1" max="10000" value="${Number(node.config.count)||1}"></div>
+                <div class="property-group"><label class="property-label" for="prop-side">Coin Flip Pot side</label><select class="property-input" id="prop-side"><option value="">Not a pot game</option><option value="heads" ${node.config.side==='heads'?'selected':''}>Heads</option><option value="tails" ${node.config.side==='tails'?'selected':''}>Tails</option></select></div>
+                <p class="property-help">Uses the captured viewer. Failure stops dependent actions without hiding chat. Test runs do not charge or enter real rounds. <a href="../docs/giveaway-points-guide.html" target="_blank" rel="noopener">Guide</a></p>`;
+                break;
 			case 'addPoints':
 				html += `<div class="property-group"><label class="property-label">Amount to Add</label><input type="number" class="property-input" id="prop-amount" value="${node.config.amount || 100}" min="0"></div>`;
 				break;
+			case 'showAiEventOverlay':
+                html += `<div class="property-group"><label class="property-label" for="prop-profile">Saved overlay</label><input class="property-input" id="prop-profile" value="${this.escapeHtml(node.config.profile || 'default')}" placeholder="Overlay ID"></div><div class="property-group"><label class="property-label" for="prop-variation">Variation (optional)</label><input class="property-input" id="prop-variation" value="${this.escapeHtml(node.config.variation || '')}" placeholder="Approved phrase"></div><p id="ai-event-flow-status" class="property-help" role="status">Loading saved overlays…</p><p class="property-help"><a href="${this.escapeHtml(this.resolveGuideTarget('ai-event-overlay'))}" target="_blank" rel="noopener">AI overlay setup and rewards guide</a></p>`;
+                break;
 			case 'spendPoints':
 				html += `<div class="property-group"><label class="property-label">Amount to Spend</label><input type="number" class="property-input" id="prop-amount" value="${node.config.amount || 100}" min="0"></div>`;
 				break;
@@ -5506,6 +5648,13 @@ class EventFlowEditor {
 					</div>`;
 				break;
 
+            case 'commerceControl':
+                html += `<div class="property-group"><label class="property-label" for="prop-command">Commerce control</label><select class="property-input" id="prop-command">${['show', 'next', 'hide', 'resume','boardSave','boardSpot','boardVisibility','saleAdd','saleRemove','salesClear','salesSettings'].map(command => `<option value="${command}" ${node.config.command === command ? 'selected' : ''}>${{show:'Show now',next:'Next product',hide:'Hide products',resume:'Resume schedule',boardSave:'Create / replace board',boardSpot:'Change spot state',boardVisibility:'Show / hide board',saleAdd:'Record confirmed sale',saleRemove:'Remove sale',salesClear:'Clear recent sales',salesSettings:'Sales display options'}[command]}</option>`).join('')}</select></div>
+                <div id="commerce-product-fields"><div class="property-group"><label class="property-label" for="prop-url">Saved product URL (optional for Show)</label><input class="property-input" id="prop-url" type="url" value="${this.escapeHtml(node.config.url || '')}"></div>
+                <div class="property-group"><label class="property-label" for="prop-seconds">Seconds (0 = until changed)</label><input class="property-input" id="prop-seconds" type="number" min="0" max="3600" value="${Number(node.config.seconds) || 0}"><div class="property-help">Uses saved Products &amp; support links. Hide keeps activity alerts running. Waits for SSN; failure stops this chain. Confirmed selection is in <code>meta.commerceControlResult.commerce</code>; OBS visibility is unknown. <a href="../docs/product-controls.html" target="_blank" rel="noopener">Guide</a></div></div>`;
+                html += `</div><details id="commerce-board-fields"><summary>Board / sales fields</summary><div class="property-group"><label class="property-label" for="prop-data">Fields (JSON object)</label><textarea class="property-input" id="prop-data" rows="5" placeholder='{"id":"12","status":"claimed"}'>${this.escapeHtml(typeof node.config.data === 'string' ? node.config.data : JSON.stringify(node.config.data || {}, null, 2))}</textarea><div class="property-help">String values accept event variables such as {subtitle}. Use confirmed purchase events for sale actions; auction updates do not confirm payment. <a href="../docs/commerce-boards.html#automation" target="_blank" rel="noopener">Commands and fields</a></div></div></details>`;
+                break;
+
 			case 'clearLayer':
 				html += `<div class="property-group">
 						 <label class="property-label">Layer to Clear</label>
@@ -5899,10 +6048,10 @@ class EventFlowEditor {
 					<div class="property-group">
 						<label class="property-label">Volume Level</label>
 						<input type="range" class="property-input" id="prop-volume"
-							value="${node.config.volume || 50}" min="0" max="100" step="5"
+							value="${node.config.volume ?? 50}" min="0" max="100" step="5"
 							oninput="document.getElementById('volume-display').textContent = this.value + '%'">
 						<div style="text-align: center; margin-top: 5px;">
-							<span id="volume-display">${node.config.volume || 50}%</span>
+							<span id="volume-display">${node.config.volume ?? 50}%</span>
 						</div>
 						<div class="property-help">Set the playback volume (0-100%)</div>
 					</div>
@@ -6309,9 +6458,9 @@ class EventFlowEditor {
 						mediaType: 'audio'
 					})}
 						 <div class="property-group">
-							<label class="property-label">Volume (0.0 to 1.0)</label>
+							<label class="property-label" for="prop-volume">Volume (0 = silent, 1 = full volume)</label>
 							<input type="number" class="property-input" id="prop-volume" value="${node.config.volume ?? 1.0}" min="0" max="1" step="0.1">
-						</div>`;
+						</div><div class="property-help">Live sound plays through your Flow Actions browser source. Use sound in only one overlay for the same event to avoid doubling it. <a href="event-flow-guide.html" target="_blank" rel="noopener">Setup guide</a></div>`;
 				break;
 
 			default:
@@ -6336,7 +6485,50 @@ class EventFlowEditor {
 			if (codeInput) codeInput.value = this.getCustomCode(node);
 		}
 		this.addPropertiesEventListeners(node.id); // Pass node.id to correctly re-attach listeners
+		if (node.actionType === 'showAiEventOverlay') this.loadAiEventChoices(node);
 	}
+
+    async loadAiEventChoices(node) {
+        const status = document.getElementById('ai-event-flow-status');
+        try {
+            let choices;
+            if (window.SSNAiEventBackground) choices = await window.SSNAiEventBackground.choices();
+            else if (this.isExtensionRuntimeAvailable()) {
+                choices = await new Promise((resolve, reject) => {
+                    chrome.runtime.sendMessage({ cmd: 'aiEventFlow', action: 'list' }, response => {
+                        if (chrome.runtime.lastError || !response || response.error) reject(new Error('Open SSN to load saved overlays.'));
+                        else resolve(response.value);
+                    });
+                });
+            } else throw new Error('Open the local SSN editor to choose saved overlays.');
+            if (status !== document.getElementById('ai-event-flow-status')) return;
+            if (!choices.length) { status.textContent = 'Create an overlay in SSN’s AI Event Overlay settings first.'; return; }
+            const profile = document.createElement('select');
+            profile.id = 'prop-profile'; profile.className = 'property-input';
+            const option = (select, value, label) => { const item = document.createElement('option'); item.value = value; item.textContent = label; select.appendChild(item); };
+            option(profile, '', 'Choose an overlay');
+            choices.forEach(p => option(profile, p.id, p.name + (p.mode === 'flow' ? '' : ' (change trigger to Event Flow)')));
+            if (node.config.profile && !choices.some(p => p.id === node.config.profile)) option(profile, node.config.profile, node.config.profile + ' (not found)');
+            profile.value = node.config.profile || '';
+            document.getElementById('prop-profile').replaceWith(profile);
+            const variation = document.createElement('select');
+            variation.id = 'prop-variation'; variation.className = 'property-input';
+            document.getElementById('prop-variation').replaceWith(variation);
+            const update = () => {
+                const saved = choices.find(p => p.id === profile.value);
+                variation.textContent = ''; option(variation, '', 'No variation');
+                if (saved) saved.variations.forEach(value => option(variation, value, value));
+                if (node.config.variation && (!saved || saved.variations.indexOf(node.config.variation) < 0)) option(variation, node.config.variation, node.config.variation + ' (not approved)');
+                variation.value = node.config.variation || '';
+                status.textContent = !saved ? 'Choose a saved overlay.' : saved.mode !== 'flow' ? 'Change its trigger to Event Flow in overlay settings.' : node.config.variation && saved.variations.indexOf(node.config.variation) < 0 ? 'Choose an approved variation.' : 'Keep this overlay’s Browser Source open in OBS.';
+            };
+            profile.addEventListener('change', () => { node.config.profile = profile.value; node.config.variation = ''; update(); this.markUnsavedChanges(true); this.renderNodeOnCanvas(node.id); });
+            variation.addEventListener('change', () => { node.config.variation = variation.value; update(); this.markUnsavedChanges(true); this.renderNodeOnCanvas(node.id); });
+            update();
+        } catch (error) {
+            if (status === document.getElementById('ai-event-flow-status')) status.textContent = error.message;
+        }
+    }
 
     addPropertiesEventListeners(nodeId) {
         const nodeData = this.currentFlow.nodes.find(n => n.id === nodeId);
@@ -6414,6 +6606,15 @@ class EventFlowEditor {
                 });
             }
         });
+
+        if (nodeData.actionType === 'commerceControl') {
+            const select = document.getElementById('prop-command');
+            const products = document.getElementById('commerce-product-fields'), boards = document.getElementById('commerce-board-fields');
+            if (select && products && boards) {
+                const updateCommerceFields = () => { const isBoard = !['show','next','hide','resume'].includes(select.value); products.hidden = isBoard; boards.hidden = !isBoard; boards.open = isBoard; };
+                select.addEventListener('change', updateCommerceFields); updateCommerceFields();
+            }
+        }
 
         // Special handling for relay destination dropdown
         const destinationSelect = document.getElementById('prop-destination-select');
@@ -7053,6 +7254,34 @@ class EventFlowEditor {
         }
 
         const uploadAudioBtn = document.getElementById('uploadAudioBtn');
+        if (nodeData.actionType === 'playAudioClip' && window.SSNSoundLibrary) {
+            const host = document.createElement('div');
+            const properties = document.getElementById('node-properties-content');
+            properties.prepend(host);
+            const input = document.getElementById('prop-audioUrl');
+            window.SSNSoundLibrary.attach({
+                container: host, input, id: 'eventflow-audio', label: 'Play this sound — Flow Actions overlay',
+                getValue: () => nodeData.config.sourceType === 'local' ? '' : (nodeData.config.audioUrl || ''),
+                getVolume: () => nodeData.config.volume === undefined ? 0.35 : nodeData.config.volume,
+                setValue: value => {
+                    nodeData.config.sourceType = 'url';
+                    nodeData.config.audioUrl = value;
+                    delete nodeData.config.localAssetId;
+                    delete nodeData.config.localAssetName;
+                    delete nodeData.config.localMediaType;
+                    this.markUnsavedChanges(true);
+                    this.renderNodeOnCanvas(nodeData.id);
+                    if (input) {input.value = value;} else {
+                        this.showNodeProperties(nodeData);
+                        document.getElementById('eventflow-audio-library').focus();
+                    }
+                }
+            });
+            const help = document.createElement('p');
+            help.className = 'property-help';
+            help.textContent = 'Listen plays locally. This action plays in the Flow Actions OBS browser source. If Multi-Alerts also handles this event, use sound in only one overlay to avoid doubling it. For a local file, use its Preview button below.';
+            host.appendChild(help);
+        }
         if (uploadAudioBtn) {
             uploadAudioBtn.addEventListener('click', () => {
                 openNodeMediaUpload('uploadAudio', 'prop-audioUrl', 'audioUrl');
@@ -7109,7 +7338,8 @@ class EventFlowEditor {
                 try {
                     await localMediaApi.start();
                     const result = await localMediaApi.getMediaUrl(nodeData.config.localAssetId);
-                    if (result && result.url) window.open(result.url, '_blank');
+                    // Media previews can contain active SVG content; keep them separate from the editor's app bridge.
+                    if (result && result.url) window.open(result.url, '_blank', 'noopener');
                 } catch (error) {
                     this.showNotification(`Unable to preview local media: ${error && error.message ? error.message : error}`, 'error');
                 }

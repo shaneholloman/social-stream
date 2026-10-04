@@ -48,6 +48,13 @@ API. Environment variables are also supported.
 Do not use this localhost API as a cloud remote-control interface. Remote users and Stream
 Deck use Social Stream's existing WebRTC or WebSocket transport instead.
 
+Server mode includes hosted `io.socialstream.ninja`, local and explicit compatible relays.
+Unreleased updated page sources add Poll/Credits/Hype controls and snapshots, mixed-transport
+Flow Actions delivery, hosted Giveaway Manager replies, and relay session-change recovery.
+These are page/relay capabilities, not new Local AI `/api/v1` or MCP commands. Check the
+page-source compatibility entry in `references/version-log.md`; do not infer availability
+or full overlay-control support from an open socket, chat receipt, or SSApp version alone.
+
 ## Control workflow
 
 1. Call `ssapp_get_capabilities`, or `GET /api/v1/capabilities` when using HTTP directly, before assuming a command exists. Record `ssappVersion` and `apiVersion`.
@@ -66,6 +73,15 @@ Prefer SSApp's MCP tools when the agent supports MCP. Otherwise call the loopbac
 endpoints directly using [references/control-api.md](references/control-api.md). Read
 [references/version-log.md](references/version-log.md) for minimum-version compatibility.
 Runtime capabilities are authoritative.
+
+New YouTube and YouTube Shorts sources default to `classic` (Standard) in the updated SSApp
+0.4.32 development checkout. Check `platforms[target].defaultConnectionMode`; see
+the unreleased entry in `references/version-log.md` for version compatibility.
+
+SSApp 0.4.32 with the updated Whatnot page sources adds `platforms.whatnot`.
+Use a live show URL or its UUID (`videoId`); the default `websocket` mode captures
+public chat without loading the video. Check the platform capability before adding
+it. Seller profiles, sign-in, sending chat, and auctions are outside this mode.
 
 ## Safety
 

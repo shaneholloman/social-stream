@@ -1,7 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="utf-8">
+    <meta charset="utf-8">
+    <meta name="description" content="Set up the Social Stream Ninja Stream Deck plugin, connect your session and configure buttons for chat, overlays and stream controls.">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <link rel="canonical" href="https://socialstream.ninja/streamdeck/">
+    <link rel="icon" href="images/favicon.ico" type="image/x-icon">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Social Stream Ninja">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:url" content="https://socialstream.ninja/streamdeck/">
+    <meta property="og:title" content="Stream Deck Setup | Social Stream Ninja">
+    <meta property="og:description" content="Set up the Social Stream Ninja Stream Deck plugin, connect your session and configure buttons for chat, overlays and stream controls.">
+    <meta property="og:image" content="https://socialstream.ninja/media/logo.png">
+    <meta property="og:image:width" content="1024">
+    <meta property="og:image:height" content="1024">
+    <meta property="og:image:alt" content="Social Stream Ninja logo">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:url" content="https://socialstream.ninja/streamdeck/">
+    <meta name="twitter:title" content="Stream Deck Setup | Social Stream Ninja">
+    <meta name="twitter:description" content="Set up the Social Stream Ninja Stream Deck plugin, connect your session and configure buttons for chat, overlays and stream controls.">
+    <meta name="twitter:image" content="https://socialstream.ninja/media/logo.png">
+    <meta name="twitter:image:alt" content="Social Stream Ninja logo">
+
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title data-page-translate="streamdeck-setup-document-title">Stream Deck Setup | Social Stream Ninja</title>
 	<script src="../translations/page-i18n.js"></script>
@@ -133,6 +154,7 @@
 				<h2 data-page-translate="get-plugin">Get the plugin</h2>
 				<p data-page-translate="install-streamdeck-plugin">Install the Social Stream Ninja plugin, then open the Stream Deck desktop app.</p>
 				<a class="button secondary" href="https://github.com/steveseguin/ssn-streamdeck/releases/latest" target="_blank" rel="noopener" data-page-translate="download-plugin">Download plugin</a>
+				<p><a href="guide.html">Buttons, dial gestures and every command icon</a> · <a href="../docs/streamdeck-event-flow.html">Custom Event Flow workflows</a></p>
 			</div>
 		</section>
 
@@ -160,6 +182,7 @@
 		</section>
 
 		<section class="card card-body capabilities">
+            <p><a href="../docs/streamdeck-event-flow.html">Run custom Event Flow workflows, use the API, and learn dial gestures</a></p>
 			<div class="eyebrow" data-page-translate="what-it-can-do">What it can do</div>
 			<h2 data-page-translate="controls-live-workflow">Controls that fit a live workflow</h2>
 			<div class="feature-grid">
@@ -185,6 +208,11 @@
 			var copyButton = document.getElementById("copySession");
 
 			function translate(key, fallback, values) {
+				if (window.SSNSiteTranslate && window.SSNSiteLanguage) {
+					return window.SSNSiteTranslate(fallback).replace(/\{(\w+)\}/g, function (match, name) {
+						return values && Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match;
+					});
+				}
 				if (window.SSNPageI18n && typeof window.SSNPageI18n.t === "function") {
 					return window.SSNPageI18n.t(key, fallback, values);
 				}
@@ -222,7 +250,7 @@
 				var dot = document.getElementById("connectionDot");
 				if (sessionId) {
 					dot.className = "dot ready";
-					text("connectionText", translate("ssapp-detected-copy-id", "SSApp detected — copy this ID into the Stream Deck plugin."));
+					text("connectionText", translate("ssapp-detected-copy-id", "SSApp detected. Copy this ID into the Stream Deck plugin."));
 				} else {
 					dot.className = "dot";
 					text("connectionText", translate("ssapp-creating-session", "SSApp is creating your session. Keep this page open for a moment."));

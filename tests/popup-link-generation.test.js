@@ -15,6 +15,35 @@ const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "manif
 
 assert.strictEqual(SocialStreamLocalServer.getPort(new URLSearchParams()), 3000);
 assert.strictEqual(SocialStreamLocalServer.getWebSocketUrl(new URLSearchParams("localserverport=3003")), "ws://127.0.0.1:3003");
+// Relay routing must retain hosted behavior and explicit server addresses.
+for (const flag of ["server", "server2", "server3"]) {
+  for (const suffix of ["", "&localserver", "&localserver&localserverport=32123"]) {
+    const params = new URLSearchParams(flag + suffix);
+    assert.strictEqual(SocialStreamLocalServer.getRelayUrl(params, flag, "wss://example.test/api"),
+      suffix ? "ws://127.0.0.1:" + (suffix.includes("32123") ? "32123" : "3000") : "wss://example.test/api");
+    params.set(flag, "ws://192.0.2.1:32124/relay");
+    assert.strictEqual(SocialStreamLocalServer.getRelayUrl(params, flag, "wss://example.test/api"), "ws://192.0.2.1:32124/relay");
+  }
+}
+for (const query of ["", "server3", "localserver", "localserver&server3"]) {
+  assert.strictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams(query)).enabled, false, query);
+}
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("server&server2")),
+  { enabled: true, url: "wss://io.socialstream.ninja/extension", out: 3, in: 4 });
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("server2")),
+  { enabled: true, url: "wss://io.socialstream.ninja/extension", out: 3, in: 4 });
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("localserver&localserverport=32123&server2")),
+  { enabled: true, url: "ws://127.0.0.1:32123", out: 3, in: 4 });
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("localserver&localserverport=32123&server&server2")),
+  { enabled: true, url: "ws://127.0.0.1:32123", out: 3, in: 4 });
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("localserver&localserverport=32123&server=ws://192.0.2.1:32124/relay&server2")),
+  { enabled: true, url: "ws://192.0.2.1:32124/relay", out: 2, in: 1 });
+assert.deepStrictEqual(SocialStreamLocalServer.getChatRelayConfig(new URLSearchParams("localserver&localserverport=32123&server2=ws://192.0.2.1:32124/relay")),
+  { enabled: true, url: "ws://192.0.2.1:32124/relay", out: 3, in: 4 });
+for (const query of ["", "server3", "localserver"]) {
+  assert.strictEqual(SocialStreamLocalServer.connectLocalRelay(new URLSearchParams(query), "test", () => {}), false,
+    "Legacy pages must retain their existing bridge without a supported chat feed");
+}
 for (const invalidPort of ["", "80", "1023", "65536", "3000/path", "3000@example.com", "3.5", "port"]) {
   assert.strictEqual(SocialStreamLocalServer.normalizeExplicitPort(invalidPort), null, `accepted invalid port: ${invalidPort}`);
 }
@@ -167,6 +196,60 @@ assert.ok(
     SocialStreamLocalServer,
   });
   assert.strictEqual(loaded.functions.getLocalServerConnectionParams(), "&localserver");
+}
+
+// Exercise source validation through popup initialization, base selection, and both link paths.
+{
+  const initStart = popupSource.indexOf("var urlParams = new URLSearchParams(window.location.search);");
+  const initEnd = popupSource.indexOf("var ssapp = false;", initStart);
+  const baseStart = popupSource.indexOf("// First check if we're on a beta URL");
+  const baseEnd = popupSource.indexOf("function updateURL(", baseStart);
+  const directLink = popupSource.match(/^\s*obsControlDockUrl\.href = baseURL \+ [^\r\n]+/m);
+  assert.ok(initStart >= 0 && initEnd > initStart && baseStart >= 0 && baseEnd > baseStart && directLink);
+
+  function resolveSourceMode(query, popupUrl = "chrome-extension://fixture/popup.html") {
+    const location = new URL(popupUrl);
+    location.search = query;
+    const loaded = loadFunctions(["getSourceModeBase", "normalizeGeneratedLinkBase", "buildGeneratedUrl"], {
+      location, window: { location }, Beta: false, baseURL: "https://socialstream.ninja/",
+      response: { streamID: "room&one" }, obsControlDockUrl: {}, getLocalServerConnectionParams: () => "",
+    });
+    vm.runInContext(popupSource.slice(initStart, initEnd) + popupSource.slice(baseStart, baseEnd) + directLink[0], loaded.sandbox);
+    loaded.sandbox.generatedLink = loaded.functions.buildGeneratedUrl("obs-control-dock.html", "session=room%26one");
+    return loaded.sandbox;
+  }
+
+  for (const base of [
+    "https://socialstream.ninja/", "https://beta.socialstream.ninja/",
+    "https://selfhost.example.test/social_stream/", "http://localhost:8080/social_stream/",
+    "file:///C:/SSN/", "file:///C:/Social Stream/",
+    "chrome-extension://fixture/", "moz-extension://fixture/",
+  ]) {
+    const result = resolveSourceMode(new URLSearchParams({ sourcemode: base }).toString());
+    assert.strictEqual(result.sourcemode, base);
+    assert.strictEqual(result.baseURL, base);
+    const expected = new URL("obs-control-dock.html?session=room%26one", base).href;
+    assert.strictEqual(new URL(result.obsControlDockUrl.href).href, expected);
+    assert.strictEqual(result.generatedLink, expected);
+  }
+
+  for (const source of ["", "not a URL", "/relative/", "mailto:fixture", "data:text/plain,fixture", "about:blank", "custom-source://fixture/"]) {
+    const result = resolveSourceMode(new URLSearchParams({ sourcemode: source }).toString());
+    assert.strictEqual(result.sourcemode, false);
+    assert.strictEqual(result.baseURL, "https://socialstream.ninja/");
+    assert.strictEqual(result.obsControlDockUrl.href, "https://socialstream.ninja/obs-control-dock.html?session=room%26one");
+    assert.strictEqual(result.generatedLink, result.obsControlDockUrl.href);
+  }
+
+  assert.strictEqual(resolveSourceMode("").sourcemode, false);
+  for (const [popupUrl, query, expected] of [
+    ["https://beta.socialstream.ninja/popup.html", "", "https://beta.socialstream.ninja/"],
+    ["http://localhost:8080/popup.html", "", "http://localhost:8080/"],
+    ["file:///C:/SSN/popup.html", "&devmode", "file:///C:/SSN/"],
+    ["chrome-extension://fixture/popup.html", "&generatedlinkbase=https%3A%2F%2Fbeta.socialstream.ninja%2F", "https://beta.socialstream.ninja/"],
+  ]) {
+    assert.strictEqual(resolveSourceMode("sourcemode=mailto%3Afixture" + query, popupUrl).baseURL, expected);
+  }
 }
 
 {
@@ -353,7 +436,7 @@ assert.ok(
       raw: "https://socialstream.ninja/dock.html?session=current",
     },
   };
-  const { functions } = loadFunctions(["normalizeEditableGeneratedLink"], {
+  const { functions } = loadFunctions(["getEditableGeneratedLinkConfig", "normalizeEditableGeneratedLink"], {
     baseURL: "https://socialstream.ninja/",
     document: { getElementById: (id) => elements[id] || null },
   });
@@ -562,3 +645,101 @@ assert.ok(popupSource.includes("setGeneratedLink(existingOverlay, existingOverla
 assert.ok(!popupSource.includes(".wrapper:has(.options_group.single_message)"));
 
 console.log("PASS popup link generation regressions");
+
+
+// Each exposed editor must validate its own page before touching controls.
+{
+  const { functions } = loadFunctions([
+    "getEditableGeneratedLinkConfig", "normalizeEditableGeneratedLink", "getTargetMap"
+  ], {
+    document: { getElementById: () => null },
+    baseURL: "https://socialstream.ninja/"
+  });
+  const targets = Object.keys(functions.getTargetMap()).filter(id => functions.getEditableGeneratedLinkConfig(id));
+  for (const target of targets) {
+    const config = functions.getEditableGeneratedLinkConfig(target);
+    assert.ok(popupHtml.includes('data-edit-link="' + target + '"'));
+    assert.ok(popupHtml.includes('id="' + target + '-edit-status"'));
+    const url = 'https://socialstream.ninja/' + config.path + '?session=old-session&customfuture=keep#fragment';
+    const expected = new URL(url);
+    if (target === 'giveaway') expected.searchParams.set('managed', '');
+    assert.equal(functions.normalizeEditableGeneratedLink(url, target).href, expected.href);
+    assert.throws(() => functions.normalizeEditableGeneratedLink('https://socialstream.ninja/' + config.path, target), /session ID/);
+    for (const other of targets.filter(id => id !== target)) {
+      const wrongUrl = 'https://socialstream.ninja/' + functions.getEditableGeneratedLinkConfig(other).path + '?session=old';
+      assert.throws(() => functions.normalizeEditableGeneratedLink(wrongUrl, target), /Paste a/);
+    }
+  }
+  for (const target of ['chatoverlaytemplate', 'games', 'commerce', '__proto__']) {
+    assert.equal(functions.getEditableGeneratedLinkConfig(target), null);
+    assert.throws(() => functions.normalizeEditableGeneratedLink('https://socialstream.ninja/dock.html?session=old', target), /not available/);
+  }
+  assert.throws(() => functions.normalizeEditableGeneratedLink('javascript:alert(1)', 'dock'), /Only web/);
+}
+
+// Numbered imports must load standalone values and leave every other namespace alone.
+{
+  const { functions: configFunctions } = loadFunctions(['getTargetMap', 'getEditableGeneratedLinkConfig'], {});
+  for (const [targetId, num] of Object.entries(configFunctions.getTargetMap())) {
+    if (num === 1 || !configFunctions.getEditableGeneratedLinkConfig(targetId)) continue;
+    const config = configFunctions.getEditableGeneratedLinkConfig(targetId);
+    const flag = { dataset: { ['param' + num]: 'enabled' }, checked: false };
+    const number = { dataset: { ['numbersetting' + num]: 'duration' }, value: '10', defaultValue: '20' };
+    const absent = { dataset: { ['numbersetting' + num]: 'scale' }, value: '9', defaultValue: '1' };
+    const text = { dataset: { ['textparam' + num]: 'label' }, value: 'previous', defaultValue: '' };
+    const option = { dataset: { ['optionparam' + num]: 'style' }, value: 'old', tagName: 'SELECT', options: [{value:'', defaultSelected:true}, {value:'new'}] };
+    const link = { raw: 'https://socialstream.ninja/' + config.path + '?session=current' };
+    const unrelated = { raw: 'https://socialstream.ninja/dock.html?session=current&scale=9' };
+    const saved = [];
+    const provider = { dataset: { ['optionparam' + num]: 'ttsprovider', ['optionsetting' + num]: 'ttsProvider' }, value: 'google', tagName: 'SELECT', options: [{value:'system', defaultSelected:true}, {value:'google'}] };
+    const preset = {dataset: {}, value: 'themes/featured-styles/featured-modern.html?style=glass'};
+    let visibleProvider;
+    let classicSelected = false;
+    const selectors = {
+      ['input[data-param' + num + ']']: [flag],
+      ['[data-numbersetting' + num + ']']: [number, absent],
+      ['[data-textparam' + num + ']']: [text],
+      ['[data-optionparam' + num + ']']: num === 2 || num === 18 ? [option, provider] : [option]
+    };
+    const { functions } = loadFunctions([
+      'applyImportedGeneratedLink', 'normalizeParamKey', 'getImportedParamCheckboxState',
+      'getImportedControlDefaultValue', 'findImportedOptionValue', 'saveImportedLinkControl'
+    ], {
+      getTargetMap: configFunctions.getTargetMap,
+      document: {
+        getElementById: id => id === targetId ? link : id === 'dock' ? unrelated : id === 'featured-preset-select' && num === 2 ? preset : null,
+        querySelectorAll: selector => {
+          assert.ok(Object.hasOwn(selectors, selector), 'Unexpected scope: ' + selector);
+          return selectors[selector];
+        }
+      },
+      chrome: { runtime: {sendMessage: msg => saved.push(msg)} },
+      updateRangeDisplay: () => {}, handleColorAndPalette: () => {}, ensureSelectValueOption: () => {},
+      commaTagInputs: [], userTypes: [],
+      handleTTSProvider2Visibility: value => { visibleProvider = value; },
+      handleTTSProvider18Visibility: value => { visibleProvider = value; },
+      applyFeaturedOverlayPreset: value => { assert.equal(value, ''); classicSelected = true; },
+      setGeneratedLink: (element, url) => { element.raw = url; }
+    });
+    const url = new URL('https://socialstream.ninja/' + config.path + '?session=imported&password=secret&enabled&duration=45&label=Hello&style=new&unknown=keep#fragment');
+    functions.applyImportedGeneratedLink(targetId, url);
+    assert.equal(flag.checked, true, targetId);
+    assert.equal(number.value, '45', targetId);
+    assert.equal(absent.value, '1', targetId);
+    assert.equal(text.value, 'Hello', targetId);
+    assert.equal(option.value, 'new', targetId);
+    assert.equal(link.raw, url.href, targetId);
+    assert.equal(unrelated.raw, 'https://socialstream.ninja/dock.html?session=current&scale=9', targetId);
+    assert.ok(saved.every(msg => ['param', 'numbersetting', 'textparam', 'optionparam', 'optionsetting'].some(prefix => msg.type === prefix + num) || (num === 2 && msg.type === 'optionsetting' && msg.setting === 'featuredOverlayStyle')), targetId);
+    if (num === 2 || num === 18) {
+      assert.equal(visibleProvider, 'system');
+      assert.equal(provider.value, 'system');
+      assert.ok(saved.some(msg => msg.type === 'optionsetting' + num && msg.setting === 'ttsProvider' && msg.value === 'system'));
+    }
+    if (num === 2) {
+      assert.equal(preset.value, '');
+      assert.equal(classicSelected, true);
+    }
+  }
+}
+console.log('Page-specific link editor isolation tests passed');
